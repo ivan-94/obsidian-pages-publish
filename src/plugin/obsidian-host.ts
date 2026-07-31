@@ -32,6 +32,19 @@ export class ObsidianPagesPublishHost implements PagesPublishHost {
     return () => undefined;
   }
 
+  registerVaultChanges(callback: () => void): () => void {
+    const vault = this.plugin.app.vault;
+    const references = [
+      vault.on('create', callback),
+      vault.on('modify', callback),
+      vault.on('delete', callback),
+      vault.on('rename', callback),
+    ];
+    return () => {
+      for (const reference of references) vault.offref(reference);
+    };
+  }
+
   async openWorkspace(target: LaunchTarget): Promise<void> {
     const leaf = this.plugin.app.workspace.getLeaf('tab');
     await leaf.setViewState({

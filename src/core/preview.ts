@@ -2,25 +2,7 @@ import { readdir, readFile } from 'fs/promises';
 import { basename, extname, join, relative, sep } from 'path';
 import MarkdownIt from 'markdown-it';
 import { parse as parseYaml } from 'yaml';
-
-interface RawSiteConfig {
-  version?: unknown;
-  site?: {
-    name?: unknown;
-    home_layout?: unknown;
-  };
-  content_roots?: Array<{
-    path?: unknown;
-    public_root?: unknown;
-  }>;
-  features?: {
-    search?: unknown;
-    graph?: unknown;
-  };
-  cloudflare?: {
-    project_name?: unknown;
-  };
-}
+import { loadSiteConfigFromDirectory } from '../config/site-config';
 
 interface RawPublicationFrontmatter {
   publication?: {
@@ -47,7 +29,13 @@ const markdown = new MarkdownIt({ html: false, linkify: true });
 export async function prepareLocalPreviewFromDirectory(
   vaultRoot: string,
 ): Promise<LocalPreview> {
-  const config = await readSiteConfig(vaultRoot);
+  const loadedConfig = await loadSiteConfigFromDirectory(vaultRoot);
+  if (loadedConfig.status !== 'editable') {
+    throw new Error(
+      `Site config version ${loadedConfig.version} is read-only and cannot be previewed.`,
+    );
+  }
+  const config = loadedConfig.config;
   const renderedPages = [] as Array<PreviewPage & { html: string }>;
 
   for (const contentRoot of config.contentRoots) {
@@ -79,7 +67,7 @@ export async function prepareLocalPreviewFromDirectory(
         sourcePath,
         title,
         url,
-        html: renderDocument(config.siteName, title, markdown.render(document.body)),
+        html: renderDocument(config.site.name, title, markdown.render(document.body)),
       });
     }
   }
@@ -90,47 +78,13 @@ export async function prepareLocalPreviewFromDirectory(
 
   const pages = renderedPages.map(({ html: _html, ...page }) => page);
   const files: Record<string, string> = {
-    '/index.html': renderIndex(config.siteName, pages),
+    '/index.html': renderIndex(config.site.name, pages),
   };
   for (const page of renderedPages) {
     files[`${page.url}index.html`] = page.html;
   }
 
-  return { siteName: config.siteName, pages, files };
-}
-
-async function readSiteConfig(vaultRoot: string): Promise<{
-  siteName: string;
-  contentRoots: Array<{ path: string; publicRoot: string }>;
-}> {
-  const source = await readFile(join(vaultRoot, '.publish', 'site.yml'), 'utf8');
-  const raw = parseYaml(source) as RawSiteConfig;
-  const siteName = stringValue(raw.site?.name);
-  const homeLayout = raw.site?.home_layout;
-  const projectName = stringValue(raw.cloudflare?.project_name);
-  if (
-    raw.version !== 1 ||
-    !siteName ||
-    (homeLayout !== 'sections' && homeLayout !== 'latest') ||
-    typeof raw.features?.search !== 'boolean' ||
-    typeof raw.features.graph !== 'boolean' ||
-    !projectName ||
-    !Array.isArray(raw.content_roots) ||
-    raw.content_roots.length === 0
-  ) {
-    throw new Error('Invalid Pages Publish site configuration.');
-  }
-
-  const contentRoots = raw.content_roots.map((root) => {
-    const path = stringValue(root.path);
-    const publicRoot = stringValue(root.public_root);
-    if (!path || !publicRoot) {
-      throw new Error('Invalid Pages Publish content root.');
-    }
-    return { path, publicRoot };
-  });
-
-  return { siteName, contentRoots };
+  return { siteName: config.site.name, pages, files };
 }
 
 async function findMarkdownFiles(directory: string): Promise<string[]> {

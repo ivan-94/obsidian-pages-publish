@@ -14,6 +14,7 @@ export interface PagesPublishHost {
     name: string,
     callback: () => Promise<void>,
   ): () => void;
+  registerVaultChanges(callback: () => void): () => void;
   openWorkspace(target: LaunchTarget): Promise<void>;
 }
 
@@ -25,6 +26,7 @@ export function activatePagesPublish(
   application: PagesPublishApplication,
   host: PagesPublishHost,
 ): PagesPublishActivation {
+  void application.startScanning().catch(() => undefined);
   const openPrimarySurface = async (): Promise<void> => {
     await host.openWorkspace(await application.getLaunchTarget());
   };
@@ -35,6 +37,7 @@ export function activatePagesPublish(
       '打开发布中心',
       openPrimarySurface,
     ),
+    host.registerVaultChanges(() => application.notifyFileChange()),
   ];
 
   return {

@@ -29,6 +29,30 @@
   margin-top: var(--size-4-6);
 }
 
+.pages-publish-view__scan {
+  align-items: center;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  justify-content: space-between;
+  margin: var(--size-4-4) 0;
+  padding: var(--size-4-2) 0;
+}
+
+.pages-publish-view__issues {
+  padding-inline-start: var(--size-4-6);
+}
+
+.pages-publish-view__issue--blocker,
 .pages-publish-view__error {
   color: var(--text-error);
+}
+
+.pages-publish-view__issue--warning,
+.pages-publish-view__warning {
+  color: var(--text-warning);
+}
+
+.pages-publish-settings {
+  display: block;
 }

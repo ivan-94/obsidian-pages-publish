@@ -98,7 +98,7 @@ describe('local site preview', () => {
     );
 
     await expect(prepareLocalPreviewFromDirectory(vault)).rejects.toThrow(
-      'Invalid Pages Publish site configuration.',
+      /site\.home_layout/,
     );
   });
 });

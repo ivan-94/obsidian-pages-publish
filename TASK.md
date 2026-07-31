@@ -49,7 +49,7 @@
 ## 3. Slice 总览
 
 - [x] S01 — 插件壳与单篇本地预览 tracer bullet
-- [ ] S02 — 安全站点配置与内容范围
+- [x] S02 — 安全站点配置与内容范围
 - [ ] S03 — 文章发布意图与当前文章面板
 - [ ] S04 — URL、栏目索引与重定向
 - [ ] S05 — 私密安全的笔记链接与嵌入
@@ -174,31 +174,31 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 支持 schema v1 的站点、首页布局、时区、内容根、资源排除、搜索/图谱和非密钥 Cloudflare 项目字段。
-- [ ] 拒绝重复/重叠内容根、冲突公开根、路径穿越和符号链接逃逸。
-- [ ] Vault 根选择显示强警告；内容根整体缺失产生防批量下线 Blocker。
-- [ ] 设置保存使用校验后的安全替换，失败时旧配置继续有效且用户输入不丢失。
-- [ ] 外部修改与未保存 UI 编辑冲突时禁止静默覆盖，并提供重载/比较入口。
-- [ ] 高于当前支持范围的 `site.yml` 版本可以只读展示，但必须阻止 UI 回写与发布。
-- [ ] 保存只重新扫描并刷新预览/状态，不自动发布。
-- [ ] 扫描覆盖插件加载、相关文件事件、配置保存、手动刷新、预览前和发布前触发；文件事件必须防抖并取消/丢弃过时任务。
-- [ ] 相同输入产生确定结果；扫描默认不联网、不写 Frontmatter，旧任务结果不得覆盖更新状态。
+- [x] 支持 schema v1 的站点、首页布局、时区、内容根、资源排除、搜索/图谱和非密钥 Cloudflare 项目字段。
+- [x] 拒绝重复/重叠内容根、冲突公开根、路径穿越和符号链接逃逸。
+- [x] Vault 根选择显示强警告；内容根整体缺失产生防批量下线 Blocker。
+- [x] 设置保存使用校验后的安全替换，失败时旧配置继续有效且用户输入不丢失。
+- [x] 外部修改与未保存 UI 编辑冲突时禁止静默覆盖，并提供重载/比较入口。
+- [x] 高于当前支持范围的 `site.yml` 版本可以只读展示，但必须阻止 UI 回写与发布。
+- [x] 保存只重新扫描并刷新预览/状态，不自动发布。
+- [x] 扫描覆盖插件加载、相关文件事件、配置保存、手动刷新、预览前和发布前触发；文件事件必须防抖并取消/丢弃过时任务。
+- [x] 相同输入产生确定结果；扫描默认不联网、不写 Frontmatter，旧任务结果不得覆盖更新状态。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：从“一个根映射一篇文章到公开路径”失败测试开始，再逐个加入冲突与故障行为。
-- [ ] TDD：文件系统只在边界替换；配置校验通过公开 load/validate/save 行为验证。
-- [ ] TDD：运行配置 fixture、原子写入故障、类型检查和 S01 回归。
-- [ ] Review：独立 subagent 只读审查 schema 契约、路径安全、冲突处理和配置/UI 双向一致性。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：从“一个根映射一篇文章到公开路径”失败测试开始，再逐个加入冲突与故障行为。
+- [x] TDD：文件系统只在边界替换；配置校验通过公开 load/validate/save 行为验证。
+- [x] TDD：运行配置 fixture、原子写入故障、类型检查和 S01 回归。
+- [x] Review：独立 subagent 只读审查 schema 契约、路径安全、冲突处理和配置/UI 双向一致性。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录配置迁移/兼容风险：
+- [x] 记录分支/提交或 PR：分支 `codex/s02-safe-site-config`；本地提交主题 `feat: add safe site configuration`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：按 schema、根映射、重叠/公开根冲突、穿越/symlink、缺失/不可读根、原子故障与晚到外部写入、dirty conflict/future readonly、全部扫描触发、防抖/取消/stale/dispose、确定性与无副作用逐项运行失败测试再最小实现；最终 `npm test -- --run`（10 files / 52 tests）、`npm run lint`、`npm run build`、`npm audit --registry=https://registry.npmjs.org --omit=dev` 与 `git diff --check` 全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：`/root/review_s02` 因服务流中断未形成结论；独立 reviewer `/root/review_s02_final` 首轮发现 5 个 P1、2 个 P2，连续复审补出 3 个及 1 个提交边界 P1；全部按 RED → GREEN 修复，最终复审为 `0 P0 / 0 P1 / 0 P2`。
+- [x] 记录配置迁移/兼容风险：当前仅写 schema v1；高版本源文件保持原文只读并阻断回写/发布，不做隐式降级。原生 Setting Definitions API 将最低 Obsidian 版本提升到 1.13.0；文件系统 watcher 与 no-clobber 配置事务依赖首版限定的 macOS 本地文件系统。提交成功后的清理失败可能留下不影响权威 `site.yml` 的 `.previous-*`/`.tmp-*` 可恢复孤立文件，后续维护 Slice 负责诊断与清理。
 
 ### S03 — 文章发布意图与当前文章面板
 
@@ -783,8 +783,8 @@ flowchart LR
 
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/TASK.md`
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/package.json`、`manifest.json`、`versions.json`、构建/测试/类型检查配置与 `styles.css`
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、Obsidian 宿主适配、核心预览生成与 loopback server
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界回归测试
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期公开行为回归测试
 
 ### Key decisions
 
@@ -802,6 +802,7 @@ flowchart LR
 - 使用结构检查验证 17 个 Slice 均包含 Acceptance criteria、TDD & review gate 和 Slice Notes。
 - 独立规划 reviewer `/root/review_task_slices` 完成只读审查：0 个 P0、4 个 P1；已补齐逐 AC TDD、扫描竞态、Vault 重建旅程和首尾 Slice 纵向性，并处理相关 P2 覆盖/依赖问题。修订后 reviewer 复核确认 4 个 P1 均已解决，未引入新 P0/P1。
 - S01 已完成实现、TDD、独立 subagent review、真实 Obsidian 加载/卸载 smoke 与完整本地验证；尚未创建远端 issue 或 PR。
+- S02 已完成实现、逐行为 TDD、独立 subagent review 与真实 Obsidian 1.13.4 smoke：首次配置、时区固化、设置页、保存后只扫描、外部冲突比较/重载、缺失根 Blocker 和 future-version 只读均通过；烟测 Vault 已移入废纸篓并从 Obsidian Vault 列表移除。
 
 ### Open questions / risks
 

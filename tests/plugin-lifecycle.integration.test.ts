@@ -1,7 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PagesPublishApplication } from '../src/application';
 import {
   activatePagesPublish,
@@ -38,7 +38,58 @@ describe('plugin lifecycle', () => {
     });
 
     await activation.dispose();
-    expect(host.disposedRegistrations).toBe(1);
+    expect(host.disposedRegistrations).toBe(2);
+    expect(host.vaultChange).toBeUndefined();
+  });
+
+  it('starts a configured vault scan when the plugin activates', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-plugin-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), 'configured', 'utf8');
+    const scan = vi.fn(async () => ({
+      configRevision: 'config',
+      digest: 'scan',
+      candidates: [],
+      issues: [],
+    }));
+    const application = new PagesPublishApplication(vault, undefined, { scan });
+    const host = new RecordingHost();
+
+    const activation = activatePagesPublish(application, host);
+
+    await vi.waitFor(() => {
+      expect(scan).toHaveBeenCalledWith(
+        expect.objectContaining({ trigger: 'plugin-load' }),
+      );
+    });
+    await activation.dispose();
+  });
+
+  it('debounces vault file events through the application scanner', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-plugin-'));
+    vaults.push(vault);
+    const scan = vi.fn(async () => ({
+      configRevision: 'config',
+      digest: 'scan',
+      candidates: [],
+      issues: [],
+    }));
+    const application = new PagesPublishApplication(vault, undefined, {
+      scan,
+      scanDebounceMs: 0,
+    });
+    const host = new RecordingHost();
+    const activation = activatePagesPublish(application, host);
+
+    host.emitVaultChange();
+
+    await vi.waitFor(() => {
+      expect(scan).toHaveBeenCalledWith(
+        expect.objectContaining({ trigger: 'file-change' }),
+      );
+    });
+    await activation.dispose();
   });
 });
 
@@ -51,6 +102,7 @@ class RecordingHost implements PagesPublishHost {
     | undefined;
   openedTargets: string[] = [];
   disposedRegistrations = 0;
+  vaultChange: (() => void) | undefined;
 
   registerRibbon(
     icon: string,
@@ -72,6 +124,14 @@ class RecordingHost implements PagesPublishHost {
     return () => undefined;
   }
 
+  registerVaultChanges(callback: () => void): () => void {
+    this.vaultChange = callback;
+    return () => {
+      this.vaultChange = undefined;
+      this.disposedRegistrations += 1;
+    };
+  }
+
   async openWorkspace(target: 'setup' | 'publish-center'): Promise<void> {
     this.openedTargets.push(target);
   }
@@ -84,5 +144,9 @@ class RecordingHost implements PagesPublishHost {
     if (this.command?.id === id) {
       await this.command.callback();
     }
+  }
+
+  emitVaultChange(): void {
+    this.vaultChange?.();
   }
 }
