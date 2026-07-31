@@ -50,7 +50,7 @@
 
 - [x] S01 — 插件壳与单篇本地预览 tracer bullet
 - [x] S02 — 安全站点配置与内容范围
-- [ ] S03 — 文章发布意图与当前文章面板
+- [x] S03 — 文章发布意图与当前文章面板
 - [ ] S04 — URL、栏目索引与重定向
 - [ ] S05 — 私密安全的笔记链接与嵌入
 - [ ] S06 — 图片资源管线与内容安全
@@ -209,28 +209,28 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 读取 `publication` schema v1，并按 title/summary/date/tags 等回退规则展示有效值与来源。
-- [ ] 无显式可见性的新文章默认为 private；首次候选建议不自动写 Frontmatter。
-- [ ] 用户明确编辑可见性或覆盖字段时安全写入 Frontmatter，但不修改部署事实。
-- [ ] 已上线文章改为 private 前显示待下线确认。
-- [ ] 当前文章面板覆盖活动文件、固定文件、非 Markdown、范围外、配置错误和文件丢失状态。
-- [ ] 旧字段只读兼容并提供无损迁移预览；插件只写新 schema。
+- [x] 读取 `publication` schema v1，并按 title/summary/date/tags 等回退规则展示有效值与来源。
+- [x] 无显式可见性的新文章默认为 private；首次候选建议不自动写 Frontmatter。
+- [x] 用户明确编辑可见性或覆盖字段时安全写入 Frontmatter，但不修改部署事实。
+- [x] 已上线文章改为 private 前显示待下线确认。
+- [x] 当前文章面板覆盖活动文件、固定文件、非 Markdown、范围外、配置错误和文件丢失状态。
+- [x] 旧字段只读兼容并提供无损迁移预览；插件只写新 schema。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先验证“缺省 private”和“显式意图不等于线上事实”，再逐字段增加回退/覆盖测试。
-- [ ] TDD：通过文章元数据公开接口和临时 Vault 验证，不断言 YAML 库内部行为。
-- [ ] TDD：运行元数据 fixture、面板状态投影、类型检查和 S01–S02 回归。
-- [ ] Review：独立 subagent 只读审查 Frontmatter 数据安全、回退/覆盖边界与 UI 状态歧义。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：先验证“缺省 private”和“显式意图不等于线上事实”，再逐字段增加回退/覆盖测试。
+- [x] TDD：通过文章元数据公开接口和临时 Vault 验证，不断言 YAML 库内部行为。
+- [x] TDD：运行元数据 fixture、面板状态投影、类型检查和 S01–S02 回归。
+- [x] Review：独立 subagent 只读审查 Frontmatter 数据安全、回退/覆盖边界与 UI 状态歧义。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录旧字段迁移决策：
+- [x] 记录分支/提交或 PR：分支 `codex/s03-publication-intent`；本地提交主题 `feat: add publication intent`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：依次为 schema/缺省 private/线上事实分离、逐字段回退与覆盖、显式提交与待下线确认、面板状态、旧字段迁移建立失败测试，再加入 CRLF/BOM、非 mapping Frontmatter、单字符串 tags、不可变 prepared intent、保存后扫描失败、异步 stale render、祖先 symlink 交换、Unicode/空格单篇预览及 Frontmatter 泄漏等审查回归；最终 `npm test -- --run`（13 files / 83 tests）、`npm run typecheck`、`npm run lint`（零告警）、`npm run build`、`npm audit --registry=https://registry.npmjs.org --omit=dev` 与 `git diff --check` 全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：独立 reviewer `/root/review_s03` 首轮发现 10 个 P1、4 个 P2，后续复审发现同 digest symlink 竞态、BOM/CRLF、Unicode/空格预览与 BOM Frontmatter 泄漏等问题；全部按 RED → GREEN 修复，最后一个未使用 import P2 也已移除并重跑零告警门禁，最终结论 `0 P0 / 0 P1 / 0 P2`。
+- [x] 记录旧字段迁移决策：只识别顶层 boolean `publish`/`published`；冲突值阻断迁移。预览不写源文件，用户显式迁移时写入新 `publication.visibility`，保留旧字段以确保无损和可回退；插件后续只编辑新 schema。真实 Obsidian UI smoke 因“信任 Vault 作者并启用插件”属于运行未识别软件的确认门而未代用户点击，不计为自动验收；临时 Vault 已可恢复地移入 `/Users/ivan/.Trash/pages-publish-s03-smoke.Agcy9R`。
 
 ### S04 — URL、栏目索引与重定向
 
@@ -783,8 +783,8 @@ flowchart LR
 
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/TASK.md`
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/package.json`、`manifest.json`、`versions.json`、构建/测试/类型检查配置与 `styles.css`
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期公开行为回归测试
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为回归测试
 
 ### Key decisions
 
@@ -803,10 +803,12 @@ flowchart LR
 - 独立规划 reviewer `/root/review_task_slices` 完成只读审查：0 个 P0、4 个 P1；已补齐逐 AC TDD、扫描竞态、Vault 重建旅程和首尾 Slice 纵向性，并处理相关 P2 覆盖/依赖问题。修订后 reviewer 复核确认 4 个 P1 均已解决，未引入新 P0/P1。
 - S01 已完成实现、TDD、独立 subagent review、真实 Obsidian 加载/卸载 smoke 与完整本地验证；尚未创建远端 issue 或 PR。
 - S02 已完成实现、逐行为 TDD、独立 subagent review 与真实 Obsidian 1.13.4 smoke：首次配置、时区固化、设置页、保存后只扫描、外部冲突比较/重载、缺失根 Blocker 和 future-version 只读均通过；烟测 Vault 已移入废纸篓并从 Obsidian Vault 列表移除。
+- S03 已完成实现、逐行为 TDD、独立 subagent 多轮 review 与 13 files / 83 tests 全量回归；生产依赖 audit 为 0，文章意图与部署事实隔离、无损旧字段迁移、当前文章状态和无泄漏单篇预览均已验证。
 
 ### Open questions / risks
 
 - S07 的公开站点默认主题尚无独立视觉原型，因此保留 HITL 设计验收。
 - S10/S11/S13 需要隔离 Cloudflare 账号、OAuth 配置和测试域名，开始前应准备非生产资源。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
+- 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。
 - 17 个 Slice 是当前建议粒度；实现中若单个 Slice 无法在一个可审查交付单元内完成，应保持用户价值纵向完整后继续细分，不能退化为水平层任务。

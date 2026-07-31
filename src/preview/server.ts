@@ -39,9 +39,17 @@ export class LocalPreviewServer {
 
     const server = createServer((request, response) => {
       const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
-      const filePath = requestUrl.pathname.endsWith('/')
-        ? `${requestUrl.pathname}index.html`
-        : requestUrl.pathname;
+      let pathname: string;
+      try {
+        pathname = decodeURI(requestUrl.pathname);
+      } catch {
+        response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Invalid URL encoding');
+        return;
+      }
+      const filePath = pathname.endsWith('/')
+        ? `${pathname}index.html`
+        : pathname;
       const body = files[filePath];
 
       if (body === undefined) {

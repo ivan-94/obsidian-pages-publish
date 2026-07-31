@@ -18,10 +18,23 @@ import {
   type SiteConfigV1,
 } from './config/site-config';
 import {
+  prepareArticlePreviewFromDirectory,
   prepareLocalPreviewFromDirectory,
   type LocalPreview,
 } from './core/preview';
 import { LocalPreviewServer, type PreviewSession } from './preview/server';
+import {
+  commitArticleIntentEditToDirectory,
+  prepareArticleIntentEditFromDirectory,
+  type ArticleIntentPatch,
+  type ArticlePublicationMetadata,
+  type PreparedArticleIntentEdit,
+} from './publication/article-metadata';
+import {
+  resolveCurrentArticlePanelFromDirectory,
+  type CurrentArticleContext,
+  type CurrentArticlePanelState,
+} from './publication/current-article-panel';
 
 export type LaunchTarget = 'setup' | 'publish-center';
 
@@ -36,6 +49,7 @@ export class PublishingBlockedError extends Error {
 export class PagesPublishApplication {
   private readonly previewServer = new LocalPreviewServer();
   private readonly scanCoordinator: ContentScanCoordinator<SiteScanResult>;
+  private readonly currentArticleListeners = new Set<() => void>();
 
   constructor(
     private readonly vaultRoot: string,
@@ -70,6 +84,19 @@ export class PagesPublishApplication {
     return session;
   }
 
+  async openArticlePreview(
+    sourcePath: string,
+  ): Promise<PreviewSession & { articleUrl: string }> {
+    const preview = await prepareArticlePreviewFromDirectory(
+      this.vaultRoot,
+      sourcePath,
+    );
+    const session = await this.previewServer.start(preview.files);
+    const articleUrl = new URL(preview.articlePath.slice(1), session.url).toString();
+    this.openExternal(articleUrl);
+    return { ...session, articleUrl };
+  }
+
   async preparePreview(): Promise<LocalPreview> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const before = await this.requestScan('preview');
@@ -99,6 +126,52 @@ export class PagesPublishApplication {
     return { saved, scan };
   }
 
+  getCurrentArticlePanel(
+    context: CurrentArticleContext,
+  ): Promise<CurrentArticlePanelState> {
+    return resolveCurrentArticlePanelFromDirectory(this.vaultRoot, context);
+  }
+
+  prepareArticleIntentEdit(
+    sourcePath: string,
+    patch: ArticleIntentPatch,
+  ): Promise<PreparedArticleIntentEdit> {
+    return prepareArticleIntentEditFromDirectory(
+      this.vaultRoot,
+      sourcePath,
+      patch,
+    );
+  }
+
+  async commitArticleIntentEdit(
+    prepared: PreparedArticleIntentEdit,
+    options: { confirmTakedown?: boolean } = {},
+  ): Promise<{
+    saved: ArticlePublicationMetadata;
+    scan?: CoordinatedScanResult<SiteScanResult>;
+    scanError?: Error;
+  }> {
+    const saved = await commitArticleIntentEditToDirectory(
+      this.vaultRoot,
+      prepared,
+      options,
+    );
+    try {
+      const scan = await this.requestScan('file-change');
+      return { saved, scan };
+    } catch (error) {
+      return {
+        saved,
+        scanError: error instanceof Error ? error : new Error('Scan failed.'),
+      };
+    }
+  }
+
+  subscribeCurrentArticleChanges(listener: () => void): () => void {
+    this.currentArticleListeners.add(listener);
+    return () => this.currentArticleListeners.delete(listener);
+  }
+
   async requestScan(
     trigger: ScanTrigger,
   ): Promise<CoordinatedScanResult<SiteScanResult>> {
@@ -120,10 +193,12 @@ export class PagesPublishApplication {
   }
 
   notifyFileChange(): void {
+    for (const listener of this.currentArticleListeners) listener();
     void this.requestScan('file-change').catch(() => undefined);
   }
 
   async shutdown(): Promise<void> {
+    this.currentArticleListeners.clear();
     this.scanCoordinator.dispose();
     await this.previewServer.stop();
   }

@@ -1,16 +1,8 @@
-import { readdir, readFile } from 'fs/promises';
-import { basename, extname, join, relative, sep } from 'path';
+import { readdir } from 'fs/promises';
+import { extname, join, relative, sep } from 'path';
 import MarkdownIt from 'markdown-it';
-import { parse as parseYaml } from 'yaml';
 import { loadSiteConfigFromDirectory } from '../config/site-config';
-
-interface RawPublicationFrontmatter {
-  publication?: {
-    visibility?: unknown;
-    slug?: unknown;
-    title?: unknown;
-  };
-}
+import { readArticleSnapshotFromDirectory } from '../publication/article-metadata';
 
 export interface PreviewPage {
   sourcePath: string;
@@ -22,6 +14,10 @@ export interface LocalPreview {
   siteName: string;
   pages: PreviewPage[];
   files: Record<string, string>;
+}
+
+export interface ArticleLocalPreview extends LocalPreview {
+  articlePath: string;
 }
 
 const markdown = new MarkdownIt({ html: false, linkify: true });
@@ -43,21 +39,15 @@ export async function prepareLocalPreviewFromDirectory(
     const markdownFiles = await findMarkdownFiles(rootPath);
 
     for (const absolutePath of markdownFiles) {
-      const source = await readFile(absolutePath, 'utf8');
-      const document = parseMarkdownDocument(source);
-      if (document.frontmatter.publication?.visibility !== 'public') {
-        continue;
-      }
-
       const sourcePath = toVaultPath(relative(vaultRoot, absolutePath));
+      const snapshot = await readArticleSnapshotFromDirectory(
+        vaultRoot,
+        sourcePath,
+      );
+      if (snapshot.metadata.visibility.value !== 'public') continue;
       const relativeToRoot = toVaultPath(relative(rootPath, absolutePath));
-      const slug =
-        stringValue(document.frontmatter.publication.slug) ??
-        basename(relativeToRoot, extname(relativeToRoot));
-      const title =
-        stringValue(document.frontmatter.publication.title) ??
-        firstHeading(document.body) ??
-        basename(relativeToRoot, extname(relativeToRoot));
+      const slug = snapshot.metadata.slug.value;
+      const title = snapshot.metadata.title.value;
       const relativeDirectory = toVaultPath(
         relativeToRoot.slice(0, Math.max(0, relativeToRoot.lastIndexOf('/'))),
       );
@@ -67,7 +57,7 @@ export async function prepareLocalPreviewFromDirectory(
         sourcePath,
         title,
         url,
-        html: renderDocument(config.site.name, title, markdown.render(document.body)),
+        html: renderDocument(config.site.name, title, markdown.render(snapshot.body)),
       });
     }
   }
@@ -87,6 +77,52 @@ export async function prepareLocalPreviewFromDirectory(
   return { siteName: config.site.name, pages, files };
 }
 
+export async function prepareArticlePreviewFromDirectory(
+  vaultRoot: string,
+  sourcePath: string,
+): Promise<ArticleLocalPreview> {
+  const loadedConfig = await loadSiteConfigFromDirectory(vaultRoot);
+  if (loadedConfig.status !== 'editable') {
+    throw new Error(
+      `Site config version ${loadedConfig.version} is read-only and cannot be previewed.`,
+    );
+  }
+  const contentRoot = loadedConfig.config.contentRoots.find((candidate) => {
+    const pathFromRoot = relative(candidate.path, sourcePath);
+    return pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`);
+  });
+  if (!contentRoot) throw new Error('Article is outside configured content roots.');
+  const snapshot = await readArticleSnapshotFromDirectory(vaultRoot, sourcePath);
+  const metadata = snapshot.metadata;
+  const relativeToRoot = toVaultPath(relative(contentRoot.path, sourcePath));
+  const relativeDirectory = toVaultPath(
+    relativeToRoot.slice(0, Math.max(0, relativeToRoot.lastIndexOf('/'))),
+  );
+  const url = buildUrl(
+    contentRoot.publicRoot,
+    relativeDirectory,
+    metadata.slug.value,
+  );
+  const page: PreviewPage = {
+    sourcePath,
+    title: metadata.title.value,
+    url,
+  };
+  return {
+    siteName: loadedConfig.config.site.name,
+    pages: [page],
+    articlePath: url,
+    files: {
+      '/index.html': renderIndex(loadedConfig.config.site.name, [page]),
+      [`${url}index.html`]: renderDocument(
+        loadedConfig.config.site.name,
+        metadata.title.value,
+        markdown.render(snapshot.body),
+      ),
+    },
+  };
+}
+
 async function findMarkdownFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files: string[] = [];
@@ -99,32 +135,6 @@ async function findMarkdownFiles(directory: string): Promise<string[]> {
     }
   }
   return files;
-}
-
-function parseMarkdownDocument(source: string): {
-  frontmatter: RawPublicationFrontmatter;
-  body: string;
-} {
-  if (!source.startsWith('---\n')) {
-    return { frontmatter: {}, body: source };
-  }
-
-  const closingMarker = source.indexOf('\n---\n', 4);
-  if (closingMarker === -1) {
-    return { frontmatter: {}, body: source };
-  }
-
-  const frontmatterSource = source.slice(4, closingMarker);
-  const body = source.slice(closingMarker + 5);
-  return {
-    frontmatter: parseYaml(frontmatterSource) as RawPublicationFrontmatter,
-    body,
-  };
-}
-
-function firstHeading(markdownSource: string): string | undefined {
-  const match = /^#\s+(.+)$/m.exec(markdownSource);
-  return match?.[1]?.trim();
 }
 
 function buildUrl(
@@ -172,10 +182,6 @@ function escapeHtml(value: string): string {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function toVaultPath(path: string): string {

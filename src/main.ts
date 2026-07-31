@@ -1,10 +1,14 @@
-import { FileSystemAdapter, Notice, Plugin } from 'obsidian';
+import { FileSystemAdapter, Notice, Plugin, TFile } from 'obsidian';
 import { PagesPublishApplication } from './application';
 import { watchSiteConfigChanges } from './config/site-config-watcher';
 import { activatePagesPublish, type PagesPublishActivation } from './plugin/lifecycle';
 import { ObsidianPagesPublishHost } from './plugin/obsidian-host';
 import { isSupportedPlatform } from './plugin/platform';
 import { PagesPublishSettingTab } from './plugin/settings-tab';
+import {
+  CURRENT_ARTICLE_VIEW_TYPE,
+  CurrentArticleView,
+} from './plugin/current-article-view';
 import { PAGES_PUBLISH_VIEW_TYPE, PagesPublishView } from './plugin/view';
 
 export default class PagesPublishPlugin extends Plugin {
@@ -62,6 +66,35 @@ export default class PagesPublishPlugin extends Plugin {
       PAGES_PUBLISH_VIEW_TYPE,
       (leaf) => new PagesPublishView(leaf, application),
     );
+    this.registerView(
+      CURRENT_ARTICLE_VIEW_TYPE,
+      (leaf) =>
+        new CurrentArticleView(leaf, application, () =>
+          this.openPublishCenter(),
+        ),
+    );
+    this.addCommand({
+      id: 'open-current-article-panel',
+      name: '打开当前文章面板',
+      callback: () => {
+        void this.openCurrentArticlePanel();
+      },
+    });
+    this.registerEvent(
+      this.app.workspace.on('file-menu', (menu, file) => {
+        if (!(file instanceof TFile) || file.extension.toLowerCase() !== 'md') {
+          return;
+        }
+        menu.addItem((item) =>
+          item
+            .setTitle('Pages publish：打开当前文章面板')
+            .setIcon('file-up')
+            .onClick(() => {
+              void this.openCurrentArticlePanel();
+            }),
+        );
+      }),
+    );
     this.activation = activatePagesPublish(
       application,
       new ObsidianPagesPublishHost(this),
@@ -70,5 +103,27 @@ export default class PagesPublishPlugin extends Plugin {
 
   onunload(): void {
     void this.activation?.dispose();
+  }
+
+  private async openCurrentArticlePanel(): Promise<void> {
+    const leaf = this.app.workspace.getRightLeaf(true);
+    if (!leaf) {
+      new Notice('无法创建右侧边栏，请检查当前工作区布局。');
+      return;
+    }
+    await leaf.setViewState({
+      type: CURRENT_ARTICLE_VIEW_TYPE,
+      active: true,
+    });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async openPublishCenter(): Promise<void> {
+    const leaf = this.app.workspace.getLeaf('tab');
+    await leaf.setViewState({
+      type: PAGES_PUBLISH_VIEW_TYPE,
+      active: true,
+    });
+    await this.app.workspace.revealLeaf(leaf);
   }
 }

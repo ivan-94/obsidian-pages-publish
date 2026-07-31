@@ -256,4 +256,137 @@ describe('Pages Publish application', () => {
     expect(scan).toHaveBeenCalledTimes(4);
     await application.shutdown();
   });
+
+  it('reports a scan failure separately after an article intent was saved', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Save Then Scan',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: true',
+        '  graph: true',
+        'cloudflare:',
+        '  project_name: save-then-scan',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(join(vault, 'notes', 'draft.md'), '# Draft\n', 'utf8');
+    const application = new PagesPublishApplication(vault, undefined, {
+      scan: async () => {
+        throw new Error('scan unavailable');
+      },
+    });
+    const prepared = await application.prepareArticleIntentEdit(
+      'notes/draft.md',
+      { visibility: 'public' },
+    );
+
+    const result = await application.commitArticleIntentEdit(prepared);
+
+    expect(result.saved.visibility.value).toBe('public');
+    expect(result.scan).toBeUndefined();
+    expect(result.scanError?.message).toBe('scan unavailable');
+    await expect(
+      application.getCurrentArticlePanel({ activePath: 'notes/draft.md' }),
+    ).resolves.toMatchObject({
+      status: 'article',
+      metadata: { visibility: { value: 'public' } },
+    });
+    await application.shutdown();
+  });
+
+  it('invalidates current-article subscribers on Vault or config changes until unsubscribed', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const application = new PagesPublishApplication(vault, undefined, {
+      scan: async () => ({
+        configRevision: 'config',
+        digest: 'scan',
+        candidates: [],
+        issues: [],
+      }),
+      scanDebounceMs: 0,
+    });
+    const invalidated = vi.fn();
+    const unsubscribe = application.subscribeCurrentArticleChanges(invalidated);
+
+    application.notifyFileChange();
+    expect(invalidated).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    application.notifyFileChange();
+    expect(invalidated).toHaveBeenCalledTimes(1);
+    await application.shutdown();
+  });
+
+  it('opens the selected private Unicode-slug article without an unrelated whole-site scan', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Article Preview',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: true',
+        '  graph: true',
+        'cloudflare:',
+        '  project_name: article-preview',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'private-draft.md'),
+      '\uFEFF---\r\nowner: Ivan\r\npublication:\r\n  slug: 中文 空格\r\n  deployment:\r\n    deployment_id: must-not-render\r\n---\r\n# Private preview only\r\n',
+      'utf8',
+    );
+    const openedUrls: string[] = [];
+    const scan = vi.fn(async () => {
+      throw new Error('unrelated article blocker');
+    });
+    const application = new PagesPublishApplication(
+      vault,
+      (url) => openedUrls.push(url),
+      { scan },
+    );
+
+    const session = await application.openArticlePreview(
+      'notes/private-draft.md',
+    );
+
+    expect(openedUrls).toEqual([session.articleUrl]);
+    expect(session.articleUrl).toMatch(
+      /\/notes\/%E4%B8%AD%E6%96%87%20%E7%A9%BA%E6%A0%BC\/$/,
+    );
+    const response = await fetch(session.articleUrl);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('<h1>Private preview only</h1>');
+    expect(html).not.toContain('deployment_id');
+    expect(html).not.toContain('owner: Ivan');
+    expect(scan).not.toHaveBeenCalled();
+    await application.shutdown();
+  });
 });
