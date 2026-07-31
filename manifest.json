@@ -1,0 +1,9 @@
+{
+  "id": "pages-publish",
+  "name": "Pages Publish",
+  "version": "0.1.0",
+  "minAppVersion": "1.7.2",
+  "description": "Publish selected notes to a Cloudflare Pages site from inside Obsidian.",
+  "author": "Ivan",
+  "isDesktopOnly": true
+}
