@@ -6,6 +6,10 @@ import MarkdownIt, {
 } from 'markdown-it';
 import type { ArticleSourceSnapshot } from '../publication/article-metadata';
 import type { SiteRoutePlan } from '../routing/route-planner';
+import {
+  isObsidianLocalAssetTarget,
+  obsidianAssetClaimFromEnvironment,
+} from './local-assets';
 
 export interface NoteReferenceResolution {
   kind: 'link' | 'text' | 'embed';
@@ -34,6 +38,7 @@ export interface NoteReferenceIssue {
 const resolverEnvironmentKey = 'pagesPublishNoteReferenceResolver';
 const tokenMetadataKey = 'pagesPublishNoteReference';
 const degradedReferenceTokenType = 'pages_publish_note_reference_text';
+const trustedEmbedTokenType = 'pages_publish_trusted_note_embed';
 
 export const NOTE_EMBED_LIMITS = {
   maxDepth: 32,
@@ -45,6 +50,8 @@ export function installNoteReferenceRule(markdown: MarkdownItInstance): void {
   markdown.inline.ruler.before('link', 'pages_publish_note_reference', noteReferenceRule);
   markdown.renderer.rules[degradedReferenceTokenType] = (tokens, index) =>
     markdown.utils.escapeHtml(tokens[index]?.content ?? '');
+  markdown.renderer.rules[trustedEmbedTokenType] = (tokens, index) =>
+    tokens[index]?.content ?? '';
 }
 
 const noteReferenceParser = new MarkdownIt({ html: false });
@@ -103,15 +110,36 @@ export function noteReferenceEnvironment(
 
 export function inspectNoteReferences(
   snapshots: Map<string, ArticleSourceSnapshot>,
+  options: {
+    isObsidianAsset?: (sourcePath: string, target: string) => boolean;
+  } = {},
 ): NoteReferenceIssue[] {
   const issues: NoteReferenceIssue[] = [];
+  const targetIndex = buildNoteTargetIndex(snapshots);
   const references = new Map(
     [...snapshots.values()].map((snapshot) => [
       snapshot.sourcePath,
-      extractNoteReferences(snapshot),
+      extractNoteReferences(snapshot, (target, alias) => {
+        const resolution = resolveNoteTarget(
+          snapshot.sourcePath,
+          target,
+          snapshots,
+          targetIndex,
+        );
+        return resolution.status === 'missing'
+          ? { kind: 'text', text: alias?.trim() || '不可用链接' }
+          : {
+              kind: 'link',
+              text: alias?.trim() || visibleReferenceText(target),
+              url: '#inspection',
+            };
+      }).filter(
+        (reference) =>
+          !reference.embed ||
+          !options.isObsidianAsset?.(snapshot.sourcePath, reference.target),
+      ),
     ]),
   );
-  const targetIndex = buildNoteTargetIndex(snapshots);
   const embedEdges = new Map<string, ResolvedEmbedEdge[]>();
   for (const snapshot of snapshots.values()) {
     const edges: ResolvedEmbedEdge[] = [];
@@ -224,10 +252,6 @@ function noteReferenceRule(state: StateInline, silent: boolean): boolean {
   const target = (separator < 0 ? raw : raw.slice(0, separator)).trim();
   const alias = separator < 0 ? undefined : raw.slice(separator + 1);
   if (!target) return false;
-  if (silent) {
-    state.pos = end + 2;
-    return true;
-  }
   const resolver = state.env[resolverEnvironmentKey] as
     | NoteReferenceResolver
     | undefined;
@@ -235,6 +259,19 @@ function noteReferenceRule(state: StateInline, silent: boolean): boolean {
     kind: 'text' as const,
     text: alias?.trim() || '不可用链接',
   };
+  const assetClaim = obsidianAssetClaimFromEnvironment(state.env, target);
+  if (
+    isObsidianLocalAssetTarget(target) &&
+    (embed || state.src[state.pos - 1] === '!') &&
+    resolution.kind === 'text' &&
+    (assetClaim === true || (assetClaim === undefined && !resolver))
+  ) {
+    return false;
+  }
+  if (silent) {
+    state.pos = end + 2;
+    return true;
+  }
   let firstToken: Token;
   if (resolution.kind === 'link' && resolution.url) {
     const open = state.push('link_open', 'a', 1);
@@ -243,7 +280,7 @@ function noteReferenceRule(state: StateInline, silent: boolean): boolean {
     state.push('text', '', 0).content = resolution.text;
     state.push('link_close', 'a', -1);
   } else if (resolution.kind === 'embed' && resolution.html !== undefined) {
-    firstToken = state.push('html_inline', '', 0);
+    firstToken = state.push(trustedEmbedTokenType, '', 0);
     firstToken.content = resolution.html;
   } else {
     firstToken = state.push(degradedReferenceTokenType, '', 0);
@@ -278,10 +315,14 @@ interface NoteReferenceTokenMetadata {
 
 function extractNoteReferences(
   snapshot: ArticleSourceSnapshot,
+  resolver?: NoteReferenceResolver,
 ): ExtractedNoteReference[] {
   const references: ExtractedNoteReference[] = [];
   const bodyLines = snapshot.body.split(/\r?\n/u);
-  for (const token of noteReferenceParser.parse(snapshot.body, {})) {
+  for (const token of noteReferenceParser.parse(
+    snapshot.body,
+    resolver ? noteReferenceEnvironment(resolver) : {},
+  )) {
     if (token.type !== 'inline' || !token.children || !token.map) continue;
     for (const child of token.children) {
       const metadata = child.meta?.[tokenMetadataKey] as

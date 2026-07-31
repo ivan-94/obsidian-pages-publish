@@ -95,6 +95,61 @@ describe('Pages Publish application', () => {
     await application.shutdown();
   });
 
+  it('extracts external link candidates and checks them only through the manual application action', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: External Link Check',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: external-link-check',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'source.md'),
+      '---\npublication:\n  visibility: public\n---\n# Source\n\n[Broken service](https://public.example/broken)\n',
+      'utf8',
+    );
+    const fetchBoundary = vi.fn(async () =>
+      new Response(undefined, { status: 503 }),
+    );
+    const application = new PagesPublishApplication(vault);
+
+    expect(fetchBoundary).not.toHaveBeenCalled();
+    const issues = await application.checkExternalLinks({
+      fetch: fetchBoundary,
+      resolveHost: async () => ['93.184.216.34'],
+    });
+
+    expect(fetchBoundary).toHaveBeenCalledTimes(1);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: 'external-link-http-error',
+        url: 'https://public.example/broken',
+        sourcePath: 'notes/source.md',
+        line: 7,
+        temporary: true,
+      }),
+    ]);
+    await application.shutdown();
+  });
+
   it('blocks preview when the latest scan reports a missing content root', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
     vaults.push(vault);

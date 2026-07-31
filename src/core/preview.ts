@@ -2,11 +2,20 @@ import { relative, sep } from 'path';
 import MarkdownIt from 'markdown-it';
 import { loadSiteConfigFromDirectory } from '../config/site-config';
 import {
+  collectLocalPreviewAssets,
+  installLocalAssetRule,
+  localAssetEnvironment,
+  type LocalAssetPlan,
+  type PreviewAsset,
+} from '../content/local-assets';
+import type { WebpDecoderBoundary } from '../content/webp-decoder';
+import {
   createNoteReferenceResolver,
   installNoteReferenceRule,
   NOTE_EMBED_LIMITS,
   noteReferenceEnvironment,
 } from '../content/note-references';
+import { installRawHtmlSafetyRule } from '../content/raw-html';
 import { loadDirectoryRouteSources } from '../routing/directory-route-sources';
 import {
   planSiteRoutes,
@@ -25,6 +34,7 @@ export interface LocalPreview {
   siteName: string;
   pages: PreviewPage[];
   files: Record<string, string>;
+  assets: Record<string, PreviewAsset>;
   routePlan: SiteRoutePlan;
 }
 
@@ -32,11 +42,14 @@ export interface ArticleLocalPreview extends LocalPreview {
   articlePath: string;
 }
 
-const markdown = new MarkdownIt({ html: false, linkify: true });
+const markdown = new MarkdownIt({ html: true, linkify: true });
 installNoteReferenceRule(markdown);
+installLocalAssetRule(markdown);
+installRawHtmlSafetyRule(markdown);
 
 export async function prepareLocalPreviewFromDirectory(
   vaultRoot: string,
+  options: { webpDecoder?: WebpDecoderBoundary } = {},
 ): Promise<LocalPreview> {
   const loadedConfig = await loadSiteConfigFromDirectory(vaultRoot);
   if (loadedConfig.status !== 'editable') {
@@ -52,6 +65,13 @@ export async function prepareLocalPreviewFromDirectory(
   const routePlan = planSiteRoutes(config, inputs);
   const blockers = routePlan.issues.filter((issue) => issue.severity === 'blocker');
   if (blockers.length > 0) throw new RoutePlanningError(blockers);
+  const assetPlan = await collectLocalPreviewAssets(
+    vaultRoot,
+    snapshots,
+    config.assets.exclude,
+    new Set(routePlan.articles.map((article) => article.sourcePath)),
+    { webpDecoder: options.webpDecoder },
+  );
   const renderedPages = [] as Array<
     PreviewPage & { html: string; listed: boolean }
   >;
@@ -67,7 +87,7 @@ export async function prepareLocalPreviewFromDirectory(
       html: renderDocument(
         config.site.name,
         title,
-        renderArticleBody(article.sourcePath, snapshots, routePlan),
+        renderArticleBody(article.sourcePath, snapshots, routePlan, assetPlan),
         renderRouteSummary(article),
       ),
     });
@@ -106,12 +126,19 @@ export async function prepareLocalPreviewFromDirectory(
     );
   }
 
-  return { siteName: config.site.name, pages, files, routePlan };
+  return {
+    siteName: config.site.name,
+    pages,
+    files,
+    assets: assetPlan.assets,
+    routePlan,
+  };
 }
 
 export async function prepareArticlePreviewFromDirectory(
   vaultRoot: string,
   sourcePath: string,
+  options: { webpDecoder?: WebpDecoderBoundary } = {},
 ): Promise<ArticleLocalPreview> {
   const loadedConfig = await loadSiteConfigFromDirectory(vaultRoot);
   if (loadedConfig.status !== 'editable') {
@@ -139,6 +166,13 @@ export async function prepareArticlePreviewFromDirectory(
   );
   const blockers = routePlan.issues.filter((issue) => issue.severity === 'blocker');
   if (blockers.length > 0) throw new RoutePlanningError(blockers);
+  const assetPlan = await collectLocalPreviewAssets(
+    vaultRoot,
+    snapshots,
+    loadedConfig.config.assets.exclude,
+    new Set(routePlan.articles.map((article) => article.sourcePath)),
+    { webpDecoder: options.webpDecoder },
+  );
   const plannedArticle = routePlan.articles.find(
     (article) => article.sourcePath === sourcePath,
   );
@@ -159,12 +193,13 @@ export async function prepareArticlePreviewFromDirectory(
     siteName: loadedConfig.config.site.name,
     pages: [page],
     articlePath: url,
+    assets: assetPlan.assets,
     files: {
       '/index.html': renderIndex(loadedConfig.config.site.name, [page]),
       [`${url}index.html`]: renderDocument(
         loadedConfig.config.site.name,
         metadata.title.value,
-        renderArticleBody(sourcePath, snapshots, routePlan),
+        renderArticleBody(sourcePath, snapshots, routePlan, assetPlan),
         renderRouteSummary(articleProjection),
       ),
     },
@@ -184,6 +219,7 @@ function renderArticleBody(
   sourcePath: string,
   snapshots: Map<string, import('../publication/article-metadata').ArticleSourceSnapshot>,
   routePlan: SiteRoutePlan,
+  assetPlan: LocalAssetPlan,
   state: EmbedRenderState = {
     ancestors: new Set(),
     depth: 0,
@@ -196,30 +232,39 @@ function renderArticleBody(
   nextAncestors.add(sourcePath);
   return markdown.render(
     snapshot.body,
-    noteReferenceEnvironment(
-      createNoteReferenceResolver(sourcePath, snapshots, routePlan, {
-        renderEmbed: (targetPath) => {
-          const targetSnapshot = snapshots.get(targetPath);
-          if (
-            !targetSnapshot ||
-            nextAncestors.has(targetPath) ||
-            state.depth >= NOTE_EMBED_LIMITS.maxDepth ||
-            state.budget.expansions >= NOTE_EMBED_LIMITS.maxExpansions ||
-            state.budget.outputCharacters + targetSnapshot.body.length >
-              NOTE_EMBED_LIMITS.maxOutputCharacters
-          ) {
-            return undefined;
-          }
-          state.budget.expansions += 1;
-          state.budget.outputCharacters += targetSnapshot.body.length;
-          return renderArticleBody(targetPath, snapshots, routePlan, {
-            ancestors: nextAncestors,
-            depth: state.depth + 1,
-            budget: state.budget,
-          });
-        },
-      }),
-    ),
+    {
+      ...localAssetEnvironment(sourcePath, assetPlan),
+      ...noteReferenceEnvironment(
+        createNoteReferenceResolver(sourcePath, snapshots, routePlan, {
+          renderEmbed: (targetPath) => {
+            const targetSnapshot = snapshots.get(targetPath);
+            if (
+              !targetSnapshot ||
+              nextAncestors.has(targetPath) ||
+              state.depth >= NOTE_EMBED_LIMITS.maxDepth ||
+              state.budget.expansions >= NOTE_EMBED_LIMITS.maxExpansions ||
+              state.budget.outputCharacters + targetSnapshot.body.length >
+                NOTE_EMBED_LIMITS.maxOutputCharacters
+            ) {
+              return undefined;
+            }
+            state.budget.expansions += 1;
+            state.budget.outputCharacters += targetSnapshot.body.length;
+            return renderArticleBody(
+              targetPath,
+              snapshots,
+              routePlan,
+              assetPlan,
+              {
+                ancestors: nextAncestors,
+                depth: state.depth + 1,
+                budget: state.budget,
+              },
+            );
+          },
+        }),
+      ),
+    },
   );
 }
 

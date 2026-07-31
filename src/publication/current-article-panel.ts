@@ -17,6 +17,11 @@ import {
   inspectNoteReferences,
   type NoteReferenceIssue,
 } from '../content/note-references';
+import {
+  collectLocalPreviewAssets,
+  type LocalAssetIssue,
+} from '../content/local-assets';
+import { inspectRawHtml, type RawHtmlIssue } from '../content/raw-html';
 
 export type ArticlePublicationState =
   | 'private'
@@ -36,7 +41,7 @@ export interface CurrentArticlePanelArticle {
   contentRootPath: string;
   metadata: ArticlePublicationMetadata;
   publicationState: ArticlePublicationState;
-  contentIssues: NoteReferenceIssue[];
+  contentIssues: ArticleContentIssue[];
   route: {
     pendingUrl?: string;
     onlineUrl?: string;
@@ -45,6 +50,11 @@ export interface CurrentArticlePanelArticle {
   };
   legacyMigration?: PreparedLegacyPublicationMigration;
 }
+
+export type ArticleContentIssue =
+  | NoteReferenceIssue
+  | LocalAssetIssue
+  | RawHtmlIssue;
 
 export type CurrentArticlePanelState =
   | CurrentArticlePanelArticle
@@ -110,7 +120,7 @@ export async function resolveCurrentArticlePanelFromDirectory(
     return { status: 'config-error', sourcePath, message: errorMessage(error) };
   }
   let routePlan: SiteRoutePlan;
-  let contentIssues: NoteReferenceIssue[];
+  let contentIssues: ArticleContentIssue[];
   try {
     const collected = await collectDirectoryRouteSources(vaultRoot, loaded.config);
     const planned = planSiteRoutes(loaded.config, collected.inputs);
@@ -118,9 +128,25 @@ export async function resolveCurrentArticlePanelFromDirectory(
       ...planned,
       issues: [...collected.issues, ...planned.issues],
     };
-    contentIssues = inspectNoteReferences(collected.snapshots).filter(
-      (issue) => issue.sourcePath === sourcePath,
+    const assetPlan = await collectLocalPreviewAssets(
+      vaultRoot,
+      collected.snapshots,
+      loaded.config.assets.exclude,
+      new Set(routePlan.articles.map((article) => article.sourcePath)),
     );
+    contentIssues = [
+      ...inspectNoteReferences(collected.snapshots, {
+        isObsidianAsset: (candidateSourcePath, target) =>
+          assetPlan.claimsObsidianAsset(candidateSourcePath, target),
+      }),
+      ...assetPlan.issues,
+      ...inspectRawHtml(collected.snapshots),
+    ]
+      .filter((issue) => issue.sourcePath === sourcePath)
+      .sort(
+        (left, right) =>
+          left.line - right.line || left.column - right.column,
+      );
   } catch (error) {
     return { status: 'config-error', sourcePath, message: errorMessage(error) };
   }

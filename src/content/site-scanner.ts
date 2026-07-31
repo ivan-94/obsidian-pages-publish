@@ -10,6 +10,13 @@ import {
 } from '../publication/article-metadata';
 import { inspectNoteReferences } from './note-references';
 import {
+  collectLocalPreviewAssets,
+  type LocalAssetFileSystemBoundary,
+} from './local-assets';
+import { inspectRawHtml } from './raw-html';
+import type { ExternalLinkCandidate } from './external-link-checker';
+import type { WebpDecoderBoundary } from './webp-decoder';
+import {
   planSiteRoutes,
   type RouteArticleInput,
   type SiteRoutePlan,
@@ -38,6 +45,7 @@ export interface SiteScanResult {
   digest: string;
   candidates: ScanCandidate[];
   issues: ScanIssue[];
+  externalLinks?: ExternalLinkCandidate[];
   routePlan?: SiteRoutePlan;
 }
 
@@ -51,6 +59,8 @@ export async function scanSiteFromDirectory(
   options: {
     signal?: AbortSignal;
     fileSystem?: Partial<ScanFileSystemBoundary>;
+    localAssetFileSystem?: Partial<LocalAssetFileSystemBoundary>;
+    localAssetWebpDecoder?: WebpDecoderBoundary;
   } = {},
 ): Promise<SiteScanResult> {
   const fileSystem: ScanFileSystemBoundary = {
@@ -172,7 +182,22 @@ export async function scanSiteFromDirectory(
       message: routeIssue.message,
     });
   }
-  for (const referenceIssue of inspectNoteReferences(snapshots)) {
+  const assetPlan = await collectLocalPreviewAssets(
+    vaultRoot,
+    snapshots,
+    loaded.config.assets.exclude,
+    new Set(routePlan.articles.map((article) => article.sourcePath)),
+    {
+      fileSystem: options.localAssetFileSystem,
+      signal: options.signal,
+      retainAssets: false,
+      webpDecoder: options.localAssetWebpDecoder,
+    },
+  );
+  for (const referenceIssue of inspectNoteReferences(snapshots, {
+    isObsidianAsset: (sourcePath, target) =>
+      assetPlan.claimsObsidianAsset(sourcePath, target),
+  })) {
     issues.push({
       severity: referenceIssue.severity,
       code: referenceIssue.code,
@@ -188,13 +213,52 @@ export async function scanSiteFromDirectory(
       },
     });
   }
+  for (const assetIssue of assetPlan.issues) {
+    issues.push({
+      severity: assetIssue.severity,
+      code: assetIssue.code,
+      path: assetIssue.sourcePath,
+      line: assetIssue.line,
+      column: assetIssue.column,
+      message: assetIssue.message,
+      impact: assetIssue.impact,
+      dormant: assetIssue.dormant,
+      location: { path: assetIssue.sourcePath, line: assetIssue.line },
+    });
+  }
+  for (const htmlIssue of inspectRawHtml(snapshots)) {
+    issues.push({
+      severity: htmlIssue.severity,
+      code: htmlIssue.code,
+      path: htmlIssue.sourcePath,
+      line: htmlIssue.line,
+      column: htmlIssue.column,
+      message: htmlIssue.message,
+      impact: htmlIssue.impact,
+      dormant: htmlIssue.dormant,
+      location: { path: htmlIssue.sourcePath, line: htmlIssue.line },
+    });
+  }
+  issues.sort(compareScanIssues);
   return {
     configRevision: loaded.revision,
     digest: digestScan(loaded.revision, candidates, issues),
     candidates,
     issues,
+    externalLinks: assetPlan.externalLinks,
     routePlan,
   };
+}
+
+function compareScanIssues(left: ScanIssue, right: ScanIssue): number {
+  return (
+    left.path.localeCompare(right.path) ||
+    (left.line ?? 0) - (right.line ?? 0) ||
+    (left.column ?? 0) - (right.column ?? 0) ||
+    left.code.localeCompare(right.code) ||
+    left.severity.localeCompare(right.severity) ||
+    left.message.localeCompare(right.message)
+  );
 }
 
 function digestScan(

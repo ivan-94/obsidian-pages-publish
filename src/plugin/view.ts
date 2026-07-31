@@ -55,6 +55,37 @@ export class PagesPublishView extends ItemView {
       new ButtonComponent(scanBar).setButtonText('重新扫描').onClick(async () => {
         await this.render();
       });
+      let externalResults: HTMLElement | undefined;
+      new ButtonComponent(scanBar).setButtonText('检查外链').onClick(async () => {
+        try {
+          const issues = await this.application.checkExternalLinks();
+          externalResults?.remove();
+          externalResults = container.createDiv({
+            cls: 'pages-publish-view__external-results',
+          });
+          externalResults.createEl('h3', { text: '临时外链检查结果' });
+          if (issues.length === 0) {
+            externalResults.createEl('p', { text: '未发现临时问题。' });
+          } else {
+            const list = externalResults.createEl('ul', {
+              cls: 'pages-publish-view__issues',
+            });
+            for (const issue of issues) {
+              list.createEl('li', {
+                cls: 'pages-publish-view__issue pages-publish-view__issue--warning',
+                text: `${issue.sourcePath}:${issue.line}:${issue.column} · ${issue.url} · ${issue.message}`,
+              });
+            }
+          }
+          new Notice(
+            issues.length === 0
+              ? '外链检查完成，未发现临时问题。'
+              : `外链检查完成，发现 ${issues.length} 个临时警告。`,
+          );
+        } catch (error) {
+          new Notice(`外链检查未完成：${errorMessage(error)}`);
+        }
+      });
       if (scan.value.issues.length > 0) {
         const issueList = container.createEl('ul', {
           cls: 'pages-publish-view__issues',

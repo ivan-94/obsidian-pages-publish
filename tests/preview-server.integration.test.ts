@@ -40,4 +40,27 @@ describe('local preview server', () => {
     await expect(fetch(first.url)).rejects.toThrow();
     await expect(fetch(second.url)).rejects.toThrow();
   });
+
+  it('serves binary preview assets with their declared media type', async () => {
+    const server = new LocalPreviewServer();
+    servers.push(server);
+    const image = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+
+    const session = await server.start(
+      { '/index.html': '<img src="/assets/image.png" alt="image">' },
+      {
+        '/assets/image.png': {
+          content: image,
+          contentType: 'image/png',
+        },
+      },
+    );
+
+    const response = await fetch(`${session.url}assets/image.png`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/png');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(image);
+  });
 });

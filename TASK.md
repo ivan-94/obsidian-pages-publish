@@ -53,7 +53,7 @@
 - [x] S03 — 文章发布意图与当前文章面板
 - [x] S04 — URL、栏目索引与重定向
 - [x] S05 — 私密安全的笔记链接与嵌入
-- [ ] S06 — 图片资源管线与内容安全
+- [x] S06 — 图片资源管线与内容安全
 - [ ] S07 — 内置默认站点与核心 Markdown 体验
 - [ ] S08 — 搜索、知识图谱与可见性 SEO
 - [ ] S09 — Node/发布引擎与预览生命周期
@@ -307,29 +307,29 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 支持 PNG、JPEG、WebP、GIF 与安全 SVG，并保持原文件内容/格式。
-- [ ] 缺失、被排除、不可读、Vault 外或不安全 SVG 图片产生不可忽略 Blocker。
-- [ ] 超过 5 MiB 的图片产生性能 Warning，但不阻塞。
-- [ ] 本地 PDF、音视频和其他附件降级为显示文本并产生 Warning，不进入产物。
-- [ ] 外部 HTTP(S) 资源保持外链且不被默认下载或探测。
-- [ ] 原始 HTML 与 SVG 内容经过安全策略，产物没有脚本、事件处理器或危险协议。
-- [ ] 外链默认只检查语法；用户主动运行外链检查时才访问网络，失败只产生临时 Warning。
+- [x] 支持 PNG、JPEG、WebP、GIF 与安全 SVG，并保持原文件内容/格式。
+- [x] 缺失、被排除、不可读、Vault 外或不安全 SVG 图片产生不可忽略 Blocker。
+- [x] 超过 5 MiB 的图片产生性能 Warning，但不阻塞。
+- [x] 本地 PDF、音视频和其他附件降级为显示文本并产生 Warning，不进入产物。
+- [x] 外部 HTTP(S) 资源保持外链且不被默认下载或探测。
+- [x] 原始 HTML 与 SVG 内容经过安全策略，产物没有脚本、事件处理器或危险协议。
+- [x] 外链默认只检查语法；用户主动运行外链检查时才访问网络，失败只产生临时 Warning。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：以“只复制公开文章引用的一张图片”为 tracer test，再加入各类阻断/降级输入。
-- [ ] TDD：通过最终构建目录和报告验证行为，安全边界可使用恶意 fixture。
-- [ ] TDD：运行资源矩阵、安全 payload、私密信息负向搜索、类型检查和上游回归。
-- [ ] Review：独立 subagent 只读进行安全审查，重点检查路径逃逸、SVG/HTML 注入和资源泄漏。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：以“只复制公开文章引用的一张图片”为 tracer test，再加入各类阻断/降级输入。
+- [x] TDD：通过最终构建目录和报告验证行为，安全边界可使用恶意 fixture。
+- [x] TDD：运行资源矩阵、安全 payload、私密信息负向搜索、类型检查和上游回归。
+- [x] Review：独立 subagent 只读进行安全审查，重点检查路径逃逸、SVG/HTML 注入和资源泄漏。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录安全 fixture 与剩余攻击面：
+- [x] 记录分支/提交或 PR：分支 `codex/s06-safe-assets`；本地提交主题 `feat: add safe local asset pipeline`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：从“一篇公开文章只携带其一张本地图片”的 tracer RED 开始，逐项完成格式保持、路径/排除/不可读/缺失、5 MiB Warning、附件降级、外链默认零网络、HTML/SVG 策略与手动外链检查；review 后继续以真实/伪造/动画 WebP、DNS pinning/多地址/绝对截止时间、TOCTOU、资源预算和 Markdown 精确行列做 RED → GREEN。最终 `npm test`（17 files / 204 tests）、`npm run typecheck`、`npm run lint`（零告警）、`npm run build`、`git diff --check` 与官方 registry `npm audit --omit=dev`（0 vulnerabilities）全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：独立安全 reviewer `/root/review_s06` 多轮重放路径逃逸、资源耗尽、SSRF、注入与格式伪造；推动修复文件 TOCTOU/预算、DNS 到连接 IP pinning、重定向逐跳审计、IPv6 转换地址、Markdown 行列、完整 WebP 解码与取消、陈旧 WASM 供应链等问题。最终独立结论 `0 P0 / 0 P1 / 0 P2`，全量门禁重跑通过，reviewer 未修改文件。
+- [x] 记录安全 fixture 与剩余攻击面：覆盖 `..`/绝对路径、symlink 与换 inode/size、超大/重复/海量引用、缺失和排除资源、伪 PNG/JPEG/GIF/WebP 头、静态 VP8/VP8L、标准动画 WebP、SVG script/event/style/xml:base/CSS escape/外部引用、原始 HTML、多种私网/映射 IPv6、DNS rebinding/redirect 与取消。生产 WebP 解码复用 Electron/Chromium 宿主异步解码器并保留像素/帧/总量上界；取消后后台单次宿主解码可能短暂收尾，但调用方立即退出并在结果到达时释放 bitmap。手动外链检查仍会按用户明确动作访问公网，但地址数、整条候选截止时间和跳转数均有上界。
 
 ### S07 — 内置默认站点与核心 Markdown 体验
 
@@ -751,7 +751,7 @@ flowchart LR
 
 ### M1 — 本地可用
 
-- [ ] S01–S06 完成：用户可安全配置内容、管理文章意图并预览无泄漏的本地输出。
+- [x] S01–S06 完成：用户可安全配置内容、管理文章意图并预览无泄漏的本地输出。
 
 ### M2 — 站点可读
 
@@ -783,8 +783,8 @@ flowchart LR
 
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/TASK.md`
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/package.json`、`manifest.json`、`versions.json`、构建/测试/类型检查配置与 `styles.css`
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务；S05 可见性安全的 Wiki link/embed 解析、依赖问题检查、资源预算与当前文章精确定位
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务；S05 可见性安全的 Wiki link/embed 解析、依赖问题检查、资源预算与当前文章精确定位；S06 本地图片收集/宿主 WebP 解码、资源/路径安全、HTML/SVG 策略、外链候选与手动 SSRF-safe 检查
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试；S06 图片/附件矩阵、恶意格式/注入/路径/TOCTOU/预算、宿主解码取消、外链定位与 SSRF/超时回归测试
 
 ### Key decisions
 

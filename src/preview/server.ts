@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
+import type { PreviewAsset } from '../content/local-assets';
 
 export interface PreviewSession {
   url: string;
@@ -9,12 +10,15 @@ export class LocalPreviewServer {
   private server: Server | undefined;
   private startPromise: Promise<PreviewSession> | undefined;
 
-  async start(files: Readonly<Record<string, string>>): Promise<PreviewSession> {
+  async start(
+    files: Readonly<Record<string, string>>,
+    assets: Readonly<Record<string, PreviewAsset>> = {},
+  ): Promise<PreviewSession> {
     if (this.startPromise) {
       return this.startPromise;
     }
 
-    const operation = this.startExclusive(files);
+    const operation = this.startExclusive(files, assets);
     this.startPromise = operation;
     try {
       return await operation;
@@ -34,6 +38,7 @@ export class LocalPreviewServer {
 
   private async startExclusive(
     files: Readonly<Record<string, string>>,
+    assets: Readonly<Record<string, PreviewAsset>>,
   ): Promise<PreviewSession> {
     await this.closeCurrentServer();
 
@@ -51,15 +56,21 @@ export class LocalPreviewServer {
         ? `${pathname}index.html`
         : pathname;
       const body = files[filePath];
+      const asset = assets[pathname];
 
-      if (body === undefined) {
+      if (body === undefined && asset === undefined) {
         response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
         response.end('Not found');
         return;
       }
 
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(request.method === 'HEAD' ? undefined : body);
+      response.writeHead(200, {
+        'content-type': asset?.contentType ?? 'text/html; charset=utf-8',
+        'x-content-type-options': 'nosniff',
+      });
+      response.end(
+        request.method === 'HEAD' ? undefined : (asset?.content ?? body),
+      );
     });
 
     await new Promise<void>((resolve, reject) => {

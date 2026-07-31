@@ -13,6 +13,12 @@ import {
   type SiteScanResult,
 } from './content/site-scanner';
 import {
+  checkExternalLinks as runExternalLinkCheck,
+  type ExternalLinkFetchBoundary,
+  type ExternalLinkHostResolver,
+  type TemporaryExternalLinkIssue,
+} from './content/external-link-checker';
+import {
   loadSiteConfigFromDirectory,
   saveSiteConfigToDirectory,
   type EditableSiteConfig,
@@ -89,7 +95,7 @@ export class PagesPublishApplication {
 
   async openPreview(): Promise<PreviewSession> {
     const preview = await this.preparePreview();
-    const session = await this.previewServer.start(preview.files);
+    const session = await this.previewServer.start(preview.files, preview.assets);
     this.openExternal(session.url);
     return session;
   }
@@ -101,7 +107,7 @@ export class PagesPublishApplication {
       this.vaultRoot,
       sourcePath,
     );
-    const session = await this.previewServer.start(preview.files);
+    const session = await this.previewServer.start(preview.files, preview.assets);
     const articleUrl = new URL(preview.articlePath.slice(1), session.url).toString();
     this.openExternal(articleUrl);
     return { ...session, articleUrl };
@@ -119,6 +125,25 @@ export class PagesPublishApplication {
       if (after.value.digest === before.value.digest) return preview;
     }
     throw new Error('Content changed repeatedly while preparing the local preview.');
+  }
+
+  async checkExternalLinks(
+    options: {
+      fetch?: ExternalLinkFetchBoundary;
+      resolveHost?: ExternalLinkHostResolver;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    } = {},
+  ): Promise<TemporaryExternalLinkIssue[]> {
+    const scan = await this.requestScan('manual-refresh');
+    return runExternalLinkCheck(scan.value.externalLinks ?? [], {
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      ...(options.resolveHost ? { resolveHost: options.resolveHost } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
+    });
   }
 
   async createInitialSiteConfig(

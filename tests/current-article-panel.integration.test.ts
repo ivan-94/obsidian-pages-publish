@@ -318,6 +318,42 @@ describe('current article panel state', () => {
       ],
     });
   });
+
+  it('projects locatable image and raw HTML issues for the current article', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await writeFile(
+      join(vault, 'notes', 'current.md'),
+      '---\npublication:\n  visibility: public\n---\n# Current\n\n![missing image](missing.png)\n<script>blocked</script>\n',
+      'utf8',
+    );
+
+    const state = await resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'notes/current.md',
+    });
+
+    expect(state.status).toBe('article');
+    if (state.status !== 'article') return;
+    expect(state.contentIssues).toContainEqual(
+      expect.objectContaining({
+        severity: 'blocker',
+        code: 'local-image-missing',
+        sourcePath: 'notes/current.md',
+        line: 7,
+        impact: 'The image cannot be included in the next site version.',
+        dormant: false,
+      }),
+    );
+    expect(state.contentIssues).toContainEqual(
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'unsafe-raw-html',
+        sourcePath: 'notes/current.md',
+        line: 8,
+        impact: 'Unsafe HTML will be removed from the rendered page.',
+        dormant: false,
+      }),
+    );
+  });
 });
 
 async function createConfiguredVault(vaults: string[]): Promise<string> {
