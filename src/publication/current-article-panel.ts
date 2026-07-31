@@ -13,6 +13,10 @@ import {
   type SiteRoutePlan,
 } from '../routing/route-planner';
 import { collectDirectoryRouteSources } from '../routing/directory-route-sources';
+import {
+  inspectNoteReferences,
+  type NoteReferenceIssue,
+} from '../content/note-references';
 
 export type ArticlePublicationState =
   | 'private'
@@ -32,6 +36,7 @@ export interface CurrentArticlePanelArticle {
   contentRootPath: string;
   metadata: ArticlePublicationMetadata;
   publicationState: ArticlePublicationState;
+  contentIssues: NoteReferenceIssue[];
   route: {
     pendingUrl?: string;
     onlineUrl?: string;
@@ -105,6 +110,7 @@ export async function resolveCurrentArticlePanelFromDirectory(
     return { status: 'config-error', sourcePath, message: errorMessage(error) };
   }
   let routePlan: SiteRoutePlan;
+  let contentIssues: NoteReferenceIssue[];
   try {
     const collected = await collectDirectoryRouteSources(vaultRoot, loaded.config);
     const planned = planSiteRoutes(loaded.config, collected.inputs);
@@ -112,6 +118,9 @@ export async function resolveCurrentArticlePanelFromDirectory(
       ...planned,
       issues: [...collected.issues, ...planned.issues],
     };
+    contentIssues = inspectNoteReferences(collected.snapshots).filter(
+      (issue) => issue.sourcePath === sourcePath,
+    );
   } catch (error) {
     return { status: 'config-error', sourcePath, message: errorMessage(error) };
   }
@@ -125,6 +134,7 @@ export async function resolveCurrentArticlePanelFromDirectory(
     contentRootPath: root.path,
     metadata,
     publicationState: publicationState(metadata),
+    contentIssues,
     route: {
       ...(plannedArticle?.url === undefined ? {} : { pendingUrl: plannedArticle.url }),
       ...(metadata.deployment?.url === undefined

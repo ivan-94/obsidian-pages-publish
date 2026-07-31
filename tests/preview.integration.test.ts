@@ -202,4 +202,157 @@ describe('local site preview', () => {
     );
     expect(preview.files['/index.html']).not.toContain('secret-link');
   });
+
+  it('degrades a public-to-private Wiki link without leaking private target facts', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-vault-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes', 'private'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Private Link Preview',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: private-link-preview',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'public.md'),
+      '---\npublication:\n  visibility: public\n---\n# Public\n\nSee [[private/secret-plan|the internal plan]], [[../outside-secret|the outside note]], and [[does-not-exist|the missing note]].\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'private', 'secret-plan.md'),
+      '---\npublication:\n  title: Confidential Roadmap\n---\n# Confidential Roadmap\n\nProject Nightingale details.\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'outside-secret.md'),
+      '# Outside Vault Secret\n\nOperation Starlight.\n',
+      'utf8',
+    );
+
+    const preview = await prepareLocalPreviewFromDirectory(vault);
+    const output = JSON.stringify(preview.files);
+
+    expect(preview.files['/notes/public/index.html']).toContain(
+      'See the internal plan, the outside note, and the missing note.',
+    );
+    expect(output).not.toContain('private/secret-plan');
+    expect(output).not.toContain('outside-secret');
+    expect(output).not.toContain('does-not-exist');
+    expect(output).not.toContain('Confidential Roadmap');
+    expect(output).not.toContain('Project Nightingale');
+    expect(output).not.toContain('Outside Vault Secret');
+    expect(output).not.toContain('Operation Starlight');
+  });
+
+  it('links public and unlisted Wiki targets to their planned online URLs', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-vault-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Linked Preview',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: linked-preview',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'source.md'),
+      '---\npublication:\n  visibility: public\n---\n# Source\n\n[[public-target|Public target]] and [[unlisted-target|Unlisted target]].\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'public-target.md'),
+      '---\npublication:\n  visibility: public\n---\n# Public Target\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'unlisted-target.md'),
+      '---\npublication:\n  visibility: unlisted\n---\n# Unlisted Target\n',
+      'utf8',
+    );
+
+    const preview = await prepareLocalPreviewFromDirectory(vault);
+    const html = preview.files['/notes/source/index.html'];
+
+    expect(html).toContain('<a href="/notes/public-target/">Public target</a>');
+    expect(html).toContain(
+      '<a href="/notes/unlisted-target/">Unlisted target</a>',
+    );
+  });
+
+  it('bounds high-fanout public embeds with author-visible fallback text', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-vault-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Bounded Embed Preview',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: bounded-embed-preview',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'source.md'),
+      `---\npublication:\n  visibility: public\n---\n# Source\n\n${'![[target|embed truncated]]\n'.repeat(300)}`,
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'target.md'),
+      '---\npublication:\n  visibility: public\n---\n# Target\n\nEMBED_PAYLOAD\n',
+      'utf8',
+    );
+
+    const preview = await prepareLocalPreviewFromDirectory(vault);
+    const html = preview.files['/notes/source/index.html']!;
+    const embeddedPayloads = html.match(/EMBED_PAYLOAD/gu) ?? [];
+
+    expect(embeddedPayloads.length).toBeLessThanOrEqual(256);
+    expect(html).toContain('embed truncated');
+  });
 });

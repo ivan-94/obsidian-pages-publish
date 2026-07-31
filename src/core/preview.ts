@@ -1,6 +1,12 @@
 import { relative, sep } from 'path';
 import MarkdownIt from 'markdown-it';
 import { loadSiteConfigFromDirectory } from '../config/site-config';
+import {
+  createNoteReferenceResolver,
+  installNoteReferenceRule,
+  NOTE_EMBED_LIMITS,
+  noteReferenceEnvironment,
+} from '../content/note-references';
 import { loadDirectoryRouteSources } from '../routing/directory-route-sources';
 import {
   planSiteRoutes,
@@ -27,6 +33,7 @@ export interface ArticleLocalPreview extends LocalPreview {
 }
 
 const markdown = new MarkdownIt({ html: false, linkify: true });
+installNoteReferenceRule(markdown);
 
 export async function prepareLocalPreviewFromDirectory(
   vaultRoot: string,
@@ -60,7 +67,7 @@ export async function prepareLocalPreviewFromDirectory(
       html: renderDocument(
         config.site.name,
         title,
-        markdown.render(snapshot.body),
+        renderArticleBody(article.sourcePath, snapshots, routePlan),
         renderRouteSummary(article),
       ),
     });
@@ -157,7 +164,7 @@ export async function prepareArticlePreviewFromDirectory(
       [`${url}index.html`]: renderDocument(
         loadedConfig.config.site.name,
         metadata.title.value,
-        markdown.render(snapshot.body),
+        renderArticleBody(sourcePath, snapshots, routePlan),
         renderRouteSummary(articleProjection),
       ),
     },
@@ -171,6 +178,58 @@ export async function prepareArticlePreviewFromDirectory(
     );
   }
   return preview;
+}
+
+function renderArticleBody(
+  sourcePath: string,
+  snapshots: Map<string, import('../publication/article-metadata').ArticleSourceSnapshot>,
+  routePlan: SiteRoutePlan,
+  state: EmbedRenderState = {
+    ancestors: new Set(),
+    depth: 0,
+    budget: { expansions: 0, outputCharacters: 0 },
+  },
+): string {
+  const snapshot = snapshots.get(sourcePath);
+  if (!snapshot) return '';
+  const nextAncestors = new Set(state.ancestors);
+  nextAncestors.add(sourcePath);
+  return markdown.render(
+    snapshot.body,
+    noteReferenceEnvironment(
+      createNoteReferenceResolver(sourcePath, snapshots, routePlan, {
+        renderEmbed: (targetPath) => {
+          const targetSnapshot = snapshots.get(targetPath);
+          if (
+            !targetSnapshot ||
+            nextAncestors.has(targetPath) ||
+            state.depth >= NOTE_EMBED_LIMITS.maxDepth ||
+            state.budget.expansions >= NOTE_EMBED_LIMITS.maxExpansions ||
+            state.budget.outputCharacters + targetSnapshot.body.length >
+              NOTE_EMBED_LIMITS.maxOutputCharacters
+          ) {
+            return undefined;
+          }
+          state.budget.expansions += 1;
+          state.budget.outputCharacters += targetSnapshot.body.length;
+          return renderArticleBody(targetPath, snapshots, routePlan, {
+            ancestors: nextAncestors,
+            depth: state.depth + 1,
+            budget: state.budget,
+          });
+        },
+      }),
+    ),
+  );
+}
+
+interface EmbedRenderState {
+  ancestors: Set<string>;
+  depth: number;
+  budget: {
+    expansions: number;
+    outputCharacters: number;
+  };
 }
 
 function renderIndex(siteName: string, pages: PreviewPage[]): string {

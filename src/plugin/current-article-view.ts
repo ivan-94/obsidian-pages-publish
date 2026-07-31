@@ -2,6 +2,7 @@ import {
   ButtonComponent,
   DropdownComponent,
   ItemView,
+  MarkdownView,
   Modal,
   Notice,
   Setting,
@@ -200,6 +201,31 @@ export class CurrentArticleView extends ItemView {
         cls: `pages-publish-route-issue pages-publish-route-issue--${issue.severity}`,
         text: `${issue.severity === 'blocker' ? '阻断' : '警告'}：${issue.message}`,
       });
+    }
+    if (state.contentIssues.length > 0) {
+      container.createEl('h4', { text: '内容检查' });
+      for (const issue of state.contentIssues) {
+        const row = container.createDiv({
+          cls: `pages-publish-content-issue pages-publish-content-issue--${issue.severity}`,
+        });
+        row.createEl('p', {
+          text: `${issue.dormant ? '休眠警告' : '警告'} · 第 ${issue.line} 行：${issue.message}`,
+        });
+        row.createEl('small', { text: issue.impact });
+        new ButtonComponent(row)
+          .setButtonText('定位')
+          .setTooltip(`打开 ${issue.sourcePath} 第 ${issue.line} 行`)
+          .onClick(async () => {
+            await this.app.workspace.openLinkText(issue.sourcePath, '', false);
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!view) return;
+            view.editor.setCursor({
+              line: Math.max(0, issue.line - 1),
+              ch: Math.max(0, issue.column - 1),
+            });
+            view.editor.focus();
+          });
+      }
     }
 
     container.createEl('h4', { text: '发布属性' });

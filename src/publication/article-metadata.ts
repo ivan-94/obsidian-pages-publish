@@ -85,6 +85,7 @@ export interface ArticleSourceSnapshot {
   source: string;
   revision: string;
   body: string;
+  bodyStartLine: number;
   metadata: ArticlePublicationMetadata;
 }
 
@@ -177,13 +178,22 @@ export async function readArticleSnapshotFromDirectory(
   const targetPath = join(vaultRoot, relativePath);
   await assertSafeArticleFile(vaultRoot, targetPath);
   const source = await readFile(targetPath, 'utf8');
+  return readArticleSnapshotFromSource(relativePath, source);
+}
+
+export function readArticleSnapshotFromSource(
+  sourcePath: string,
+  source: string,
+): ArticleSourceSnapshot {
   const document = parseMarkdownDocument(source);
   return {
-    sourcePath: relativePath,
+    sourcePath,
     source,
     revision: digest(source),
     body: document.body,
-    metadata: readArticleMetadataFromParsedDocument(relativePath, document),
+    bodyStartLine:
+      source.slice(0, document.bodyStart).split('\n').length,
+    metadata: readArticleMetadataFromParsedDocument(sourcePath, document),
   };
 }
 
@@ -818,9 +828,10 @@ function invalidPublicationField(
 function parseMarkdownDocument(source: string): {
   frontmatter: Record<string, unknown>;
   body: string;
+  bodyStart: number;
 } {
   const boundary = findFrontmatterBoundary(source);
-  if (!boundary) return { frontmatter: {}, body: source };
+  if (!boundary) return { frontmatter: {}, body: source, bodyStart: 0 };
   let parsed: unknown;
   try {
     parsed = parseYaml(
@@ -847,6 +858,7 @@ function parseMarkdownDocument(source: string): {
   return {
     frontmatter: recordValue(parsed) ?? {},
     body: source.slice(boundary.bodyStart),
+    bodyStart: boundary.bodyStart,
   };
 }
 

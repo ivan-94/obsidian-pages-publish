@@ -5,8 +5,10 @@ import { extname, join, relative, sep } from 'path';
 import { loadSiteConfigFromDirectory } from '../config/site-config';
 import {
   ArticleMetadataValidationError,
-  readArticleMetadataFromSource,
+  readArticleSnapshotFromSource,
+  type ArticleSourceSnapshot,
 } from '../publication/article-metadata';
+import { inspectNoteReferences } from './note-references';
 import {
   planSiteRoutes,
   type RouteArticleInput,
@@ -18,6 +20,11 @@ export interface ScanIssue {
   code: string;
   path: string;
   message: string;
+  line?: number;
+  column?: number;
+  impact?: string;
+  location?: { path: string; line: number };
+  dormant?: boolean;
 }
 
 export interface ScanCandidate {
@@ -74,6 +81,7 @@ export async function scanSiteFromDirectory(
   const candidates: ScanCandidate[] = [];
   const issues: ScanIssue[] = [];
   const routeInputs: RouteArticleInput[] = [];
+  const snapshots = new Map<string, ArticleSourceSnapshot>();
 
   for (let index = 0; index < loaded.config.contentRoots.length; index += 1) {
     const contentRoot = loaded.config.contentRoots[index] as (typeof loaded.config.contentRoots)[number];
@@ -103,7 +111,9 @@ export async function scanSiteFromDirectory(
           sourceDigest: createHash('sha256').update(source).digest('hex'),
         });
         try {
-          const metadata = readArticleMetadataFromSource(sourcePath, source);
+          const snapshot = readArticleSnapshotFromSource(sourcePath, source);
+          const metadata = snapshot.metadata;
+          snapshots.set(sourcePath, snapshot);
           routeInputs.push({
             sourcePath,
             visibility: metadata.visibility.value,
@@ -160,6 +170,22 @@ export async function scanSiteFromDirectory(
         routeIssue.route ??
         'routes',
       message: routeIssue.message,
+    });
+  }
+  for (const referenceIssue of inspectNoteReferences(snapshots)) {
+    issues.push({
+      severity: referenceIssue.severity,
+      code: referenceIssue.code,
+      path: referenceIssue.sourcePath,
+      line: referenceIssue.line,
+      column: referenceIssue.column,
+      message: referenceIssue.message,
+      impact: referenceIssue.impact,
+      dormant: referenceIssue.dormant,
+      location: {
+        path: referenceIssue.sourcePath,
+        line: referenceIssue.line,
+      },
     });
   }
   return {

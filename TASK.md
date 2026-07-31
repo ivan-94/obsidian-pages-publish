@@ -52,7 +52,7 @@
 - [x] S02 — 安全站点配置与内容范围
 - [x] S03 — 文章发布意图与当前文章面板
 - [x] S04 — URL、栏目索引与重定向
-- [ ] S05 — 私密安全的笔记链接与嵌入
+- [x] S05 — 私密安全的笔记链接与嵌入
 - [ ] S06 — 图片资源管线与内容安全
 - [ ] S07 — 内置默认站点与核心 Markdown 体验
 - [ ] S08 — 搜索、知识图谱与可见性 SEO
@@ -274,29 +274,29 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 指向 public/unlisted 的内部链接生成正确线上 URL。
-- [ ] 指向 private、范围外或缺失文章的链接降级为不可点击显示文本。
-- [ ] 降级产物不包含目标路径、推导标题、URL、悬浮内容或反向链接。
-- [ ] private Markdown 嵌入降级为显示文本，不嵌入正文。
-- [ ] 缺失目标产生 Warning；普通循环链接允许，循环嵌入不会无限递归。
-- [ ] private 文章自身的内容问题降级为 dormant warning，不阻塞整站；被下一版内容依赖时重新按依赖规则判定。
-- [ ] 问题显示源文件、精确行号、影响和定位入口。
+- [x] 指向 public/unlisted 的内部链接生成正确线上 URL。
+- [x] 指向 private、范围外或缺失文章的链接降级为不可点击显示文本。
+- [x] 降级产物不包含目标路径、推导标题、URL、悬浮内容或反向链接。
+- [x] private Markdown 嵌入降级为显示文本，不嵌入正文。
+- [x] 缺失目标产生 Warning；普通循环链接允许，循环嵌入不会无限递归。
+- [x] private 文章自身的内容问题降级为 dormant warning，不阻塞整站；被下一版内容依赖时重新按依赖规则判定。
+- [x] 问题显示源文件、精确行号、影响和定位入口。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：以 public → private 链接不泄露为首个失败安全测试，再展开组合矩阵。
-- [ ] TDD：使用完整渲染输出验证泄漏，不只检查内部依赖图标签。
-- [ ] TDD：运行链接/嵌入 fixture、私密信息负向搜索、类型检查和上游回归。
-- [ ] Review：独立 subagent 只读审查所有可见性组合、泄漏面与循环处理。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：以 public → private 链接不泄露为首个失败安全测试，再展开组合矩阵。
+- [x] TDD：使用完整渲染输出验证泄漏，不只检查内部依赖图标签。
+- [x] TDD：运行链接/嵌入 fixture、私密信息负向搜索、类型检查和上游回归。
+- [x] Review：独立 subagent 只读审查所有可见性组合、泄漏面与循环处理。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录隐私负向测试覆盖：
+- [x] 记录分支/提交或 PR：分支 `codex/s05-private-links`；本地提交主题 `feat: add private-safe note references`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：按 public→private 首个泄漏 RED 开始，逐项覆盖 public/unlisted URL、范围外/缺失/歧义降级、private embed、循环 link/embed、private dormant→unlisted active、精确行列与 UI 定位、Markdown code 语义、嵌套 Markdown label、同一行重复引用、6000 节点深链、300 扇出、正文顺序预算耗尽、超 1,000,000 源字符和 private root 预算 RED → GREEN。最终 `npm test -- --run`（15 files / 155 tests）、`npm run typecheck`、`npm run lint`（零告警）、`npm run build`、`git diff --check` 与 `npm audit --registry=https://registry.npmjs.org --omit=dev`（0 vulnerabilities）全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：独立 reviewer `/root/review_s05` 多轮只读审查发现并推动修复深链/指数扇出资源耗尽、扫描/渲染 code 语义差异、markdown-it silent 崩溃、扫描/预览字符预算差异、预算遍历顺序与实际渲染不一致、private root 缺 dormant 预算 Warning 等 6 个 P1；修复后独立重跑定向与全量门禁，最终结论 `0 P0 / 0 P1 / 0 P2`。
+- [x] 记录隐私负向测试覆盖：最终渲染产物对 private/范围外/缺失目标路径、标题、URL 和正文做负向搜索；可见性、歧义、循环、code context 与嵌入资源预算均走同一 Markdown 解析规则。heading/block 引用在 S05 明确降级为作者显示文本并给出可定位 `unsupported-note-anchor` Warning，完整 fragment/block 支持交由 S07；共享预算为每根页面最大深度 32、最多 256 次展开及 1,000,000 个嵌入源字符。
 
 ### S06 — 图片资源管线与内容安全
 
@@ -783,8 +783,8 @@ flowchart LR
 
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/TASK.md`
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/package.json`、`manifest.json`、`versions.json`、构建/测试/类型检查配置与 `styles.css`
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务；S05 可见性安全的 Wiki link/embed 解析、依赖问题检查、资源预算与当前文章精确定位
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试
 
 ### Key decisions
 
@@ -805,6 +805,7 @@ flowchart LR
 - S02 已完成实现、逐行为 TDD、独立 subagent review 与真实 Obsidian 1.13.4 smoke：首次配置、时区固化、设置页、保存后只扫描、外部冲突比较/重载、缺失根 Blocker 和 future-version 只读均通过；烟测 Vault 已移入废纸篓并从 Obsidian Vault 列表移除。
 - S03 已完成实现、逐行为 TDD、独立 subagent 多轮 review 与 13 files / 83 tests 全量回归；生产依赖 audit 为 0，文章意图与部署事实隔离、无损旧字段迁移、当前文章状态和无泄漏单篇预览均已验证。
 - S04 已完成实现、逐行为 TDD、独立 subagent 多轮 review 与 14 files / 138 tests 全量回归；Unicode canonical 路由、栏目索引、全局冲突定位、历史重定向、route-aware UI 编辑和配置+文章协调迁移均已验证，最终审查为 `0 P0 / 0 P1 / 0 P2`。
+- S05 已完成实现、逐行为 TDD、独立 subagent 多轮隐私/资源攻击审查与 15 files / 155 tests 全量回归；可见性安全链接/嵌入、精确问题定位、扫描/预览共享预算和 private dormant 语义均已验证，最终审查为 `0 P0 / 0 P1 / 0 P2`。
 
 ### Open questions / risks
 
@@ -813,4 +814,5 @@ flowchart LR
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。
 - S04 的配置+多文章 URL 迁移已覆盖进程内失败和外部写入恢复，但跨进程崩溃仍缺耐久 journal/恢复收据，交由 S14；永久重定向的真实 HTTP 状态码与部署平台行为交由后续构建/部署 Slice 验证。
+- S05 暂不实现 heading/block fragment；当前安全降级并产生可定位 Warning，完整语法与 URL fragment 规则交由 S07。
 - 17 个 Slice 是当前建议粒度；实现中若单个 Slice 无法在一个可审查交付单元内完成，应保持用户价值纵向完整后继续细分，不能退化为水平层任务。

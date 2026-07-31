@@ -291,6 +291,33 @@ describe('current article panel state', () => {
       route: { issues: [] },
     });
   });
+
+  it('projects locatable note-reference issues for the current article', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await writeFile(
+      join(vault, 'notes', 'current.md'),
+      '---\npublication:\n  visibility: public\n---\n# Current\n\n[[missing|missing note]]\n',
+      'utf8',
+    );
+
+    const state = await resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'notes/current.md',
+    });
+
+    expect(state).toMatchObject({
+      status: 'article',
+      contentIssues: [
+        {
+          severity: 'warning',
+          code: 'missing-note-reference',
+          sourcePath: 'notes/current.md',
+          line: 7,
+          impact: 'The published page will show text instead of a link.',
+          dormant: false,
+        },
+      ],
+    });
+  });
 });
 
 async function createConfiguredVault(vaults: string[]): Promise<string> {
