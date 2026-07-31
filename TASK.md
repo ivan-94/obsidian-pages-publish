@@ -6,7 +6,7 @@
 >
 > 开发方式：每个 Slice 强制 TDD，并至少完成一轮独立 subagent review
 >
-> 更新日期：2026-07-31
+> 更新日期：2026-08-01
 
 ## 1. 使用说明
 
@@ -51,7 +51,7 @@
 - [x] S01 — 插件壳与单篇本地预览 tracer bullet
 - [x] S02 — 安全站点配置与内容范围
 - [x] S03 — 文章发布意图与当前文章面板
-- [ ] S04 — URL、栏目索引与重定向
+- [x] S04 — URL、栏目索引与重定向
 - [ ] S05 — 私密安全的笔记链接与嵌入
 - [ ] S06 — 图片资源管线与内容安全
 - [ ] S07 — 内置默认站点与核心 Markdown 体验
@@ -241,29 +241,29 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] URL 由公开根、相对目录和显式/派生 slug 确定生成。
-- [ ] 支持中文/Unicode，拒绝路径层级控制、穿越、查询和 fragment 字符。
-- [ ] 全站页面、系统页和重定向路由冲突产生可定位 Blocker。
-- [ ] `_index.md` 优先于 `index.md`；双文件时无额外 Warning，且不生成第二个目录索引页面。
-- [ ] UI 修改已上线 URL 时自动记录旧地址；重定向压平且循环/缺失目标被阻止。
-- [ ] 用户直接修改 slug 且无法可靠识别旧 URL 时产生 Warning，不自动猜测历史地址。
-- [ ] 当前文章面板和预览同时显示待发布 URL、线上 URL 与重定向结果。
+- [x] URL 由公开根、相对目录和显式/派生 slug 确定生成。
+- [x] 支持中文/Unicode，拒绝路径层级控制、穿越、查询和 fragment 字符。
+- [x] 全站页面、系统页和重定向路由冲突产生可定位 Blocker。
+- [x] `_index.md` 优先于 `index.md`；双文件时无额外 Warning，且不生成第二个目录索引页面。
+- [x] UI 修改已上线 URL 时自动记录旧地址；重定向压平且循环/缺失目标被阻止。
+- [x] 用户直接修改 slug 且无法可靠识别旧 URL 时产生 Warning，不自动猜测历史地址。
+- [x] 当前文章面板和预览同时显示待发布 URL、线上 URL 与重定向结果。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先写单根/单文档路由失败测试，再逐个加入 Unicode、索引、冲突和重定向行为。
-- [ ] TDD：路由测试只依赖规划器公共结果，不快照内部中间对象。
-- [ ] TDD：运行路由性质/fixture 测试、预览集成、类型检查和上游回归。
-- [ ] Review：独立 subagent 只读审查 URL 规范化、路由安全、重定向循环和历史地址保留。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：先写单根/单文档路由失败测试，再逐个加入 Unicode、索引、冲突和重定向行为。
+- [x] TDD：路由测试只依赖规划器公共结果，不快照内部中间对象。
+- [x] TDD：运行路由性质/fixture 测试、预览集成、类型检查和上游回归。
+- [x] Review：独立 subagent 只读审查 URL 规范化、路由安全、重定向循环和历史地址保留。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录 URL 兼容风险：
+- [x] 记录分支/提交或 PR：分支 `codex/s04-routing-redirects`；本地提交主题 `feat: add safe routing and redirects`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：从单根单文档 URL 开始，逐项为 Unicode/NFC、危险 slug/目录/public root、文章/栏目/系统页/重定向冲突定位、`_index.md` 优先级、unlisted 可访问但不发现、历史 redirect 压平/循环/缺失目标、直接 Frontmatter 改 slug Warning、面板/预览三类 URL 事实、全局单篇预览、public-root 影响确认与自动迁移、配置+多文章协调回滚及多类外部写入竞态建立公开 RED → GREEN；审查回归继续覆盖 redirect owner、无关坏 Frontmatter/缺失根容错、private issue 投影、unlisted index、canonical redirects、逐组/逐字段修复和 visibility/redirects 写前校验。最终 `npm test -- --run`（14 files / 138 tests）、`npm run typecheck`、`npm run lint`（零告警）、`npm run build`、`npm audit --registry=https://registry.npmjs.org --omit=dev`（0 vulnerabilities）与 `git diff --check` 全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：独立 reviewer `/root/review_s04` 多轮只读审查发现并推动修复 redirect/section owner 定位、配置与文章协调事务竞态、无关坏文件 fail-fast、unlisted index、canonical 持久化、route-aware slug/kind/redirects/visibility 编辑及旧 Blocker 增量修复等 P1；每项均按 RED → GREEN 修复。reviewer 独立重跑最终门禁，结论 `0 P0 / 0 P1 / 0 P2`。
+- [x] 记录 URL 兼容风险：URL path 使用一次 percent decode 后的 NFC canonical 形式，Unicode 保持直写，尾斜杠统一，路由大小写敏感；残余 `%`、双重编码、路径层级控制、查询、fragment 与控制字符被拒绝。插件只对已知 deployment URL 自动建立历史地址；无法可靠推断的直接 Frontmatter 改动只告警。跨进程崩溃时配置+多文章迁移尚无耐久 journal/恢复收据，留给 S14；真实部署产物的 HTTP 永久重定向状态留给后续构建/部署 Slice 验证。
 
 ### S05 — 私密安全的笔记链接与嵌入
 
@@ -783,8 +783,8 @@ flowchart LR
 
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/TASK.md`
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/package.json`、`manifest.json`、`versions.json`、构建/测试/类型检查配置与 `styles.css`
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为回归测试
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试
 
 ### Key decisions
 
@@ -804,6 +804,7 @@ flowchart LR
 - S01 已完成实现、TDD、独立 subagent review、真实 Obsidian 加载/卸载 smoke 与完整本地验证；尚未创建远端 issue 或 PR。
 - S02 已完成实现、逐行为 TDD、独立 subagent review 与真实 Obsidian 1.13.4 smoke：首次配置、时区固化、设置页、保存后只扫描、外部冲突比较/重载、缺失根 Blocker 和 future-version 只读均通过；烟测 Vault 已移入废纸篓并从 Obsidian Vault 列表移除。
 - S03 已完成实现、逐行为 TDD、独立 subagent 多轮 review 与 13 files / 83 tests 全量回归；生产依赖 audit 为 0，文章意图与部署事实隔离、无损旧字段迁移、当前文章状态和无泄漏单篇预览均已验证。
+- S04 已完成实现、逐行为 TDD、独立 subagent 多轮 review 与 14 files / 138 tests 全量回归；Unicode canonical 路由、栏目索引、全局冲突定位、历史重定向、route-aware UI 编辑和配置+文章协调迁移均已验证，最终审查为 `0 P0 / 0 P1 / 0 P2`。
 
 ### Open questions / risks
 
@@ -811,4 +812,5 @@ flowchart LR
 - S10/S11/S13 需要隔离 Cloudflare 账号、OAuth 配置和测试域名，开始前应准备非生产资源。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。
+- S04 的配置+多文章 URL 迁移已覆盖进程内失败和外部写入恢复，但跨进程崩溃仍缺耐久 journal/恢复收据，交由 S14；永久重定向的真实 HTTP 状态码与部署平台行为交由后续构建/部署 Slice 验证。
 - 17 个 Slice 是当前建议粒度；实现中若单个 Slice 无法在一个可审查交付单元内完成，应保持用户价值纵向完整后继续细分，不能退化为水平层任务。

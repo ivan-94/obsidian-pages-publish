@@ -139,6 +139,158 @@ describe('current article panel state', () => {
       sourcePath: 'notes/draft.md',
     });
   });
+
+  it('projects the pending URL, online URL, and flattened redirect result together', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await writeFile(
+      join(vault, 'notes', 'guide.md'),
+      [
+        '---',
+        'publication:',
+        '  visibility: public',
+        '  slug: new',
+        '  redirects: [/notes/old/]',
+        '  deployment:',
+        '    url: /notes/old/',
+        '---',
+        '# Guide',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const state = await resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'notes/guide.md',
+    });
+
+    expect(state).toMatchObject({
+      status: 'article',
+      route: {
+        pendingUrl: '/notes/new/',
+        onlineUrl: '/notes/old/',
+        redirects: [{ from: '/notes/old/', to: '/notes/new/' }],
+        issues: [],
+      },
+    });
+  });
+
+  it('keeps current article facts available when another article has malformed Frontmatter', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await writeFile(
+      join(vault, 'notes', 'current.md'),
+      '---\npublication:\n  visibility: public\n  slug: current\n---\n# Current\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'broken.md'),
+      '---\npublication: [\n---\n# Broken\n',
+      'utf8',
+    );
+
+    const state = await resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'notes/current.md',
+    });
+
+    expect(state).toMatchObject({
+      status: 'article',
+      sourcePath: 'notes/current.md',
+      metadata: {
+        visibility: { value: 'public' },
+        slug: { value: 'current' },
+      },
+      route: {
+        pendingUrl: '/notes/current/',
+      },
+    });
+  });
+
+  it('includes blockers owned by an ancestor section in the current article route state', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Panel Test',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /search',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: true',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: panel-test',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'article.md'),
+      '---\npublication:\n  visibility: public\n---\n# Article\n',
+      'utf8',
+    );
+
+    const state = await resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'notes/article.md',
+    });
+
+    expect(state).toMatchObject({
+      status: 'article',
+      route: {
+        issues: [
+          expect.objectContaining({
+            severity: 'blocker',
+            code: 'section-system-route-conflict',
+            directoryPath: 'notes',
+          }),
+        ],
+      },
+    });
+  });
+
+  it('does not attach a public section blocker to a private article without a route', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Panel Test',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /search',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: true',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: panel-test',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(join(vault, 'notes', 'private.md'), '# Private\n', 'utf8');
+    await writeFile(
+      join(vault, 'notes', 'public.md'),
+      '---\npublication:\n  visibility: public\n---\n# Public\n',
+      'utf8',
+    );
+
+    const state = await resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'notes/private.md',
+    });
+
+    expect(state).toMatchObject({
+      status: 'article',
+      publicationState: 'private',
+      route: { issues: [] },
+    });
+  });
 });
 
 async function createConfiguredVault(vaults: string[]): Promise<string> {

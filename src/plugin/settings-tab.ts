@@ -10,6 +10,7 @@ import {
   SiteConfigEditorSession,
   SiteSettingsService,
   type SiteConfigEditorState,
+  type SiteUrlChange,
 } from '../config/site-settings';
 import {
   loadSiteConfigFromDirectory,
@@ -19,6 +20,7 @@ import {
 export class PagesPublishSettingTab extends PluginSettingTab {
   private session?: SiteConfigEditorSession;
   private editorState?: SiteConfigEditorState;
+  private pendingUrlChanges?: SiteUrlChange[];
   private rendering = 0;
 
   constructor(
@@ -52,6 +54,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   hide(): void {
     this.session = undefined;
     this.editorState = undefined;
+    this.pendingUrlChanges = undefined;
     this.rendering += 1;
   }
 
@@ -286,6 +289,22 @@ export class PagesPublishSettingTab extends PluginSettingTab {
       }),
     );
 
+    if (this.pendingUrlChanges && this.pendingUrlChanges.length > 0) {
+      const impact = container.createDiv({ cls: 'pages-publish-view__warning' });
+      impact.createEl('p', {
+        text: `公开路径变化将影响 ${this.pendingUrlChanges.length} 篇已上线文章。确认后再次点击“保存设置”。`,
+      });
+      const list = impact.createEl('ul');
+      for (const change of this.pendingUrlChanges) {
+        list.createEl('li', {
+          text: `${change.sourcePath}：${change.onlineUrl} → ${change.pendingUrl}`,
+        });
+      }
+      impact.createEl('p', {
+        text: '保存前会把每个已知旧 URL 写入文章 redirects；不会自动发布。',
+      });
+    }
+
     const footer = new Setting(container).setDesc(
       state.status === 'dirty'
         ? '有未保存的设置。保存后将重新扫描，但不会自动发布。'
@@ -322,12 +341,21 @@ export class PagesPublishSettingTab extends PluginSettingTab {
               const service = new SiteSettingsService(this.vaultRoot, {
                 scan: () => this.application.requestScan('config-save'),
               });
-              await service.save(
-                saveInput.draft,
-                saveInput.expectedRevision,
-              );
+              const urlChanges = await service.previewUrlChanges(saveInput.draft);
+              if (
+                urlChanges.length > 0 &&
+                JSON.stringify(urlChanges) !==
+                  JSON.stringify(this.pendingUrlChanges ?? [])
+              ) {
+                this.pendingUrlChanges = urlChanges;
+                new Notice('请先审阅 URL 影响，然后再次点击“保存设置”确认。');
+                this.update();
+                return;
+              }
+              await service.save(saveInput.draft, saveInput.expectedRevision);
               this.session = await SiteConfigEditorSession.open(this.vaultRoot);
               this.editorState = this.session.getState();
+              this.pendingUrlChanges = undefined;
               new Notice('配置已保存并完成扫描。没有执行发布。');
               this.update();
             } catch (error) {
@@ -340,6 +368,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
 
   private updateDraft(change: Parameters<SiteConfigEditorSession['update']>[0]): void {
     if (!this.session) return;
+    this.pendingUrlChanges = undefined;
     this.editorState = this.session.update(change);
   }
 }

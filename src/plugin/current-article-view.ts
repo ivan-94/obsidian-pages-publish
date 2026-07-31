@@ -154,7 +154,7 @@ export class CurrentArticleView extends ItemView {
     dropdown.onChange(async (value) => {
       dropdown.setDisabled(true);
       try {
-        const prepared = await this.application.prepareArticleIntentEdit(
+        const prepared = await this.application.prepareArticleRouteIntentEdit(
           state.sourcePath,
           { visibility: value as 'public' | 'unlisted' | 'private' },
         );
@@ -174,6 +174,33 @@ export class CurrentArticleView extends ItemView {
         await this.render();
       }
     });
+
+    container.createEl('h4', { text: 'URL 与重定向' });
+    this.renderReadonlyFact(
+      container,
+      '待发布 URL',
+      state.route.pendingUrl ?? '下一版不生成页面',
+    );
+    this.renderReadonlyFact(
+      container,
+      '当前线上 URL',
+      state.route.onlineUrl ?? '尚未上线',
+    );
+    this.renderReadonlyFact(
+      container,
+      '重定向结果',
+      state.route.redirects.length === 0
+        ? '无'
+        : state.route.redirects
+            .map((redirect) => `${redirect.from} → ${redirect.to}`)
+            .join('\n'),
+    );
+    for (const issue of state.route.issues) {
+      container.createEl('p', {
+        cls: `pages-publish-route-issue pages-publish-route-issue--${issue.severity}`,
+        text: `${issue.severity === 'blocker' ? '阻断' : '警告'}：${issue.message}`,
+      });
+    }
 
     container.createEl('h4', { text: '发布属性' });
     this.renderValue(container, '标题', state.metadata.title);
@@ -273,10 +300,16 @@ export class CurrentArticleView extends ItemView {
             const patch: ArticleIntentPatch = {
               [field]: draft.trim() || null,
             };
-            const prepared = await this.application.prepareArticleIntentEdit(
-              state.sourcePath,
-              patch,
-            );
+            const prepared =
+              field === 'slug'
+                ? await this.application.prepareArticleUrlIntentEdit(
+                    state.sourcePath,
+                    patch.slug ?? null,
+                  )
+                : await this.application.prepareArticleIntentEdit(
+                    state.sourcePath,
+                    patch,
+                  );
             const result =
               await this.application.commitArticleIntentEdit(prepared);
             new Notice(
@@ -404,10 +437,21 @@ export class CurrentArticleView extends ItemView {
   ): Promise<void> {
     button.setDisabled(true);
     try {
-      const prepared = await this.application.prepareArticleIntentEdit(
-        state.sourcePath,
-        patch,
-      );
+      const prepared =
+        patch.kind === undefined && patch.redirects === undefined
+          ? await this.application.prepareArticleIntentEdit(
+              state.sourcePath,
+              patch,
+            )
+          : await this.application.prepareArticleRouteIntentEdit(
+              state.sourcePath,
+              {
+                ...(patch.kind === undefined ? {} : { kind: patch.kind }),
+                ...(patch.redirects === undefined
+                  ? {}
+                  : { redirects: patch.redirects }),
+              },
+            );
       const result = await this.application.commitArticleIntentEdit(prepared);
       new Notice(
         result.scanError

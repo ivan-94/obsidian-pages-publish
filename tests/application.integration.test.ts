@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -308,6 +308,436 @@ describe('Pages Publish application', () => {
     await application.shutdown();
   });
 
+  it('preserves the known online URL when the article panel edits a deployed slug', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Redirect Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: redirect-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'guide.md'),
+      [
+        '---',
+        'publication:',
+        '  visibility: public',
+        '  slug: old',
+        '  deployment:',
+        '    url: /notes/old/',
+        '---',
+        '# Guide',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault, undefined, {
+      scan: async () => ({
+        configRevision: 'config',
+        digest: 'scan',
+        candidates: [],
+        issues: [],
+      }),
+    });
+
+    const prepared = await application.prepareArticleUrlIntentEdit(
+      'notes/guide.md',
+      'new',
+    );
+
+    expect(prepared.next.slug.value).toBe('new');
+    expect(prepared.next.redirects.value).toEqual(['/notes/old/']);
+    expect(prepared.current.deployment?.url).toBe('/notes/old/');
+    await application.shutdown();
+  });
+
+  it('canonicalizes and deduplicates the deployed URL when preserving slug history', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Canonical Redirect Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: canonical-redirect-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'guide.md'),
+      [
+        '---',
+        'publication:',
+        '  visibility: public',
+        '  slug: old',
+        '  redirects: [/notes/old/, /notes/%6Fld/]',
+        '  deployment:',
+        '    url: /notes/old',
+        '---',
+        '# Guide',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    const prepared = await application.prepareArticleUrlIntentEdit(
+      'notes/guide.md',
+      'new',
+    );
+
+    expect(prepared.next.redirects.value).toEqual(['/notes/old/']);
+    await application.shutdown();
+  });
+
+  it('canonicalizes redirect edits and rejects a system-route collision before writing', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Redirect Editor Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: redirect-editor-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const source =
+      '---\npublication:\n  visibility: public\n---\n# Guide\n';
+    await writeFile(join(vault, 'notes', 'guide.md'), source, 'utf8');
+    const application = new PagesPublishApplication(vault);
+
+    const prepared = await application.prepareArticleRouteIntentEdit(
+      'notes/guide.md',
+      { kind: undefined, redirects: ['/notes/old', '/notes/%6Fld/'] },
+    );
+
+    expect(prepared.next.redirects.value).toEqual(['/notes/old/']);
+    await expect(
+      application.prepareArticleRouteIntentEdit('notes/guide.md', {
+        redirects: ['/privacy/'],
+      }),
+    ).rejects.toMatchObject({
+      name: 'RoutePlanningError',
+      issues: [expect.objectContaining({ code: 'redirect-route-conflict' })],
+    });
+    await expect(readFile(join(vault, 'notes', 'guide.md'), 'utf8')).resolves.toBe(
+      source,
+    );
+    await writeFile(
+      join(vault, 'notes', 'private.md'),
+      '---\npublication:\n  slug: guide\n---\n# Private\n',
+      'utf8',
+    );
+    await expect(
+      application.prepareArticleRouteIntentEdit('notes/private.md', {
+        visibility: 'public',
+      }),
+    ).rejects.toMatchObject({
+      name: 'RoutePlanningError',
+      issues: [expect.objectContaining({ code: 'route-conflict' })],
+    });
+    await application.shutdown();
+  });
+
+  it('prepares a route edit despite unrelated malformed content and a missing root', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Resilient Route Edit',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        '  - path: absent',
+        '    public_root: /absent',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: resilient-route-edit',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'current.md'),
+      '---\npublication:\n  visibility: public\n  slug: old\n---\n# Current\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'broken.md'),
+      '---\npublication: [\n---\n# Broken\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    const prepared = await application.prepareArticleUrlIntentEdit(
+      'notes/current.md',
+      'new',
+    );
+
+    expect(prepared.next.slug.value).toBe('new');
+    await application.shutdown();
+  });
+
+  it('rejects a panel slug edit that conflicts with another article before writing Frontmatter', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Collision Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: collision-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const currentSource =
+      '---\npublication:\n  visibility: public\n  slug: current\n---\n# Current\n';
+    await writeFile(join(vault, 'notes', 'current.md'), currentSource, 'utf8');
+    await writeFile(
+      join(vault, 'notes', 'occupied.md'),
+      '---\npublication:\n  visibility: public\n  slug: occupied\n---\n# Occupied\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    await expect(
+      application.prepareArticleUrlIntentEdit('notes/current.md', 'occupied'),
+    ).rejects.toMatchObject({
+      name: 'RoutePlanningError',
+      issues: [expect.objectContaining({ code: 'route-conflict' })],
+    });
+    await expect(readFile(join(vault, 'notes', 'current.md'), 'utf8')).resolves.toBe(
+      currentSource,
+    );
+    await application.shutdown();
+  });
+
+  it('allows one route conflict group to be repaired while another existing group remains', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Repairable Collision Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: repairable-collision-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    for (const [filename, slug] of [
+      ['a.md', 'first-conflict'],
+      ['b.md', 'first-conflict'],
+      ['c.md', 'second-conflict'],
+      ['d.md', 'second-conflict'],
+    ] as const) {
+      await writeFile(
+        join(vault, 'notes', filename),
+        `---\npublication:\n  visibility: public\n  slug: ${slug}\n---\n# ${filename}\n`,
+        'utf8',
+      );
+    }
+    const application = new PagesPublishApplication(vault);
+
+    const prepared = await application.prepareArticleUrlIntentEdit(
+      'notes/a.md',
+      'repaired',
+    );
+
+    expect(prepared.next.slug.value).toBe('repaired');
+    await application.shutdown();
+  });
+
+  it('allows independent blockers on one article to be repaired one field at a time', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Incremental Repair Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: incremental-repair-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'a.md'),
+      '---\npublication:\n  visibility: public\n  slug: collision\n  redirects: [/privacy/]\n---\n# A\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'b.md'),
+      '---\npublication:\n  visibility: public\n  slug: collision\n---\n# B\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    const repairedSlug = await application.prepareArticleUrlIntentEdit(
+      'notes/a.md',
+      'unique',
+    );
+    const repairedRedirect = await application.prepareArticleRouteIntentEdit(
+      'notes/a.md',
+      { redirects: [] },
+    );
+
+    expect(repairedSlug.next.slug.value).toBe('unique');
+    expect(repairedSlug.next.redirects.value).toEqual(['/privacy/']);
+    expect(repairedRedirect.next.slug.value).toBe('collision');
+    expect(repairedRedirect.next.redirects.value).toEqual([]);
+    await application.shutdown();
+  });
+
+  it('preserves the known online URL when the panel changes article kind to an index', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes', 'guides'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Kind Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: kind-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'guides', 'page.md'),
+      [
+        '---',
+        'publication:',
+        '  visibility: public',
+        '  deployment:',
+        '    url: /notes/guides/page/',
+        '---',
+        '# Page',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    const prepared = await application.prepareArticleRouteIntentEdit(
+      'notes/guides/page.md',
+      { kind: 'index', redirects: undefined },
+    );
+
+    expect(prepared.next.kind.value).toBe('index');
+    expect(prepared.next.redirects.value).toEqual(['/notes/guides/page/']);
+    await application.shutdown();
+  });
+
   it('invalidates current-article subscribers on Vault or config changes until unsubscribed', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
     vaults.push(vault);
@@ -387,6 +817,47 @@ describe('Pages Publish application', () => {
     expect(html).not.toContain('deployment_id');
     expect(html).not.toContain('owner: Ivan');
     expect(scan).not.toHaveBeenCalled();
+    await application.shutdown();
+  });
+
+  it('uses the global route plan for a single-article preview', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Global Route Preview',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: global-route-preview',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const source =
+      '---\npublication:\n  visibility: public\n  slug: collision\n---\n# Page\n';
+    await writeFile(join(vault, 'notes', 'one.md'), source, 'utf8');
+    await writeFile(join(vault, 'notes', 'two.md'), source, 'utf8');
+    const application = new PagesPublishApplication(vault);
+
+    await expect(
+      application.openArticlePreview('notes/one.md'),
+    ).rejects.toMatchObject({
+      name: 'RoutePlanningError',
+      issues: [expect.objectContaining({ code: 'route-conflict' })],
+    });
     await application.shutdown();
   });
 });

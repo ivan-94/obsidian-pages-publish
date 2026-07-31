@@ -6,6 +6,13 @@ import {
   type ArticlePublicationMetadata,
   type PreparedLegacyPublicationMigration,
 } from './article-metadata';
+import {
+  planSiteRoutes,
+  type PlannedRedirect,
+  type RouteIssue,
+  type SiteRoutePlan,
+} from '../routing/route-planner';
+import { collectDirectoryRouteSources } from '../routing/directory-route-sources';
 
 export type ArticlePublicationState =
   | 'private'
@@ -25,6 +32,12 @@ export interface CurrentArticlePanelArticle {
   contentRootPath: string;
   metadata: ArticlePublicationMetadata;
   publicationState: ArticlePublicationState;
+  route: {
+    pendingUrl?: string;
+    onlineUrl?: string;
+    redirects: PlannedRedirect[];
+    issues: RouteIssue[];
+  };
   legacyMigration?: PreparedLegacyPublicationMigration;
 }
 
@@ -91,6 +104,20 @@ export async function resolveCurrentArticlePanelFromDirectory(
   } catch (error) {
     return { status: 'config-error', sourcePath, message: errorMessage(error) };
   }
+  let routePlan: SiteRoutePlan;
+  try {
+    const collected = await collectDirectoryRouteSources(vaultRoot, loaded.config);
+    const planned = planSiteRoutes(loaded.config, collected.inputs);
+    routePlan = {
+      ...planned,
+      issues: [...collected.issues, ...planned.issues],
+    };
+  } catch (error) {
+    return { status: 'config-error', sourcePath, message: errorMessage(error) };
+  }
+  const plannedArticle = routePlan.articles.find(
+    (article) => article.sourcePath === sourcePath,
+  );
   return {
     status: 'article',
     selection,
@@ -98,6 +125,29 @@ export async function resolveCurrentArticlePanelFromDirectory(
     contentRootPath: root.path,
     metadata,
     publicationState: publicationState(metadata),
+    route: {
+      ...(plannedArticle?.url === undefined ? {} : { pendingUrl: plannedArticle.url }),
+      ...(metadata.deployment?.url === undefined
+        ? {}
+        : { onlineUrl: metadata.deployment.url }),
+      redirects: routePlan.redirects.filter(
+        (redirect) => redirect.to === plannedArticle?.url,
+      ),
+      issues: routePlan.issues.filter(
+        (issue) =>
+          issue.sourcePath === sourcePath ||
+          issue.relatedSourcePaths?.includes(sourcePath) ||
+          (plannedArticle !== undefined &&
+            issue.directoryPath !== undefined &&
+            pathIsInside(sourcePath, issue.directoryPath)) ||
+          (plannedArticle !== undefined &&
+            issue.relatedDirectoryPaths?.some((directoryPath) =>
+              pathIsInside(sourcePath, directoryPath),
+            )) ||
+          issue.route === plannedArticle?.url ||
+          issue.route === metadata.deployment?.url,
+      ),
+    },
     ...(legacyMigration === undefined ? {} : { legacyMigration }),
   };
 }

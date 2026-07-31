@@ -77,6 +77,10 @@ describe('local site preview', () => {
     expect(preview.files['/notes/hello/index.html']).toContain(
       '本地预览 · 尚未发布',
     );
+    expect(preview.files['/notes/index.html']).toContain('<h1>notes</h1>');
+    expect(preview.files['/notes/index.html']).toContain(
+      '<a href="/notes/hello/">Hello Pages</a>',
+    );
   });
 
   it('rejects a site config that omits required product schema fields', async () => {
@@ -100,5 +104,102 @@ describe('local site preview', () => {
     await expect(prepareLocalPreviewFromDirectory(vault)).rejects.toThrow(
       /site\.home_layout/,
     );
+  });
+
+  it('uses the route plan and displays pending, online, and redirect URLs in preview', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-vault-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Route Preview',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: route-preview',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'guide.md'),
+      [
+        '---',
+        'publication:',
+        '  visibility: public',
+        '  slug: new',
+        '  redirects: [/notes/old/]',
+        '  deployment:',
+        '    url: /notes/old/',
+        '---',
+        '# Route guide',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const preview = await prepareLocalPreviewFromDirectory(vault);
+
+    expect(preview.routePlan.redirects).toEqual([
+      { from: '/notes/old/', to: '/notes/new/' },
+    ]);
+    const html = preview.files['/notes/new/index.html'];
+    expect(html).toContain('待发布 URL');
+    expect(html).toContain('/notes/new/');
+    expect(html).toContain('当前线上 URL');
+    expect(html).toContain('/notes/old/');
+    expect(html).toContain('/notes/old/ → /notes/new/');
+  });
+
+  it('renders an unlisted route without exposing it on the preview index', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-vault-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Unlisted Preview',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: unlisted-preview',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'secret-link.md'),
+      '---\npublication:\n  visibility: unlisted\n---\n# By URL only\n',
+      'utf8',
+    );
+
+    const preview = await prepareLocalPreviewFromDirectory(vault);
+
+    expect(preview.pages).toEqual([]);
+    expect(preview.files['/notes/secret-link/index.html']).toContain(
+      '<h1>By URL only</h1>',
+    );
+    expect(preview.files['/index.html']).not.toContain('secret-link');
   });
 });

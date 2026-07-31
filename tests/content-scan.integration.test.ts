@@ -188,4 +188,47 @@ describe('site content scanner', () => {
       }),
     ]);
   });
+
+  it('surfaces route conflicts as locatable publishing blockers', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-scan-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Conflicting Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'assets:',
+        '  exclude: []',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: conflicting-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const source =
+      '---\npublication:\n  visibility: public\n  slug: same\n---\n# Page\n';
+    await writeFile(join(vault, 'notes', 'one.md'), source, 'utf8');
+    await writeFile(join(vault, 'notes', 'two.md'), source, 'utf8');
+
+    const result = await scanSiteFromDirectory(vault);
+
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        severity: 'blocker',
+        code: 'route-conflict',
+        path: 'notes/one.md',
+      }),
+    );
+    expect(result.routePlan?.articles).toHaveLength(2);
+  });
 });

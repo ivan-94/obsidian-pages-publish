@@ -11,6 +11,7 @@ import {
 } from 'fs/promises';
 import { isAbsolute, join, relative, resolve } from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { normalizeRouteUrlPath } from '../routing/url-path';
 
 export interface SiteConfigV1 {
   version: 1;
@@ -165,6 +166,7 @@ export async function saveSiteConfigToDirectory(
     systemTimezone?: string;
     beforeReplace?: () => Promise<void>;
     beforeCommit?: () => Promise<void>;
+    afterVerify?: () => Promise<(() => Promise<void>) | void>;
     removeFile?: (path: string) => Promise<void>;
     replaceFile?: (temporaryPath: string, targetPath: string) => Promise<void>;
   },
@@ -253,6 +255,7 @@ export async function saveSiteConfigToDirectory(
       draft: input,
       source,
       beforeCommit: options.beforeCommit,
+      afterVerify: options.afterVerify,
       removeFile: options.removeFile,
       replaceFile: options.replaceFile,
     });
@@ -279,6 +282,7 @@ async function commitPreparedConfig(options: {
   draft: SiteConfigV1;
   source: string;
   beforeCommit?: () => Promise<void>;
+  afterVerify?: () => Promise<(() => Promise<void>) | void>;
   removeFile?: (path: string) => Promise<void>;
   replaceFile?: (temporaryPath: string, targetPath: string) => Promise<void>;
 }): Promise<void> {
@@ -295,6 +299,7 @@ async function commitPreparedConfig(options: {
 
   const displacedPath = `${options.targetPath}.previous-${randomUUID()}`;
   let displacedCreated = false;
+  let coordinatedRollback: (() => Promise<void>) | undefined;
   try {
     try {
       await rename(options.targetPath, displacedPath);
@@ -353,10 +358,41 @@ async function commitPreparedConfig(options: {
         structuredClone(options.draft),
       );
     }
+    coordinatedRollback = (await options.afterVerify?.()) ?? undefined;
+    const claimedAfterCoordination = await readFile(displacedPath, 'utf8');
+    const installedAfterCoordination = await readFile(options.targetPath, 'utf8');
+    if (
+      digest(claimedAfterCoordination) !== options.expectedRevision ||
+      digest(installedAfterCoordination) !== digest(options.source)
+    ) {
+      throw new SiteConfigConflictError(
+        options.expectedRevision,
+        digest(installedAfterCoordination),
+        installedAfterCoordination,
+        structuredClone(options.draft),
+      );
+    }
     await (options.removeFile ?? unlink)(displacedPath).catch(() => undefined);
     displacedCreated = false;
   } catch (error) {
+    let failure: unknown = error;
+    if (coordinatedRollback) {
+      try {
+        await coordinatedRollback();
+      } catch (rollbackError) {
+        failure = new AggregateError(
+          [error, rollbackError],
+          'Config coordination failed and rollback was incomplete.',
+        );
+      }
+    }
     if (displacedCreated) {
+      const installed = await readFile(options.targetPath, 'utf8').catch(
+        () => undefined,
+      );
+      if (installed !== undefined && digest(installed) === digest(options.source)) {
+        await unlink(options.targetPath).catch(() => undefined);
+      }
       await link(displacedPath, options.targetPath).catch(
         (restoreError: unknown) => {
           if (!isErrno(restoreError, 'EEXIST')) throw restoreError;
@@ -364,7 +400,7 @@ async function commitPreparedConfig(options: {
       );
       await unlink(displacedPath).catch(() => undefined);
     }
-    throw error;
+    throw failure;
   }
 }
 
@@ -712,7 +748,8 @@ function assertSafePublicRoot(publicRoot: string, index: number): void {
     publicRoot.includes('?') ||
     publicRoot.includes('#') ||
     segments.includes('.') ||
-    segments.includes('..')
+    segments.includes('..') ||
+    normalizeRouteUrlPath(publicRoot) === undefined
   ) {
     throw new SiteConfigValidationError([
       {
@@ -725,8 +762,9 @@ function assertSafePublicRoot(publicRoot: string, index: number): void {
 }
 
 function normalizePublicRoot(publicRoot: string): string {
-  const normalized = `/${publicRoot.split('/').filter(Boolean).join('/')}`;
-  return normalized || '/';
+  const canonical = normalizeRouteUrlPath(publicRoot);
+  if (!canonical) return publicRoot;
+  return canonical === '/' ? '/' : canonical.slice(0, -1);
 }
 
 function toRawConfig(config: SiteConfigV1): RawSiteConfig {

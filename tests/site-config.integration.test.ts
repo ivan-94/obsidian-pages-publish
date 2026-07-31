@@ -365,6 +365,42 @@ describe('site config repository', () => {
     });
   });
 
+  it('rejects percent-encoded and canonically equivalent Unicode public roots', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-config-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Canonical Roots',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /caf%C3%A9',
+        '  - path: docs',
+        '    public_root: /café',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: canonical-roots',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    await expect(loadSiteConfigFromDirectory(vault)).rejects.toMatchObject({
+      issues: [
+        {
+          code: 'public-root-conflict',
+          path: 'content_roots[1].public_root',
+        },
+      ],
+    });
+  });
+
   it('rejects a content root that traverses outside its declared path', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-config-'));
     vaults.push(vault);

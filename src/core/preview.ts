@@ -1,8 +1,13 @@
-import { readdir } from 'fs/promises';
-import { extname, join, relative, sep } from 'path';
+import { relative, sep } from 'path';
 import MarkdownIt from 'markdown-it';
 import { loadSiteConfigFromDirectory } from '../config/site-config';
-import { readArticleSnapshotFromDirectory } from '../publication/article-metadata';
+import { loadDirectoryRouteSources } from '../routing/directory-route-sources';
+import {
+  planSiteRoutes,
+  RoutePlanningError,
+  type PlannedArticleRoute,
+  type SiteRoutePlan,
+} from '../routing/route-planner';
 
 export interface PreviewPage {
   sourcePath: string;
@@ -14,6 +19,7 @@ export interface LocalPreview {
   siteName: string;
   pages: PreviewPage[];
   files: Record<string, string>;
+  routePlan: SiteRoutePlan;
 }
 
 export interface ArticleLocalPreview extends LocalPreview {
@@ -32,49 +38,68 @@ export async function prepareLocalPreviewFromDirectory(
     );
   }
   const config = loadedConfig.config;
-  const renderedPages = [] as Array<PreviewPage & { html: string }>;
-
-  for (const contentRoot of config.contentRoots) {
-    const rootPath = join(vaultRoot, contentRoot.path);
-    const markdownFiles = await findMarkdownFiles(rootPath);
-
-    for (const absolutePath of markdownFiles) {
-      const sourcePath = toVaultPath(relative(vaultRoot, absolutePath));
-      const snapshot = await readArticleSnapshotFromDirectory(
-        vaultRoot,
-        sourcePath,
-      );
-      if (snapshot.metadata.visibility.value !== 'public') continue;
-      const relativeToRoot = toVaultPath(relative(rootPath, absolutePath));
-      const slug = snapshot.metadata.slug.value;
-      const title = snapshot.metadata.title.value;
-      const relativeDirectory = toVaultPath(
-        relativeToRoot.slice(0, Math.max(0, relativeToRoot.lastIndexOf('/'))),
-      );
-      const url = buildUrl(contentRoot.publicRoot, relativeDirectory, slug);
-
-      renderedPages.push({
-        sourcePath,
+  const { snapshots, inputs } = await loadDirectoryRouteSources(
+    vaultRoot,
+    config,
+  );
+  const routePlan = planSiteRoutes(config, inputs);
+  const blockers = routePlan.issues.filter((issue) => issue.severity === 'blocker');
+  if (blockers.length > 0) throw new RoutePlanningError(blockers);
+  const renderedPages = [] as Array<
+    PreviewPage & { html: string; listed: boolean }
+  >;
+  for (const article of routePlan.articles) {
+    const snapshot = snapshots.get(article.sourcePath);
+    if (!snapshot) continue;
+    const title = snapshot.metadata.title.value;
+    renderedPages.push({
+      sourcePath: article.sourcePath,
+      title,
+      url: article.url,
+      listed: snapshot.metadata.visibility.value === 'public',
+      html: renderDocument(
+        config.site.name,
         title,
-        url,
-        html: renderDocument(config.site.name, title, markdown.render(snapshot.body)),
-      });
-    }
+        markdown.render(snapshot.body),
+        renderRouteSummary(article),
+      ),
+    });
   }
 
   renderedPages.sort((left, right) =>
     left.sourcePath.localeCompare(right.sourcePath),
   );
 
-  const pages = renderedPages.map(({ html: _html, ...page }) => page);
+  const pages = renderedPages
+    .filter((page) => page.listed)
+    .map(({ html: _html, listed: _listed, ...page }) => page);
   const files: Record<string, string> = {
     '/index.html': renderIndex(config.site.name, pages),
   };
   for (const page of renderedPages) {
     files[`${page.url}index.html`] = page.html;
   }
+  for (const section of routePlan.sections) {
+    const filePath = `${section.url}index.html`;
+    if (files[filePath] !== undefined) continue;
+    const members = pages.filter(
+      (page) => page.url !== section.url && page.url.startsWith(section.url),
+    );
+    files[filePath] = renderSection(
+      config.site.name,
+      section.directoryPath.split('/').at(-1) ?? config.site.name,
+      members,
+    );
+  }
+  for (const redirect of routePlan.redirects) {
+    files[`${redirect.from}index.html`] = renderRedirect(
+      config.site.name,
+      redirect.from,
+      redirect.to,
+    );
+  }
 
-  return { siteName: config.site.name, pages, files };
+  return { siteName: config.site.name, pages, files, routePlan };
 }
 
 export async function prepareArticlePreviewFromDirectory(
@@ -92,23 +117,38 @@ export async function prepareArticlePreviewFromDirectory(
     return pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`);
   });
   if (!contentRoot) throw new Error('Article is outside configured content roots.');
-  const snapshot = await readArticleSnapshotFromDirectory(vaultRoot, sourcePath);
+  const { snapshots, inputs } = await loadDirectoryRouteSources(
+    vaultRoot,
+    loadedConfig.config,
+  );
+  const snapshot = snapshots.get(sourcePath);
+  if (!snapshot) throw new Error('Article is missing from the configured content roots.');
   const metadata = snapshot.metadata;
-  const relativeToRoot = toVaultPath(relative(contentRoot.path, sourcePath));
-  const relativeDirectory = toVaultPath(
-    relativeToRoot.slice(0, Math.max(0, relativeToRoot.lastIndexOf('/'))),
+  const routePlan = planSiteRoutes(
+    loadedConfig.config,
+    inputs.map((input) =>
+      input.sourcePath === sourcePath ? { ...input, visibility: 'public' } : input,
+    ),
   );
-  const url = buildUrl(
-    contentRoot.publicRoot,
-    relativeDirectory,
-    metadata.slug.value,
+  const blockers = routePlan.issues.filter((issue) => issue.severity === 'blocker');
+  if (blockers.length > 0) throw new RoutePlanningError(blockers);
+  const plannedArticle = routePlan.articles.find(
+    (article) => article.sourcePath === sourcePath,
   );
+  if (!plannedArticle) throw new Error('Article did not produce a preview route.');
+  const articleProjection: PlannedArticleRoute = {
+    ...plannedArticle,
+    redirects: routePlan.redirects.filter(
+      (redirect) => redirect.to === plannedArticle.url,
+    ),
+  };
+  const url = plannedArticle.url;
   const page: PreviewPage = {
     sourcePath,
     title: metadata.title.value,
     url,
   };
-  return {
+  const preview: ArticleLocalPreview = {
     siteName: loadedConfig.config.site.name,
     pages: [page],
     articlePath: url,
@@ -118,34 +158,19 @@ export async function prepareArticlePreviewFromDirectory(
         loadedConfig.config.site.name,
         metadata.title.value,
         markdown.render(snapshot.body),
+        renderRouteSummary(articleProjection),
       ),
     },
+    routePlan,
   };
-}
-
-async function findMarkdownFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await findMarkdownFiles(path)));
-    } else if (entry.isFile() && extname(entry.name).toLowerCase() === '.md') {
-      files.push(path);
-    }
+  for (const redirect of articleProjection.redirects) {
+    preview.files[`${redirect.from}index.html`] = renderRedirect(
+      loadedConfig.config.site.name,
+      redirect.from,
+      redirect.to,
+    );
   }
-  return files;
-}
-
-function buildUrl(
-  publicRoot: string,
-  relativeDirectory: string,
-  slug: string,
-): string {
-  const segments = [publicRoot, relativeDirectory, slug]
-    .flatMap((part) => part.split('/'))
-    .filter(Boolean);
-  return `/${segments.join('/')}/`;
+  return preview;
 }
 
 function renderIndex(siteName: string, pages: PreviewPage[]): string {
@@ -158,7 +183,12 @@ function renderIndex(siteName: string, pages: PreviewPage[]): string {
   return renderDocument(siteName, siteName, `<h1>${escapeHtml(siteName)}</h1><ul>${links}</ul>`);
 }
 
-function renderDocument(siteName: string, title: string, body: string): string {
+function renderDocument(
+  siteName: string,
+  title: string,
+  body: string,
+  routeSummary = '',
+): string {
   return [
     '<!doctype html>',
     '<html lang="zh-CN">',
@@ -169,10 +199,54 @@ function renderDocument(siteName: string, title: string, body: string): string {
     '</head>',
     '<body>',
     '<aside data-pages-preview="local" role="status">本地预览 · 尚未发布</aside>',
+    routeSummary,
     `<main>${body}</main>`,
     '</body>',
     '</html>',
   ].join('');
+}
+
+function renderRouteSummary(article: PlannedArticleRoute): string {
+  const redirects = article.redirects
+    .map(
+      (redirect) =>
+        `<li>${escapeHtml(redirect.from)} → ${escapeHtml(redirect.to)}</li>`,
+    )
+    .join('');
+  return [
+    '<section data-pages-route-summary>',
+    '<h2>URL 预览</h2>',
+    `<p>待发布 URL：<code>${escapeHtml(article.url)}</code></p>`,
+    `<p>当前线上 URL：<code>${escapeHtml(article.onlineUrl ?? '尚未上线')}</code></p>`,
+    redirects ? `<ul>${redirects}</ul>` : '<p>没有待发布重定向</p>',
+    '</section>',
+  ].join('');
+}
+
+function renderRedirect(siteName: string, from: string, to: string): string {
+  return renderDocument(
+    siteName,
+    '永久重定向',
+    `<p><code>${escapeHtml(from)}</code> → <a href="${escapeHtml(to)}">${escapeHtml(to)}</a></p>`,
+  );
+}
+
+function renderSection(
+  siteName: string,
+  title: string,
+  pages: PreviewPage[],
+): string {
+  const links = pages
+    .map(
+      (page) =>
+        `<li><a href="${escapeHtml(page.url)}">${escapeHtml(page.title)}</a></li>`,
+    )
+    .join('');
+  return renderDocument(
+    siteName,
+    title,
+    `<h1>${escapeHtml(title)}</h1><p>此栏目由目录结构自动生成。</p><ul>${links}</ul>`,
+  );
 }
 
 function escapeHtml(value: string): string {
@@ -182,8 +256,4 @@ function escapeHtml(value: string): string {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
-}
-
-function toVaultPath(path: string): string {
-  return sep === '/' ? path : path.split(sep).join('/');
 }

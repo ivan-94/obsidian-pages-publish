@@ -3,6 +3,15 @@ import type { Dirent } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { extname, join, relative, sep } from 'path';
 import { loadSiteConfigFromDirectory } from '../config/site-config';
+import {
+  ArticleMetadataValidationError,
+  readArticleMetadataFromSource,
+} from '../publication/article-metadata';
+import {
+  planSiteRoutes,
+  type RouteArticleInput,
+  type SiteRoutePlan,
+} from '../routing/route-planner';
 
 export interface ScanIssue {
   severity: 'warning' | 'blocker';
@@ -22,6 +31,7 @@ export interface SiteScanResult {
   digest: string;
   candidates: ScanCandidate[];
   issues: ScanIssue[];
+  routePlan?: SiteRoutePlan;
 }
 
 export interface ScanFileSystemBoundary {
@@ -63,6 +73,7 @@ export async function scanSiteFromDirectory(
   }
   const candidates: ScanCandidate[] = [];
   const issues: ScanIssue[] = [];
+  const routeInputs: RouteArticleInput[] = [];
 
   for (let index = 0; index < loaded.config.contentRoots.length; index += 1) {
     const contentRoot = loaded.config.contentRoots[index] as (typeof loaded.config.contentRoots)[number];
@@ -85,11 +96,33 @@ export async function scanSiteFromDirectory(
         throwIfAborted(options.signal);
         const source = await fileSystem.readTextFile(absolutePath);
         throwIfAborted(options.signal);
+        const sourcePath = toVaultPath(relative(vaultRoot, absolutePath));
         candidates.push({
-          sourcePath: toVaultPath(relative(vaultRoot, absolutePath)),
+          sourcePath,
           contentRootPath: contentRoot.path,
           sourceDigest: createHash('sha256').update(source).digest('hex'),
         });
+        try {
+          const metadata = readArticleMetadataFromSource(sourcePath, source);
+          routeInputs.push({
+            sourcePath,
+            visibility: metadata.visibility.value,
+            slug: metadata.slug.value,
+            kind: metadata.kind.value,
+            redirects: metadata.redirects.value,
+            onlineUrl: metadata.deployment?.url,
+          });
+        } catch (error) {
+          if (!(error instanceof ArticleMetadataValidationError)) throw error;
+          for (const metadataIssue of error.issues) {
+            issues.push({
+              severity: 'blocker',
+              code: metadataIssue.code,
+              path: sourcePath,
+              message: metadataIssue.message,
+            });
+          }
+        }
       }
     } catch (error) {
       if (isAbortError(error)) throw error;
@@ -114,11 +147,27 @@ export async function scanSiteFromDirectory(
   }
 
   candidates.sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
+  routeInputs.sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
+  const routePlan = planSiteRoutes(loaded.config, routeInputs);
+  for (const routeIssue of routePlan.issues) {
+    issues.push({
+      severity: routeIssue.severity,
+      code: routeIssue.code,
+      path:
+        routeIssue.sourcePath ??
+        routeIssue.relatedSourcePaths?.[0] ??
+        routeIssue.directoryPath ??
+        routeIssue.route ??
+        'routes',
+      message: routeIssue.message,
+    });
+  }
   return {
     configRevision: loaded.revision,
     digest: digestScan(loaded.revision, candidates, issues),
     candidates,
     issues,
+    routePlan,
   };
 }
 

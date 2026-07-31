@@ -13,6 +13,7 @@ import {
   type SiteScanResult,
 } from './content/site-scanner';
 import {
+  loadSiteConfigFromDirectory,
   saveSiteConfigToDirectory,
   type EditableSiteConfig,
   type SiteConfigV1,
@@ -35,6 +36,15 @@ import {
   type CurrentArticleContext,
   type CurrentArticlePanelState,
 } from './publication/current-article-panel';
+import { collectDirectoryRouteSources } from './routing/directory-route-sources';
+import {
+  normalizeRouteUrlPath,
+  planSiteRoutes,
+  RoutePlanningError,
+  type RouteArticleInput,
+  type RouteIssue,
+  type SiteRoutePlan,
+} from './routing/route-planner';
 
 export type LaunchTarget = 'setup' | 'publish-center';
 
@@ -143,6 +153,68 @@ export class PagesPublishApplication {
     );
   }
 
+  async prepareArticleUrlIntentEdit(
+    sourcePath: string,
+    slug: string | null,
+  ): Promise<PreparedArticleIntentEdit> {
+    return this.prepareArticleRouteIntentEdit(sourcePath, { slug });
+  }
+
+  async prepareArticleRouteIntentEdit(
+    sourcePath: string,
+    patch: Pick<
+      ArticleIntentPatch,
+      'slug' | 'kind' | 'redirects' | 'visibility'
+    >,
+  ): Promise<PreparedArticleIntentEdit> {
+    const routePatch = normalizeRouteIntentPatch(sourcePath, patch);
+    const initial = await prepareArticleIntentEditFromDirectory(
+      this.vaultRoot,
+      sourcePath,
+      routePatch,
+    );
+    const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+    if (loaded.status !== 'editable') {
+      throw new Error(`Site config version ${loaded.version} is read-only.`);
+    }
+    const { inputs } = await collectDirectoryRouteSources(
+      this.vaultRoot,
+      loaded.config,
+    );
+    const baselinePlan = planSiteRoutes(loaded.config, inputs);
+    const planInitial = planSiteRoutes(
+      loaded.config,
+      replaceRouteInput(inputs, sourcePath, initial.next),
+    );
+    throwRouteEditBlockers(baselinePlan, planInitial);
+    const nextUrl = planInitial.articles.find(
+      (article) => article.sourcePath === sourcePath,
+    )?.url;
+    const onlineUrl = deploymentUrlPath(initial.current.deployment?.url);
+    if (!onlineUrl || !nextUrl || onlineUrl === nextUrl) return initial;
+    const prepared = await prepareArticleIntentEditFromDirectory(
+      this.vaultRoot,
+      sourcePath,
+      {
+        ...routePatch,
+        redirects: [
+          ...new Set([
+            ...initial.next.redirects.value
+              .map((redirect) => normalizeRouteUrlPath(redirect))
+              .filter((redirect): redirect is string => redirect !== undefined),
+            onlineUrl,
+          ]),
+        ],
+      },
+    );
+    const planFinal = planSiteRoutes(
+      loaded.config,
+      replaceRouteInput(inputs, sourcePath, prepared.next),
+    );
+    throwRouteEditBlockers(baselinePlan, planFinal);
+    return prepared;
+  }
+
   async commitArticleIntentEdit(
     prepared: PreparedArticleIntentEdit,
     options: { confirmTakedown?: boolean } = {},
@@ -202,6 +274,120 @@ export class PagesPublishApplication {
     this.scanCoordinator.dispose();
     await this.previewServer.stop();
   }
+}
+
+function deploymentUrlPath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value.startsWith('/')) return normalizeRouteUrlPath(value);
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return undefined;
+    }
+    return normalizeRouteUrlPath(parsed.pathname);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeRouteIntentPatch(
+  sourcePath: string,
+  patch: Pick<
+    ArticleIntentPatch,
+    'slug' | 'kind' | 'redirects' | 'visibility'
+  >,
+): Pick<
+  ArticleIntentPatch,
+  'slug' | 'kind' | 'redirects' | 'visibility'
+> {
+  const normalized: Pick<
+    ArticleIntentPatch,
+    'slug' | 'kind' | 'redirects' | 'visibility'
+  > = {};
+  if (patch.slug !== undefined) normalized.slug = patch.slug;
+  if (patch.kind !== undefined) normalized.kind = patch.kind;
+  if (patch.visibility !== undefined) normalized.visibility = patch.visibility;
+  if (patch.redirects === undefined) return normalized;
+  if (patch.redirects === null) return { ...normalized, redirects: null };
+  const redirects: string[] = [];
+  const issues: RouteIssue[] = [];
+  for (const rawRedirect of patch.redirects) {
+    const redirect = normalizeRouteUrlPath(rawRedirect);
+    if (!redirect) {
+      issues.push({
+        severity: 'blocker',
+        code: 'invalid-redirect',
+        sourcePath,
+        route: rawRedirect,
+        message: 'Redirect must be a safe absolute URL path.',
+      });
+      continue;
+    }
+    if (!redirects.includes(redirect)) redirects.push(redirect);
+  }
+  if (issues.length > 0) throw new RoutePlanningError(issues);
+  return { ...normalized, redirects };
+}
+
+function replaceRouteInput(
+  inputs: RouteArticleInput[],
+  sourcePath: string,
+  metadata: ArticlePublicationMetadata,
+): RouteArticleInput[] {
+  const replacement: RouteArticleInput = {
+    sourcePath,
+    visibility: metadata.visibility.value,
+    slug: metadata.slug.value,
+    kind: metadata.kind.value,
+    redirects: metadata.redirects.value,
+    onlineUrl: metadata.deployment?.url,
+  };
+  const remaining = inputs.filter((input) => input.sourcePath !== sourcePath);
+  return [...remaining, replacement];
+}
+
+function throwRouteEditBlockers(
+  baseline: SiteRoutePlan,
+  proposed: SiteRoutePlan,
+): void {
+  const baselineBlockers = baseline.issues.filter(
+    (issue) => issue.severity === 'blocker',
+  );
+  const blockers = proposed.issues.filter(
+    (issue) =>
+      issue.severity === 'blocker' &&
+      !baselineBlockers.some((baselineIssue) =>
+        routeBlockerCovers(baselineIssue, issue),
+      ),
+  );
+  if (blockers.length > 0) throw new RoutePlanningError(blockers);
+}
+
+function routeBlockerCovers(
+  baseline: RouteIssue,
+  proposed: RouteIssue,
+): boolean {
+  return (
+    baseline.code === proposed.code &&
+    baseline.route === proposed.route &&
+    baseline.sourcePath === proposed.sourcePath &&
+    baseline.directoryPath === proposed.directoryPath &&
+    valuesAreSubset(
+      proposed.relatedSourcePaths,
+      baseline.relatedSourcePaths,
+    ) &&
+    valuesAreSubset(
+      proposed.relatedDirectoryPaths,
+      baseline.relatedDirectoryPaths,
+    )
+  );
+}
+
+function valuesAreSubset(
+  proposed: string[] | undefined,
+  baseline: string[] | undefined,
+): boolean {
+  return (proposed ?? []).every((value) => (baseline ?? []).includes(value));
 }
 
 function isAbortError(error: unknown): boolean {

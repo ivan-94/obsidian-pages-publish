@@ -144,6 +144,24 @@ export class ArticleIntentConfirmationRequiredError extends Error {
   }
 }
 
+export interface PreparedArticleSourceRestore {
+  sourcePath: string;
+  expectedRevision: string;
+  source: string;
+}
+
+export class ArticleSourceRestoreConflictError extends Error {
+  readonly name = 'ArticleSourceRestoreConflictError';
+
+  constructor(
+    readonly expectedRevision: string,
+    readonly actualRevision: string,
+    readonly currentSource: string,
+  ) {
+    super('Article changed before its exact source could be restored.');
+  }
+}
+
 export async function readArticleMetadataFromDirectory(
   vaultRoot: string,
   sourcePath: string,
@@ -339,6 +357,86 @@ export async function commitArticleIntentEditToDirectory(
   }
 }
 
+export async function restoreArticleSourceToDirectory(
+  vaultRoot: string,
+  prepared: PreparedArticleSourceRestore,
+): Promise<void> {
+  const relativePath = safeRelativeArticlePath(vaultRoot, prepared.sourcePath);
+  const targetPath = join(vaultRoot, relativePath);
+  await assertSafeArticleFile(vaultRoot, targetPath);
+  const currentSource = await readFile(targetPath, 'utf8');
+  const currentRevision = digest(currentSource);
+  if (currentRevision !== prepared.expectedRevision) {
+    throw new ArticleSourceRestoreConflictError(
+      prepared.expectedRevision,
+      currentRevision,
+      currentSource,
+    );
+  }
+  const temporaryPath = `${targetPath}.tmp-${randomUUID()}`;
+  const displacedPath = `${targetPath}.previous-${randomUUID()}`;
+  let temporaryCreated = false;
+  let displacedCreated = false;
+  try {
+    const currentMode = (await stat(targetPath)).mode;
+    const handle = await open(temporaryPath, 'wx', currentMode & 0o777);
+    temporaryCreated = true;
+    try {
+      await handle.writeFile(prepared.source, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await chmod(temporaryPath, currentMode & 0o777);
+    await assertSafeArticleFile(vaultRoot, targetPath);
+    await rename(targetPath, displacedPath);
+    displacedCreated = true;
+    await assertSafeArticleFile(vaultRoot, displacedPath);
+    const claimedSource = await readFile(displacedPath, 'utf8');
+    const claimedRevision = digest(claimedSource);
+    if (claimedRevision !== prepared.expectedRevision) {
+      await rename(displacedPath, targetPath);
+      displacedCreated = false;
+      throw new ArticleSourceRestoreConflictError(
+        prepared.expectedRevision,
+        claimedRevision,
+        claimedSource,
+      );
+    }
+    try {
+      await assertSafeArticleFile(vaultRoot, displacedPath);
+      await link(temporaryPath, targetPath);
+    } catch (error) {
+      if (!isErrno(error, 'EEXIST')) throw error;
+      const externalSource = await readFile(targetPath, 'utf8');
+      throw new ArticleSourceRestoreConflictError(
+        prepared.expectedRevision,
+        digest(externalSource),
+        externalSource,
+      );
+    }
+    await unlink(displacedPath).catch(() => undefined);
+    displacedCreated = false;
+    await unlink(temporaryPath).catch(() => undefined);
+    temporaryCreated = false;
+  } catch (error) {
+    if (displacedCreated) {
+      try {
+        await lstat(targetPath);
+      } catch (targetError) {
+        if (isErrno(targetError, 'ENOENT')) {
+          await rename(displacedPath, targetPath);
+          displacedCreated = false;
+        }
+      }
+    }
+    throw error;
+  } finally {
+    if (temporaryCreated) await unlink(temporaryPath).catch(() => undefined);
+    if (displacedCreated) await unlink(displacedPath).catch(() => undefined);
+  }
+}
+
 function requiredTakedownConfirmation(
   current: ArticlePublicationMetadata,
   next: ArticlePublicationMetadata,
@@ -358,7 +456,7 @@ function requiredTakedownConfirmation(
   };
 }
 
-function readArticleMetadataFromSource(
+export function readArticleMetadataFromSource(
   relativePath: string,
   source: string,
 ): ArticlePublicationMetadata {
