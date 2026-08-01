@@ -64,15 +64,34 @@ export interface PublicationEnvironmentStatus {
 
 export class PublicationEnvironmentManager {
   private status: PublicationEnvironmentStatus = { stage: 'idle' };
+  private activeOperation:
+    | { kind: 'prepare' | 'repair'; result: Promise<PublicationEnvironmentStatus> }
+    | undefined;
+  private queuedRepair: Promise<PublicationEnvironmentStatus> | undefined;
 
   constructor(private readonly dependencies: PublicationEnvironmentDependencies) {}
 
-  async prepare(): Promise<PublicationEnvironmentStatus> {
-    return this.run(() => this.prepareExclusive());
+  prepare(): Promise<PublicationEnvironmentStatus> {
+    if (this.queuedRepair) return this.queuedRepair;
+    if (this.activeOperation) return this.activeOperation.result;
+    return this.startOperation('prepare', () => this.prepareExclusive());
   }
 
-  async repair(): Promise<PublicationEnvironmentStatus> {
-    return this.run(() => this.installCurrentRelease());
+  repair(): Promise<PublicationEnvironmentStatus> {
+    if (this.queuedRepair) return this.queuedRepair;
+    if (!this.activeOperation) {
+      return this.startOperation('repair', () => this.installCurrentRelease());
+    }
+    if (this.activeOperation.kind === 'repair') return this.activeOperation.result;
+    const active = this.activeOperation.result;
+    const queued = active
+      .catch(() => undefined)
+      .then(() => this.startOperation('repair', () => this.installCurrentRelease()));
+    this.queuedRepair = queued;
+    void queued.finally(() => {
+      if (this.queuedRepair === queued) this.queuedRepair = undefined;
+    }).catch(() => undefined);
+    return queued;
   }
 
   getStatus(): PublicationEnvironmentStatus {
@@ -95,6 +114,18 @@ export class PublicationEnvironmentManager {
       };
       throw error;
     }
+  }
+
+  private startOperation(
+    kind: 'prepare' | 'repair',
+    operation: () => Promise<PublicationEnvironmentStatus>,
+  ): Promise<PublicationEnvironmentStatus> {
+    const active = this.run(operation);
+    this.activeOperation = { kind, result: active };
+    void active.finally(() => {
+      if (this.activeOperation?.result === active) this.activeOperation = undefined;
+    }).catch(() => undefined);
+    return active;
   }
 
   private async prepareExclusive(): Promise<PublicationEnvironmentStatus> {

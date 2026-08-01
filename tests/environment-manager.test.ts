@@ -182,6 +182,146 @@ describe('publication environment manager', () => {
       detailsAvailable: true,
     });
   });
+
+  it('coalesces concurrent prepare requests instead of running two environment transactions', async () => {
+    const runtimeContent = new TextEncoder().encode('runtime');
+    const engineContent = new TextEncoder().encode('engine');
+    let releaseInspection: (() => void) | undefined;
+    let inspections = 0;
+    const manager = new PublicationEnvironmentManager({
+      inspectSystemNode: async () => {
+        inspections += 1;
+        if (inspections > 1) throw new Error('duplicate environment inspection');
+        await new Promise<void>((resolve) => {
+          releaseInspection = resolve;
+        });
+        return undefined;
+      },
+      fetchRelease: async () => ({
+        runtime: {
+          version: '20.19.1',
+          url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+          sha256: sha256(runtimeContent),
+        },
+        engine: {
+          version: '1.0.0',
+          url: 'https://releases.pages-publish.dev/engine-1.0.0.tar.gz',
+          sha256: sha256(engineContent),
+        },
+      }),
+      download: async (url) => (url.includes('node-') ? runtimeContent : engineContent),
+      store: { read: async () => undefined, install: async () => undefined },
+    });
+
+    const first = manager.prepare();
+    await vi.waitFor(() => expect(inspections).toBe(1));
+    const second = manager.prepare();
+    releaseInspection?.();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ stage: 'ready' }),
+      expect.objectContaining({ stage: 'ready' }),
+    ]);
+    expect(inspections).toBe(1);
+  });
+
+  it('does not overlap repair with an in-progress environment preparation', async () => {
+    const runtimeContent = new TextEncoder().encode('runtime');
+    const engineContent = new TextEncoder().encode('engine');
+    let releaseInspection: (() => void) | undefined;
+    let releaseFirstRelease: (() => void) | undefined;
+    let releases = 0;
+    const manager = new PublicationEnvironmentManager({
+      inspectSystemNode: async () => {
+        await new Promise<void>((resolve) => {
+          releaseInspection = resolve;
+        });
+        return undefined;
+      },
+      fetchRelease: async () => {
+        releases += 1;
+        if (releases === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstRelease = resolve;
+          });
+        }
+        return {
+          runtime: {
+            version: '20.19.1',
+            url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+            sha256: sha256(runtimeContent),
+          },
+          engine: {
+            version: '1.0.0',
+            url: 'https://releases.pages-publish.dev/engine-1.0.0.tar.gz',
+            sha256: sha256(engineContent),
+          },
+        };
+      },
+      download: async (url) => (url.includes('node-') ? runtimeContent : engineContent),
+      store: { read: async () => undefined, install: async () => undefined },
+    });
+
+    const prepare = manager.prepare();
+    await vi.waitFor(() => expect(releaseInspection).toBeTypeOf('function'));
+    const repair = manager.repair();
+    releaseInspection?.();
+    await vi.waitFor(() => expect(releases).toBe(1));
+    expect(releases).toBe(1);
+    releaseFirstRelease?.();
+
+    await expect(Promise.all([prepare, repair])).resolves.toHaveLength(2);
+    expect(releases).toBe(2);
+  });
+
+  it('queues an explicit repair behind a system-runtime preparation instead of swallowing it', async () => {
+    const runtimeContent = new TextEncoder().encode('managed runtime');
+    const engineContent = new TextEncoder().encode('managed engine');
+    let releaseInspection: (() => void) | undefined;
+    const fetchRelease = vi.fn(async () => ({
+      runtime: {
+        version: '20.19.1',
+        url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+        sha256: sha256(runtimeContent),
+      },
+      engine: {
+        version: '1.0.1',
+        url: 'https://releases.pages-publish.dev/engine-1.0.1.tar.gz',
+        sha256: sha256(engineContent),
+      },
+    }));
+    const manager = new PublicationEnvironmentManager({
+      inspectSystemNode: async () => {
+        await new Promise<void>((resolve) => {
+          releaseInspection = resolve;
+        });
+        return { executable: '/usr/local/bin/node', version: '20.19.1' };
+      },
+      fetchRelease,
+      download: async (url) => (url.includes('node-') ? runtimeContent : engineContent),
+      store: {
+        read: async () => ({
+          engine: { version: '1.0.0', sha256: 'a'.repeat(64) },
+        }),
+        install: async () => undefined,
+      },
+    });
+
+    const prepare = manager.prepare();
+    await vi.waitFor(() => expect(releaseInspection).toBeTypeOf('function'));
+    const repair = manager.repair();
+    releaseInspection?.();
+
+    await expect(prepare).resolves.toMatchObject({
+      runtime: { source: 'system', version: '20.19.1' },
+      engine: { version: '1.0.0' },
+    });
+    await expect(repair).resolves.toMatchObject({
+      runtime: { source: 'managed', version: '20.19.1' },
+      engine: { version: '1.0.1' },
+    });
+    expect(fetchRelease).toHaveBeenCalledTimes(1);
+  });
 });
 
 function sha256(value: Uint8Array): string {
