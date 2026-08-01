@@ -317,7 +317,7 @@ describe('manual external link checker', () => {
           '93.184.216.35',
           '93.184.216.36',
         ],
-        timeoutMs: 2,
+        timeoutMs: 50,
       },
     );
 

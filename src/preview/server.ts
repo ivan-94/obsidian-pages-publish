@@ -59,13 +59,23 @@ export class LocalPreviewServer {
       const asset = assets[pathname];
 
       if (body === undefined && asset === undefined) {
+        const notFoundBody = files['/404/index.html'];
+        if (notFoundBody !== undefined) {
+          response.writeHead(404, {
+            'content-type': 'text/html; charset=utf-8',
+            'x-content-type-options': 'nosniff',
+          });
+          response.end(request.method === 'HEAD' ? undefined : notFoundBody);
+          return;
+        }
         response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
         response.end('Not found');
         return;
       }
 
-      response.writeHead(200, {
-        'content-type': asset?.contentType ?? 'text/html; charset=utf-8',
+      response.writeHead(filePath === '/404/index.html' ? 404 : 200, {
+        'content-type':
+          asset?.contentType ?? contentTypeForGeneratedFile(filePath),
         'x-content-type-options': 'nosniff',
       });
       response.end(
@@ -103,4 +113,9 @@ export class LocalPreviewServer {
       });
     });
   }
+}
+
+function contentTypeForGeneratedFile(path: string): string {
+  if (path.endsWith('.css')) return 'text/css; charset=utf-8';
+  return 'text/html; charset=utf-8';
 }

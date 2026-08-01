@@ -659,7 +659,8 @@ describe('site content scanner', () => {
       }),
     );
     expect(html).toContain('<p>shared page</p>');
-    expect(html).not.toContain('href=');
+    expect(html).not.toContain('href="/notes/one/shared.v2/"');
+    expect(html).not.toContain('href="/notes/two/shared.v2/"');
     expect(
       scan.issues.some(
         (issue) => issue.code === 'unsupported-local-attachment',

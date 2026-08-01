@@ -14,6 +14,8 @@ import {
   type LocalAssetFileSystemBoundary,
 } from './local-assets';
 import { inspectRawHtml } from './raw-html';
+import { inspectMermaid } from './mermaid';
+import { inspectUnsupportedSyntax } from './unsupported-syntax';
 import type { ExternalLinkCandidate } from './external-link-checker';
 import type { WebpDecoderBoundary } from './webp-decoder';
 import {
@@ -237,6 +239,35 @@ export async function scanSiteFromDirectory(
       impact: htmlIssue.impact,
       dormant: htmlIssue.dormant,
       location: { path: htmlIssue.sourcePath, line: htmlIssue.line },
+    });
+  }
+  for (const mermaidIssue of inspectMermaid(snapshots)) {
+    issues.push({
+      severity: mermaidIssue.severity,
+      code: mermaidIssue.code,
+      path: mermaidIssue.sourcePath,
+      line: mermaidIssue.line,
+      column: mermaidIssue.column,
+      message: mermaidIssue.message,
+      impact: mermaidIssue.impact,
+      dormant: mermaidIssue.dormant,
+      location: { path: mermaidIssue.sourcePath, line: mermaidIssue.line },
+    });
+  }
+  for (const unsupportedIssue of inspectUnsupportedSyntax(snapshots)) {
+    issues.push({
+      severity: unsupportedIssue.severity,
+      code: unsupportedIssue.code,
+      path: unsupportedIssue.sourcePath,
+      line: unsupportedIssue.line,
+      column: unsupportedIssue.column,
+      message: unsupportedIssue.message,
+      impact: unsupportedIssue.impact,
+      dormant: unsupportedIssue.dormant,
+      location: {
+        path: unsupportedIssue.sourcePath,
+        line: unsupportedIssue.line,
+      },
     });
   }
   issues.sort(compareScanIssues);

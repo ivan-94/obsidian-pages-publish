@@ -73,7 +73,7 @@ describe('local site preview', () => {
       },
     ]);
     expect(preview.files['/index.html']).toContain(
-      '<a href="/notes/hello/">Hello Pages</a>',
+      '<a href="/notes/">notes</a>',
     );
     expect(preview.files['/notes/hello/index.html']).toContain(
       '<h1>Hello Pages</h1>',
