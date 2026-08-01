@@ -54,6 +54,12 @@ import {
   type PublishCenterState,
   type PublicationSnapshot,
 } from './publication/publish-center';
+import {
+  PublicationOrchestrator,
+  type CloudflarePagesDeploymentBoundary,
+  type PublicationDeployment,
+  type PublicationRunStatus,
+} from './publication/publish-orchestrator';
 import { collectDirectoryRouteSources } from './routing/directory-route-sources';
 import {
   normalizeRouteUrlPath,
@@ -90,6 +96,14 @@ export class InitialSetupUnavailableError extends Error {
   }
 }
 
+export class PublicationUnavailableError extends Error {
+  readonly name = 'PublicationUnavailableError';
+
+  constructor() {
+    super('Cloudflare deployment is unavailable until a connected Pages deployment adapter is ready.');
+  }
+}
+
 export interface InitialSetupConnectionBoundary {
   refreshStatus(): Promise<{
     state: 'disconnected' | 'connected' | 'expired';
@@ -105,12 +119,23 @@ export type InitialSetupConnection =
     account?: SetupAccount;
   };
 
+interface PublicationPreparation {
+  scan: CoordinatedScanResult<SiteScanResult>;
+}
+
+export type PublicationServiceStatus =
+  | PublicationRunStatus
+  | { state: 'unavailable' };
+
 export class PagesPublishApplication {
   private readonly previewServer = new LocalPreviewServer();
   private readonly scanCoordinator: ContentScanCoordinator<SiteScanResult>;
   private readonly currentArticleListeners = new Set<() => void>();
   private readonly setup: SiteSetupService | undefined;
   private readonly setupConnection: InitialSetupConnectionBoundary | undefined;
+  private readonly publisher:
+    | PublicationOrchestrator<PublicationPreparation>
+    | undefined;
   private preparedPublishSnapshot: PublicationSnapshot | undefined;
 
   constructor(
@@ -122,6 +147,7 @@ export class PagesPublishApplication {
       scanTimers?: ScanTimerBoundary;
       setup?: SiteSetupService;
       setupConnection?: InitialSetupConnectionBoundary;
+      deploymentAdapter?: CloudflarePagesDeploymentBoundary;
     } = {},
   ) {
     this.setup = options.setup;
@@ -132,6 +158,13 @@ export class PagesPublishApplication {
           scanSiteFromDirectory(this.vaultRoot, { signal })),
       { debounceMs: options.scanDebounceMs, timers: options.scanTimers },
     );
+    if (options.deploymentAdapter) {
+      this.publisher = new PublicationOrchestrator<PublicationPreparation>({
+        prepare: () => this.preparePublication(),
+        build: (preparation) => this.buildPublication(preparation),
+        adapter: options.deploymentAdapter,
+      });
+    }
   }
 
   async getLaunchTarget(): Promise<LaunchTarget> {
@@ -219,6 +252,25 @@ export class PagesPublishApplication {
     return this.preparedPublishSnapshot;
   }
 
+  isPublicationAvailable(): boolean {
+    return this.publisher !== undefined;
+  }
+
+  getPublicationStatus(): PublicationServiceStatus {
+    return this.publisher?.getStatus() ?? { state: 'unavailable' };
+  }
+
+  publishSite(): Promise<PublicationDeployment> {
+    if (!this.publisher) throw new PublicationUnavailableError();
+    return this.publisher.publish();
+  }
+
+  subscribePublicationStatus(
+    listener: (status: PublicationRunStatus) => void,
+  ): () => void {
+    return this.requirePublisher().subscribe(listener);
+  }
+
   private async prepareStablePreview(
     trigger: 'manual-refresh' | 'preview' | 'publish',
   ): Promise<{
@@ -236,6 +288,30 @@ export class PagesPublishApplication {
       if (after.value.digest === before.value.digest) return { preview, scan: after };
     }
     throw new Error('Content changed repeatedly while preparing the local preview.');
+  }
+
+  private async preparePublication(): Promise<PublicationPreparation> {
+    const scan = await this.requestScan('publish');
+    const blockers = scan.value.issues.filter(
+      (issue) => issue.severity === 'blocker',
+    );
+    if (blockers.length > 0) throw new PublishingBlockedError(blockers);
+    return { scan };
+  }
+
+  private async buildPublication(
+    preparation: PublicationPreparation,
+  ): Promise<PublicationSnapshot> {
+    const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot);
+    const verified = await this.requestScan('publish');
+    if (verified.value.digest !== preparation.scan.value.digest) {
+      throw new Error(
+        'Content changed while building this site. Retry publish to rescan the current Vault.',
+      );
+    }
+    const snapshot = createPublicationSnapshot(verified.value, preview);
+    this.preparedPublishSnapshot = snapshot;
+    return snapshot;
   }
 
   private async publishCenterSiteName(): Promise<string> {
@@ -461,6 +537,11 @@ export class PagesPublishApplication {
   private requireSetup(): SiteSetupService {
     if (!this.setup) throw new InitialSetupUnavailableError();
     return this.setup;
+  }
+
+  private requirePublisher(): PublicationOrchestrator<PublicationPreparation> {
+    if (!this.publisher) throw new PublicationUnavailableError();
+    return this.publisher;
   }
 }
 

@@ -361,6 +361,55 @@ describe('Pages Publish application', () => {
     await application.shutdown();
   });
 
+  it('revalidates and publishes a fresh site snapshot through the Pages deployment boundary', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Deploy Wiki\n  home_layout: sections\ncontent_roots:\n  - path: notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: deploy-wiki\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'release.md'),
+      '---\npublication:\n  visibility: public\n---\n# First version\n',
+      'utf8',
+    );
+    const stages: string[] = [];
+    const application = new PagesPublishApplication(vault, undefined, {
+      deploymentAdapter: {
+        validate: async () => {
+          stages.push('prepare:validate');
+        },
+        upload: async (input) => {
+          stages.push(`upload:${input.scanDigest}`);
+          expect(input.files['/notes/release/index.html']).toContain('First version');
+          return { deploymentId: 'deployment-1' };
+        },
+        activate: async (input) => {
+          stages.push(`activate:${input.deploymentId}`);
+          return { deploymentId: input.deploymentId, url: 'https://deploy-wiki.pages.dev' };
+        },
+      },
+    });
+
+    await expect(application.publishSite()).resolves.toMatchObject({
+      deploymentId: 'deployment-1',
+      url: 'https://deploy-wiki.pages.dev',
+    });
+    expect(stages).toEqual([
+      'prepare:validate',
+      expect.stringMatching(/^upload:[a-f0-9]{64}$/),
+      'activate:deployment-1',
+    ]);
+    expect(application.getPublicationStatus()).toMatchObject({
+      state: 'succeeded',
+      stage: 'activate',
+    });
+    await application.shutdown();
+  });
+
   it('requires explicit confirmation before a publish-center checkbox schedules an online article for takedown', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
     vaults.push(vault);

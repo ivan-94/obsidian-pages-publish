@@ -8,6 +8,7 @@ import {
   type WorkspaceLeaf,
 } from 'obsidian';
 import type { PagesPublishApplication } from '../application';
+import type { PublicationServiceStatus } from '../application';
 import type { ScanIssue } from '../content/site-scanner';
 import type {
   PublishCenterArticle,
@@ -32,6 +33,8 @@ export class PagesPublishView extends ItemView {
   private setupAccounts: SetupAccount[] | undefined;
   private setupProjects: SetupProject[] | undefined;
   private setupReview: SetupReview | undefined;
+  private unsubscribePublicationStatus: (() => void) | undefined;
+  private lastPublishCenter: PublishCenterState | undefined;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -53,7 +56,17 @@ export class PagesPublishView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    if (this.application.isPublicationAvailable()) {
+      this.unsubscribePublicationStatus = this.application.subscribePublicationStatus(() => {
+        void this.render();
+      });
+    }
     await this.render();
+  }
+
+  async onClose(): Promise<void> {
+    this.unsubscribePublicationStatus?.();
+    this.unsubscribePublicationStatus = undefined;
   }
 
   private async render(): Promise<void> {
@@ -64,15 +77,25 @@ export class PagesPublishView extends ItemView {
 
     const target = await this.application.getLaunchTarget();
     if (target === 'setup') {
+      this.lastPublishCenter = undefined;
       await this.renderSetupWizard(container);
       return;
     }
 
+    const publication = this.application.getPublicationStatus();
+    if (publication.state === 'running') {
+      if (this.lastPublishCenter) {
+        this.renderPublishCenter(container, this.lastPublishCenter);
+      } else {
+        this.renderPublishingWithoutScan(container, publication);
+      }
+      return;
+    }
+
     try {
-      this.renderPublishCenter(
-        container,
-        await this.application.getPublishCenter(),
-      );
+      const center = await this.application.getPublishCenter();
+      this.lastPublishCenter = center;
+      this.renderPublishCenter(container, center);
     } catch (error) {
       container.createEl('h2', { text: '无法读取发布配置' });
       container.createEl('p', {
@@ -80,6 +103,19 @@ export class PagesPublishView extends ItemView {
         text: errorMessage(error),
       });
     }
+  }
+
+  private renderPublishingWithoutScan(
+    container: HTMLElement,
+    status: Extract<PublicationServiceStatus, { state: 'running' }>,
+  ): void {
+    container.createDiv({ cls: 'pages-publish-view__type', text: '发布中心' });
+    container.createEl('h2', { text: '发布进行中' });
+    this.renderPublicationStatus(container, status);
+    container.createEl('p', {
+      cls: 'pages-publish-view__summary',
+      text: '任务继续在后台运行。为避免影响当前发布，本次不会重新扫描 vault；完成后会自动刷新结果。',
+    });
   }
 
   private renderPublishCenter(
@@ -184,6 +220,8 @@ export class PagesPublishView extends ItemView {
     }
 
     const actions = container.createDiv({ cls: 'pages-publish-view__actions' });
+    const publication = this.application.getPublicationStatus();
+    this.renderPublicationStatus(container, publication);
     new ButtonComponent(actions).setButtonText('预览站点').onClick(async () => {
       try {
         await this.application.openPreview();
@@ -193,17 +231,41 @@ export class PagesPublishView extends ItemView {
       }
     });
     new ButtonComponent(actions)
-      .setButtonText(center.canPublish ? '确认发布计划' : '发布站点（不可用）')
+      .setButtonText(publishButtonLabel(center.canPublish, publication))
       .setCta()
-      .setDisabled(!center.canPublish)
+      .setDisabled(
+        !center.canPublish ||
+          publication.state === 'unavailable' ||
+          publication.state === 'running',
+      )
       .onClick(async () => {
         try {
-          const snapshot = await this.application.preparePublishSnapshot();
-          new Notice(`已冻结 ${snapshot.output.fileCount} 个文件；后续编辑将进入下一次变化。`);
+          const deployment = await this.application.publishSite();
+          new Notice(`发布成功：${deployment.output.fileCount} 个文件已激活。后续编辑将进入下一次变化。`);
         } catch (error) {
-          new Notice(`无法准备发布：${errorMessage(error)}`);
+          new Notice(`发布失败：${errorMessage(error)}`);
+        } finally {
+          await this.render();
         }
       });
+  }
+
+  private renderPublicationStatus(
+    container: HTMLElement,
+    status: PublicationServiceStatus,
+  ): void {
+    if (status.state === 'idle' || status.state === 'unavailable') return;
+    const element = container.createEl('p', {
+      cls: status.state === 'failed'
+        ? 'pages-publish-view__error'
+        : 'pages-publish-view__summary',
+      text: publicationStatusText(status),
+    });
+    if (status.state === 'running') {
+      element.createSpan({
+        text: ` 准备${status.stage === 'prepare' ? ' ●' : ' ✓'} → 构建与检查${status.stage === 'build' ? ' ●' : status.stage === 'prepare' ? '' : ' ✓'} → 上传${status.stage === 'upload' ? ' ●' : status.stage === 'activate' ? ' ✓' : ''} → 激活${status.stage === 'activate' ? ' ●' : ''}`,
+      });
+    }
   }
 
   private matchesTab(article: PublishCenterArticle): boolean {
@@ -630,6 +692,41 @@ class PublishCenterTakedownModal extends Modal {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '未知错误';
+}
+
+function publishButtonLabel(
+  canPublish: boolean,
+  status: PublicationServiceStatus,
+): string {
+  if (!canPublish) return '发布站点（不可用）';
+  if (status.state === 'unavailable') return '发布站点（需要连接）';
+  if (status.state === 'running') return '发布中';
+  if (status.state === 'failed') return '重试发布';
+  return '发布站点';
+}
+
+function publicationStatusText(status: Exclude<PublicationServiceStatus, { state: 'idle' | 'unavailable' }>): string {
+  if (status.state === 'running') {
+    return `发布中：${publicationStageLabel(status.stage)}（第 ${publicationStageNumber(status.stage)}/4 阶段）`;
+  }
+  if (status.state === 'succeeded') {
+    return `发布成功：${status.deployment.output.fileCount} 个文件已激活。`;
+  }
+  return `发布失败：${status.message}`;
+}
+
+function publicationStageLabel(stage: 'prepare' | 'build' | 'upload' | 'activate'): string {
+  const labels = {
+    prepare: '准备',
+    build: '构建与检查',
+    upload: '上传',
+    activate: '激活',
+  } as const;
+  return labels[stage];
+}
+
+function publicationStageNumber(stage: 'prepare' | 'build' | 'upload' | 'activate'): number {
+  return ['prepare', 'build', 'upload', 'activate'].indexOf(stage) + 1;
 }
 
 function visibilityLabel(value: PublishCenterArticle['visibility']): string {

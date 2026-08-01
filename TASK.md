@@ -536,28 +536,28 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 发布前重新验证配置、内容根、授权、意图和 Blocker。
-- [ ] 发布阶段严格为准备、构建与检查、上传、激活，不显示虚假百分比。
-- [ ] 上传开始后不显示不可兑现的取消；关闭视图不丢失任务可观察性。
-- [ ] 构建、上传或激活失败均不更新部署事实，旧站点继续可访问。
-- [ ] 重试前重新扫描并生成新快照，不盲目使用陈旧构建目录。
+- [x] 发布前重新验证配置、内容根、授权、意图和 Blocker。
+- [x] 发布阶段严格为准备、构建与检查、上传、激活，不显示虚假百分比。
+- [x] 上传开始后不显示不可兑现的取消；关闭视图不丢失任务可观察性。
+- [x] 构建、上传或激活失败均不更新部署事实，旧站点继续可访问。
+- [x] 重试前重新扫描并生成新快照，不盲目使用陈旧构建目录。
 - [ ] 使用隔离 Cloudflare 项目验证首次部署、更新部署和至少一种远端失败场景。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先用 fake adapter 验证“一篇文章完成四阶段且返回成功部署”的 tracer test。
-- [ ] TDD：逐阶段注入失败并验证旧部署/本地事实不变，再覆盖并发发布保护。
-- [ ] TDD：运行编排状态机、适配器契约、完整构建、类型检查和全量回归。
-- [ ] Review：独立 subagent 只读审查原子语义、失败窗口、重试幂等和任务并发。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条可自动验收 criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：先用 fake adapter 验证“一篇文章完成四阶段且返回成功部署”的 tracer test。
+- [x] TDD：逐阶段注入失败并验证旧部署/本地事实不变，再覆盖并发发布保护。
+- [x] TDD：运行编排状态机、适配器契约、完整构建、类型检查和全量回归。
+- [x] Review：独立 subagent 只读审查原子语义、失败窗口、重试幂等和任务并发。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### HITL & Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录真实 Pages 部署与旧站点保持证据：
+- [x] 记录分支/提交或 PR：分支 `codex/s13-deploy`；本地提交主题 `feat: orchestrate atomic Pages deployments`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：先以缺少发布编排器的四阶段 tracer 为 RED；逐步加入验证先于扫描、上传/激活失败不写成功事实、错误脱敏、快照/状态隔离、并发合并与失败后新扫描的 RED → GREEN。直接 Pages 契约再以 SHA-256 期望的失败向量、2,001 文件与 40 MiB 分批、check-missing/上传中断、错误 deployment ID、远端 failure/timeout 建立或加强负向断言；review 发现 browser target 下 WASM 未加载，改为纯 JS BLAKE3 并补 bundle/runtime 固定向量 smoke。最终 `npm test`（25 files / 288 tests）、`npm run typecheck`、`npm run lint`、`npm run build` 与 `git diff --check` 全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：独立 reviewer `/root/review_s13` 首轮为 `0 P0 / 2 P1 / 1 P2`（错误类型可由 adapter 伪造、并发/重试覆盖不足）；修复后复审确认前两项关闭，提出协议 P1（Wrangler BLAKE3 和 40 MiB/2,000 文件）及 direct adapter 失败路径 P2，均以测试修复。最终发现 browser bundle WASM P1，替换为纯 JS `@noble/hashes` 并补 runtime smoke 后签字 `0 P0 / 0 P1 / 1 P2`。
+- [x] 记录真实 Pages 部署与旧站点保持证据：自动验证证明候选 deployment 只有返回相同 ID 且 `deploy:success` 才被视为激活；任何本地构建、上传、轮询 ID/failure/timeout 失败均不写成功 receipt。真实 HITL 尚未完成：`main.ts` 未接入真实 OAuth/Keychain/HTTP host，且未提供隔离 Cloudflare 项目；因此 UI 安全显示“需要连接”，不得声称已生产发布或勾选 S13。
 
 ### S14 — 部署事实、下线与失败协调恢复
 
@@ -792,6 +792,9 @@ flowchart LR
 - [`tests/site-setup.test.ts`](./tests/site-setup.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S11 确认时机、重试、不同计划并发、域名错误、项目列表和应用层发布中心转换回归。
 - [`src/publication/publish-center.ts`](./src/publication/publish-center.ts)、[`src/application.ts`](./src/application.ts)、[`src/core/preview.ts`](./src/core/preview.ts)、[`src/content/site-scanner.ts`](./src/content/site-scanner.ts) 与 [`src/plugin/view.ts`](./src/plugin/view.ts)：S12 发布中心状态、同源预览、扫描一致性和 Obsidian UI 投影。
 - [`tests/publish-center.test.ts`](./tests/publish-center.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts) 与 [`tests/content-scan.integration.test.ts`](./tests/content-scan.integration.test.ts)：S12 差异、未知基线、下线确认、快照隔离、扫描资产 digest 和应用集成回归。
+- [`src/publication/publish-orchestrator.ts`](./src/publication/publish-orchestrator.ts)、[`src/cloudflare/pages-deployment.ts`](./src/cloudflare/pages-deployment.ts)、[`src/application.ts`](./src/application.ts) 与 [`src/plugin/view.ts`](./src/plugin/view.ts)：S13 单一后台发布事务、四阶段状态、Cloudflare Pages Direct Upload 适配器、冻结快照交接和关闭 View 后的持续可观察性。
+- [`tests/publication-orchestrator.test.ts`](./tests/publication-orchestrator.test.ts)、[`tests/cloudflare-pages-deployment.test.ts`](./tests/cloudflare-pages-deployment.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S13 四阶段 tracer、失败/并发/重试、Pages hash/分批/部署轮询协议、browser bundle runtime 向量及应用层回归。
+- [Cloudflare Pages Direct Upload](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)、[Create Deployment API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/create/)、[Wrangler asset hash source](https://github.com/cloudflare/workers-sdk/blob/main/packages/deploy-helpers/src/deploy/helpers/hash.ts) 与 [Wrangler Pages upload source](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/pages/upload.ts)：S13 Direct Upload 次序、manifest 创建、BLAKE3 asset key 与 batch 限制的外部原始依据。
 
 ### Key decisions
 
@@ -805,6 +808,7 @@ flowchart LR
 - S12 在拿到完整部署 manifest 时投影准确变化；缺失 manifest 时保持 `unknown` 而非虚构差异。确认发布将 HTML、文件列表和资源编码为冻结值，后续消费者按需得到新字节副本，Vault 的后续编辑只属于下一版。
 - S11 将建站拆成“可自由编辑的本地草稿”和“最终确认的一次性事务”：只读连接/项目查询与草稿扫描可提前发生，创建/绑定、域名变更和正式 `site.yml` 写入只能在确认后发生。相同冻结计划可合并并发请求；不同计划会拒绝，避免把 A 的成功误报为 B。
 - S09 对同类 prepare 合并，对显式 repair 则在活跃 prepare 后排队，确保不会并发写入环境缓存，也不会吞掉用户要求的强制更新。
+- S13 将远端发布限定为一个不可取消的四阶段事务：验证/准备、完整构建与稳定性检查、上传候选部署、以相同 deployment ID 的 `deploy:success` 确认激活；只有最后一步成功才形成部署 receipt。Pages 资源 key 与 Wrangler 对齐为 `BLAKE3(base64(bytes) + extension)` 前 32 位十六进制字符，使用可在 Obsidian browser bundle 执行的纯 JS 实现；单个上传 batch 限为 40 MiB 或 2,000 文件。
 
 ### Verification evidence
 
@@ -824,6 +828,7 @@ flowchart LR
 - S12 自动实现、逐行为 TDD 与独立 subagent 多轮 review 已完成；发布中心四 Tab、成员选择/下线确认、可定位问题、未知基线、扫描稳定性及不可变发布快照均已验证。最终 `npm test` 为 22 files / 256 tests，且 typecheck、lint、build 与 diff-check 均通过；review 结论 `0 P0 / 0 P1 / 0 P2`。
 - S11 自动编排、草稿 UI 和组合边界已完成；四步向导、无副作用草稿扫描、已授权账号/已有兼容项目选择、create/bind、custom-domain 计划、并发计划隔离、失败后复用和应用层进入发布中心均有回归。最终为 23 files / 267 tests，工程门禁通过；`/root/review_s11` 最终 `0 P0 / 0 P1 / 2 P2`，其中草稿摘要 P2 已修复，域名结果持久呈现移交 S15。
 - S09 环境管理基础与并发安全已验证：系统 Node/已验证缓存复用、下载 hash/签名失败、离线错误、缓存回退、同类 prepare 合并、repair 排队均有测试。当前 23 files / 270 tests，工程门禁通过；reviewer `/root/review_s09_final` 的 1 个 P1 与 1 个测试时序 P2 均已按 RED → GREEN 修复。
+- S13 自动编排与 Pages Direct Upload 协议已完成：四阶段状态、失败不写成功事实、状态/receipt 不可变、View 关闭后仍可观察、并发合并、失败后新快照、Wrangler BLAKE3 key、40 MiB/2,000 文件 batch、直接上传失败窗口和 browser bundle runtime 均有回归。最终为 25 files / 288 tests，工程门禁通过；`/root/review_s13` 最终 `0 P0 / 0 P1 / 1 P2`。
 
 ### Open questions / risks
 
@@ -833,6 +838,7 @@ flowchart LR
 - S12 不持有远端完整部署 manifest；因此对只有线上事实而本地扫描无法确认的条目保持未知。S13/S14 必须接入并持久化经过确认的成功部署 manifest，才能可靠展示远端待下线与精确变化。
 - S11 仍等待 S10 的实际 OAuth/API host adapter、Keychain 配置和隔离 Cloudflare 测试资源；主插件在未注入这些组合边界时会安全禁用最终建站。自定义域名 pending/active/failed 的首次结果当前以 Notice 显示，S15 应持久化并提供可回看/刷新状态。
 - S09 不能安全地选择虚构 release host：需要确认“发布引擎随插件构建打包”或提供版本化 engine manifest、固定 HTTPS origin、签名格式和受信公钥/轮换策略；在此之前，生产环境管理器不应被主插件接线为下载器。
+- S13 的 Pages HTTP adapter 通过测试，但尚未从 `main.ts` 实例化：需要 S10 提供真实 OAuth/API Token、Keychain 和 HTTP host 接线，并由用户提供隔离 Cloudflare 项目/账号完成首次、更新及失败的 HITL。这一 P2 跨 Slice 阻塞使 S13 不能标为完成，也不允许插件伪装为可发布。
 - 当前 npm registry 镜像对 `npm audit` 返回 `NOT_IMPLEMENTED`；全量构建和测试不受影响，但在 registry 或 lockfile 环境变化后需要重跑生产依赖审计。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。
