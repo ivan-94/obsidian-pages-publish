@@ -662,37 +662,37 @@ flowchart LR
 ### S17 — 干净 Vault 到首次生产发布的候选版旅程
 
 - Type：HITL（完整 HAT 与发布决策）
-- Blocked by：S06、S08、S13、S14、S15、S16
+- Blocked by：S06、S08、S09、S10、S13、S14、S15、S16
 - Covers：全部首版成功判据、AC-1 至 AC-8、PRODUCT-SPEC 发布门槛
 - Outcome：从一台只有干净 Obsidian、一个真实 Vault 和 Cloudflare 账号的 macOS 开始，用户无需终端即可完成安装、首次设置、本地预览和第一次生产发布；该具体纵向旅程同时形成发布候选版的最终证据。
 
 #### Acceptance criteria
 
-- [ ] 固化最低 Obsidian 版本、兼容 Node 范围、引擎发行源和校验/回退机制。
-- [ ] 使用大 Vault fixture 建立扫描、构建、内存与 UI 响应基准，并处理阻塞发布的问题。
-- [ ] 完成 private/unlisted 全产物泄漏检查、路径逃逸、HTML/SVG/Mermaid 和凭据脱敏安全回归。
+- [ ] 固化最低 Obsidian 版本、兼容 Node 范围、引擎发行源和校验/回退机制。（`manifest.json`/`versions.json` 的最低 Obsidian 版本和 Node 下限已有包前校验；真实发行源、签名信任根与回退 artifact 仍未确定。）
+- [ ] 使用大 Vault fixture 建立扫描、构建、内存与 UI 响应基准，并处理阻塞发布的问题。（360 篇 mixed-visibility smoke 已自动运行；可比较的机器/多轮/profile 基准和真实 UI 响应仍待 HAT。）
+- [x] 完成 private/unlisted 全产物泄漏检查、路径逃逸、HTML/SVG/Mermaid 和凭据脱敏安全回归。
 - [ ] 完成首次设置、首次发布、更新、URL 迁移、下线、各阶段失败和待协调恢复的完整验收。
 - [ ] 完成真实 Cloudflare 新建/绑定/部署/域名状态验收，不在产物中保留密钥。
 - [ ] 在不使用开发 fixture、测试注入或预置插件本地数据的干净环境中，完整走通安装 → 配置 → 授权 → 预览 → 首次生产发布 → 打开站点。
 - [ ] 完成 Obsidian 明暗主题、窄容器、键盘和 200% 缩放 HAT。
-- [ ] 生成可安装包，干净 Vault 安装/升级/卸载 smoke 通过。
+- [ ] 生成可安装包，干净 Vault 安装/升级/卸载 smoke 通过。（已生成并验证只含 3 个安装文件的候选目录；真实干净 Vault 安装/升级/卸载待 HAT。）
 - [ ] 所有 P0/P1 测试与 review finding 清零，P2 均有明确发布处置。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：任何硬化发现先增加可复现失败测试，再修复；不得直接打补丁后补测试。
-- [ ] TDD：运行全量自动测试、类型检查、构建、安装 smoke、安全负向测试和性能基准。
-- [ ] TDD：重构或性能优化只在 GREEN 下进行，优化前后保持同一外部行为。
-- [ ] Review：独立 subagent 对完整 diff/代码库做发布级只读 review；必要时可增加第二个安全专项 reviewer。
-- [ ] Review：修复全部 P0/P1，记录 P2 发布处置并重跑完整验证。
+- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。（真实 host/HITL 验收条件尚无法转绿。）
+- [x] TDD：任何自动化硬化发现先增加可复现失败测试，再修复；不得直接打补丁后补测试。
+- [ ] TDD：运行全量自动测试、类型检查、构建、安装 smoke、安全负向测试和性能基准。（全量自动门禁、package、私密负向和大 Vault smoke 已通过；真实安装 smoke 与可比较基准待 HAT。）
+- [x] TDD：重构或性能优化只在 GREEN 下进行，优化前后保持同一外部行为。
+- [x] Review：独立 subagent 对完整 diff/代码库做发布级只读 review；必要时可增加第二个安全专项 reviewer。
+- [x] Review：修复全部 P0/P1，记录 P2 发布处置并重跑完整验证。
 
 #### HITL & Slice Notes
 
-- [ ] 记录发布候选版本/提交或 PR：
-- [ ] 记录全量验证与性能基准：
-- [ ] 记录 reviewer task/thread ID、findings 与处置：
-- [ ] 记录 HAT 产物、人工结论和最终发布决策：
+- [x] 记录发布候选版本/提交或 PR：`codex/s17-release-candidate`；候选版本为 `0.1.0`，不创建远端 PR。
+- [x] 记录全量验证与性能基准：`npm test -- --run`、typecheck、lint、build、`npm run package`、`bash -n hats/20260801-s17-release-candidate/prepare.sh` 和 diff-check 通过；package 目录实测仅有 `main.js`、`manifest.json`、`styles.css`。`tests/release-benchmark.test.ts` 用 360 篇混合可见性文章确认扫描/构建与 private 负向路径可运行，但只输出 smoke 采样，不宣称性能门槛。
+- [x] 记录 reviewer task/thread ID、findings 与处置：`/root/review_s14` 只读候选审查及 follow-up。P1-1：HAT 错把内存 preview 当作生成目录；已改为记录 loopback URL、private 候选路由、搜索/图谱/sitemap 的浏览器或 curl 证据。P1-2：单次开发机数值不应伪装为性能基线；已删除硬编码数值并明确要求同机三次 profile + 真实 Obsidian UI 记录。最终（含 `versions.json` 一致性 TDD delta）`0 P0 / 0 P1`。P2：同版本 package staging 会重建自身的 `release/pages-publish-<version>` 目录，已在 HAT 中明确且不触及 Vault/Cloudflare；真实 clean-install/upgrade/uninstall 是 HITL gate。
+- [x] 记录 HAT 产物、人工结论和最终发布决策：[`hats/20260801-s17-release-candidate/guide.md`](./hats/20260801-s17-release-candidate/guide.md) 与 [`prepare.sh`](./hats/20260801-s17-release-candidate/prepare.sh) 已生成并完成语法/info 检查。最终发布决策：`blocked`，原因是实际 S09/S10/S13 host 接线、Cloudflare、干净 Vault、主题/键盘/缩放及性能 HAT 均未执行，发行引擎信任源也未确定。
 
 ## 6. Slice 执行模板
 
@@ -800,6 +800,7 @@ flowchart LR
 - [`tests/maintenance-service.test.ts`](./tests/maintenance-service.test.ts)、[`tests/local-maintenance.test.ts`](./tests/local-maintenance.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S15 脱敏负向场景、维护操作隔离、保留数量/大小/时效、恢复收据保护、真实 DataAdapter 目录映射和应用入口回归。
 - [`src/plugin/global-ui-state.ts`](./src/plugin/global-ui-state.ts)、[`src/plugin/safe-actions.ts`](./src/plugin/safe-actions.ts)、[`src/plugin/settings-navigation.ts`](./src/plugin/settings-navigation.ts)、[`src/plugin/lifecycle.ts`](./src/plugin/lifecycle.ts)、[`src/plugin/obsidian-host.ts`](./src/plugin/obsidian-host.ts)、[`src/plugin/view.ts`](./src/plugin/view.ts)、[`src/application.ts`](./src/application.ts)、[`src/main.ts`](./src/main.ts) 与 [`styles.css`](./styles.css)：S16 全局 Ribbon/状态栏单一投影、安全命令及 Markdown 菜单、设置兼容降级、键盘可导航状态栏、焦点可见性和窄容器语义表格。
 - [`tests/global-ui-state.test.ts`](./tests/global-ui-state.test.ts)、[`tests/safe-actions.test.ts`](./tests/safe-actions.test.ts)、[`tests/settings-navigation.test.ts`](./tests/settings-navigation.test.ts)、[`tests/publish-center-a11y.test.ts`](./tests/publish-center-a11y.test.ts)、[`tests/ui-style-smoke.test.ts`](./tests/ui-style-smoke.test.ts)、[`tests/plugin-lifecycle.integration.test.ts`](./tests/plugin-lifecycle.integration.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts) 与 [`tests/maintenance-service.test.ts`](./tests/maintenance-service.test.ts)：S16 状态优先级、pending 保守投影、host lifecycle、命令白名单、运行时设置降级、发布中心表头/单元格语义及焦点/窄容器 smoke 回归。
+- [`scripts/release-package.mjs`](./scripts/release-package.mjs)、[`scripts/release-package.d.mts`](./scripts/release-package.d.mts)、[`tests/release-package.test.ts`](./tests/release-package.test.ts)、[`tests/release-benchmark.test.ts`](./tests/release-benchmark.test.ts)、[`hats/20260801-s17-release-candidate/guide.md`](./hats/20260801-s17-release-candidate/guide.md) 与 [`hats/20260801-s17-release-candidate/prepare.sh`](./hats/20260801-s17-release-candidate/prepare.sh)：S17 可重建三文件安装包、manifest/versions 兼容一致性、360 篇大 Vault mixed-visibility smoke 和无外部副作用的 blank-mode HAT 指南。
 - [Cloudflare Pages Direct Upload](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)、[Create Deployment API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/create/)、[Wrangler asset hash source](https://github.com/cloudflare/workers-sdk/blob/main/packages/deploy-helpers/src/deploy/helpers/hash.ts) 与 [Wrangler Pages upload source](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/pages/upload.ts)：S13 Direct Upload 次序、manifest 创建、BLAKE3 asset key 与 batch 限制的外部原始依据。
 
 ### Key decisions
@@ -818,6 +819,7 @@ flowchart LR
 - S14 把远端成功后的本地回写当作可重放事务：在首个 Frontmatter 写入前 durable receipt，恢复只接受同一 deployment ID、URL 与 `success` 状态；每篇文章的首次/最近成功时间决定与 receipt 一起保存，不因整站无变化重部署推进日期；成功下线移除在线事实但保留首次发布日期。
 - S15 将“本地维护”限制为可删除重建的数据：诊断采用确认门与运行时 allowlist，不记录异常原文、路径或正文；构建目录作为整目录 artifact 递归计量/删除，pending recovery receipt 永不因保留策略删除；未被宿主提供的远端或运行时动作明确标为 unavailable。
 - S16 以应用层的单一全局投影驱动 Ribbon 与状态栏；扫描只能得出 blocker，无法安全推导发布差异，故内容/配置变更显示保守的“有待发布变化”直至发布中心完成比较，成功发布才清零。发布/失败反馈优先于环境准备状态。
+- S17 的 package 是一个可复制到 Obsidian 插件目录的最小三文件 staging 目录；包前强制 `manifest.json` 与 `versions.json` 一致，但不把构建产物、测试或任何凭据带入包。它替换同版本的生成 staging 目录，绝不触及 Vault 或远端。性能测试仅为大 Vault smoke，实际发布门槛必须来自受控机器上的重复 HAT profile。
 
 ### Verification evidence
 
@@ -841,6 +843,7 @@ flowchart LR
 - S13 自动编排与 Pages Direct Upload 协议已完成：四阶段状态、失败不写成功事实、状态/receipt 不可变、View 关闭后仍可观察、并发合并、失败后新快照、Wrangler BLAKE3 key、40 MiB/2,000 文件 batch、直接上传失败窗口和 browser bundle runtime 均有回归。最终为 25 files / 288 tests，工程门禁通过；`/root/review_s13` 最终 `0 P0 / 0 P1 / 1 P2`。
 - S14 自动实现已完成：成功后事实/精细 baseline、private/移出范围/删除下线、耐久 receipt、重启验真重放、逐篇 first/last 时间与协调 UI 均有回归；`/root/review_s14` 经三轮复审最终 `0 P0 / 0 P1 / 0 P2`。最终门禁为 26 files / 307 tests、lint、typecheck/build 与 diff-check 全通过。Slice 总复选框仅保留等待 S10/S13 的真实 host 接线，使“清空所有本地数据后重新授权/绑定原项目”的端到端 AC 可在真实 Cloudflare 环境验证。
 - S15 已完成可安全自动接入的维护能力：设置页锚点与本地配置/远端动作隔离、预览、重建缓存、确认后脱敏诊断、原生废纸篓删除，以及 adapter-backed retention 均有回归；`/root/review_s14` 最终 `0 P0 / 0 P1 / 0 P2`。当前门禁为 28 files / 317 tests、lint、build 与 diff-check 全通过。总 Slice 仍等待 S09/S10/S14 真实 host/state-store 接线，避免把 disabled 维护动作宣称为可用。
+- S17 自动候选准备完成：可重建 package、兼容映射 guard、大 Vault mixed-visibility smoke、安全回归和 blank-mode HAT 指南已提交前验证；`/root/review_s14` 处理两项 HAT 真实性 P1 后最终 `0 P0 / 0 P1`。完整发布候选仍 blocked 于 S09/S10/S13 真实 host、Cloudflare、干净 Vault 安装、视觉/键盘/性能 HAT 和引擎信任源。
 
 ### Open questions / risks
 

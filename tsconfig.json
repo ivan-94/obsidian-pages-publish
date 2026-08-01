@@ -14,8 +14,9 @@
     "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
+    "allowJs": true,
     "types": ["node", "vitest/globals"],
     "lib": ["ES2021", "DOM"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "vitest.config.ts"]
 }

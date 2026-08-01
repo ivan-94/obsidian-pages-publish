@@ -2,5 +2,6 @@ node_modules/
 main.js
 *.map
 coverage/
+release/
 data.json
 .DS_Store

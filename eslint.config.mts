@@ -7,6 +7,7 @@ export default defineConfig(
     'node_modules',
     'main.js',
     'coverage',
+    'release',
     'esbuild.config.mjs',
     'versions.json',
     'package-lock.json',

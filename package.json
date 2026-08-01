@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "npm run typecheck && node esbuild.config.mjs production",
+    "package": "npm run build && node scripts/release-package.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
