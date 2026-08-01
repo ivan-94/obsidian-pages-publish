@@ -192,7 +192,9 @@ export async function scanSiteFromDirectory(
     {
       fileSystem: options.localAssetFileSystem,
       signal: options.signal,
-      retainAssets: false,
+      // The bytes are retained only during this scan to derive the stable
+      // publish-input digest, then released with the local asset plan.
+      retainAssets: true,
       webpDecoder: options.localAssetWebpDecoder,
     },
   );
@@ -271,9 +273,15 @@ export async function scanSiteFromDirectory(
     });
   }
   issues.sort(compareScanIssues);
+  const assetDigests = Object.entries(assetPlan.assets)
+    .map(([path, asset]) => ({
+      path,
+      digest: createHash('sha256').update(asset.content).digest('hex'),
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
   return {
     configRevision: loaded.revision,
-    digest: digestScan(loaded.revision, candidates, issues),
+    digest: digestScan(loaded.revision, candidates, issues, assetDigests),
     candidates,
     issues,
     externalLinks: assetPlan.externalLinks,
@@ -296,9 +304,10 @@ function digestScan(
   configRevision: string,
   candidates: ScanCandidate[],
   issues: ScanIssue[],
+  assetDigests: Array<{ path: string; digest: string }> = [],
 ): string {
   return createHash('sha256')
-    .update(JSON.stringify({ configRevision, candidates, issues }))
+    .update(JSON.stringify({ configRevision, candidates, issues, assetDigests }))
     .digest('hex');
 }
 

@@ -46,6 +46,14 @@ import {
   type CurrentArticleContext,
   type CurrentArticlePanelState,
 } from './publication/current-article-panel';
+import {
+  createPublicationSnapshot,
+  createPublishCenterState,
+  previewOutput,
+  type PublishBaseline,
+  type PublishCenterState,
+  type PublicationSnapshot,
+} from './publication/publish-center';
 import { collectDirectoryRouteSources } from './routing/directory-route-sources';
 import {
   normalizeRouteUrlPath,
@@ -70,6 +78,7 @@ export class PagesPublishApplication {
   private readonly previewServer = new LocalPreviewServer();
   private readonly scanCoordinator: ContentScanCoordinator<SiteScanResult>;
   private readonly currentArticleListeners = new Set<() => void>();
+  private preparedPublishSnapshot: PublicationSnapshot | undefined;
 
   constructor(
     private readonly vaultRoot: string,
@@ -122,17 +131,79 @@ export class PagesPublishApplication {
   }
 
   async preparePreview(): Promise<LocalPreview> {
+    return (await this.prepareStablePreview('preview')).preview;
+  }
+
+  async getPublishCenter(
+    options: { baseline?: PublishBaseline } = {},
+  ): Promise<PublishCenterState> {
+    const initialScan = await this.requestScan('manual-refresh');
+    if (initialScan.value.issues.some((issue) => issue.severity === 'blocker')) {
+      return createPublishCenterState({
+        siteName: await this.publishCenterSiteName(),
+        scan: initialScan.value,
+        articles: initialScan.value.candidates.map((candidate) => ({
+          sourcePath: candidate.sourcePath,
+          title: candidate.sourcePath,
+          sourceDigest: candidate.sourceDigest,
+          availability: 'unavailable' as const,
+        })),
+        baseline: options.baseline ?? { status: 'first-publish' },
+        output: {
+          status: 'unknown',
+          fileCount: 0,
+          assetCount: 0,
+          assetBytes: 0,
+        },
+      });
+    }
+    const prepared = await this.prepareStablePreview('manual-refresh');
+    return createPublishCenterState({
+      siteName: prepared.preview.siteName,
+      scan: prepared.scan.value,
+      articles: prepared.preview.articles,
+      baseline: options.baseline ?? (
+        prepared.preview.articles.some((article) => article.onlineUrl)
+          ? { status: 'missing' }
+          : { status: 'first-publish' }
+      ),
+      output: previewOutput(prepared.preview),
+    });
+  }
+
+  async preparePublishSnapshot(): Promise<PublicationSnapshot> {
+    const prepared = await this.prepareStablePreview('publish');
+    const snapshot = createPublicationSnapshot(prepared.scan.value, prepared.preview);
+    this.preparedPublishSnapshot = snapshot;
+    return snapshot;
+  }
+
+  getPreparedPublishSnapshot(): PublicationSnapshot | undefined {
+    return this.preparedPublishSnapshot;
+  }
+
+  private async prepareStablePreview(
+    trigger: 'manual-refresh' | 'preview' | 'publish',
+  ): Promise<{
+    preview: LocalPreview;
+    scan: CoordinatedScanResult<SiteScanResult>;
+  }> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const before = await this.requestScan('preview');
+      const before = await this.requestScan(trigger);
       const blockers = before.value.issues.filter(
         (issue) => issue.severity === 'blocker',
       );
       if (blockers.length > 0) throw new PublishingBlockedError(blockers);
       const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot);
-      const after = await this.requestScan('preview');
-      if (after.value.digest === before.value.digest) return preview;
+      const after = await this.requestScan(trigger);
+      if (after.value.digest === before.value.digest) return { preview, scan: after };
     }
     throw new Error('Content changed repeatedly while preparing the local preview.');
+  }
+
+  private async publishCenterSiteName(): Promise<string> {
+    const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+    return loaded.status === 'editable' ? loaded.config.site.name : '发布中心';
   }
 
   async checkExternalLinks(
@@ -272,6 +343,21 @@ export class PagesPublishApplication {
     }
   }
 
+  async setPublishCenterInclusion(
+    sourcePath: string,
+    included: boolean,
+    options: { confirmTakedown?: boolean } = {},
+  ): Promise<{
+    saved: ArticlePublicationMetadata;
+    scan?: CoordinatedScanResult<SiteScanResult>;
+    scanError?: Error;
+  }> {
+    const prepared = await this.prepareArticleIntentEdit(sourcePath, {
+      visibility: included ? 'public' : 'private',
+    });
+    return this.commitArticleIntentEdit(prepared, options);
+  }
+
   subscribeCurrentArticleChanges(listener: () => void): () => void {
     this.currentArticleListeners.add(listener);
     return () => this.currentArticleListeners.delete(listener);
@@ -304,6 +390,7 @@ export class PagesPublishApplication {
 
   async shutdown(): Promise<void> {
     this.currentArticleListeners.clear();
+    this.preparedPublishSnapshot = undefined;
     this.scanCoordinator.dispose();
     await this.previewServer.stop();
   }

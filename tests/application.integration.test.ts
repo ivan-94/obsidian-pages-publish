@@ -100,6 +100,153 @@ describe('Pages Publish application', () => {
     expect(application.getPreviewStatus()).toEqual({ state: 'stopped' });
   });
 
+  it('shows a selected local article as an added change in the publish center', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Publish Center Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'features:',
+        '  search: true',
+        '  graph: true',
+        'cloudflare:',
+        '  project_name: publish-center-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'release.md'),
+      '---\npublication:\n  visibility: public\n---\n# Release notes\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    await expect(application.getPublishCenter()).resolves.toMatchObject({
+      siteName: 'Publish Center Wiki',
+      baseline: 'first-publish',
+      canPublish: true,
+      summary: { changes: 1, added: 1, blockers: 0, warnings: 0 },
+      articles: [
+        expect.objectContaining({
+          sourcePath: 'notes/release.md',
+          title: 'Release notes',
+          nextIncluded: true,
+          change: 'added',
+        }),
+      ],
+    });
+    await application.shutdown();
+  });
+
+  it('shows an existing deployment as unknown until the complete deployment manifest is available', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Existing Deployment\n  home_layout: sections\ncontent_roots:\n  - path: notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: existing-deployment\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'online.md'),
+      '---\npublication:\n  visibility: public\n  deployment:\n    url: /notes/online/\n    source_digest: previous\n---\n# Existing online article\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    await expect(application.getPublishCenter()).resolves.toMatchObject({
+      baseline: 'unknown',
+      articles: [expect.objectContaining({ change: 'unknown' })],
+    });
+    await application.shutdown();
+  });
+
+  it('freezes a publish snapshot so edits made afterwards remain pending for the next version', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      [
+        'version: 1',
+        'site:',
+        '  name: Snapshot Wiki',
+        '  home_layout: sections',
+        'content_roots:',
+        '  - path: notes',
+        '    public_root: /notes',
+        'features:',
+        '  search: false',
+        '  graph: false',
+        'cloudflare:',
+        '  project_name: snapshot-wiki',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const articlePath = join(vault, 'notes', 'release.md');
+    await writeFile(
+      articlePath,
+      '---\npublication:\n  visibility: public\n---\n# First version\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    const snapshot = await application.preparePublishSnapshot();
+    await writeFile(
+      articlePath,
+      '---\npublication:\n  visibility: public\n---\n# Second version\n',
+      'utf8',
+    );
+
+    expect(snapshot.files['/notes/release/index.html']).toContain('First version');
+    expect(snapshot.files['/notes/release/index.html']).not.toContain('Second version');
+    expect(snapshot.scanDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(application.getPreparedPublishSnapshot()).toBe(snapshot);
+    await application.shutdown();
+  });
+
+  it('requires explicit confirmation before a publish-center checkbox schedules an online article for takedown', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Checkbox Wiki\n  home_layout: sections\ncontent_roots:\n  - path: notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: checkbox-wiki\n',
+      'utf8',
+    );
+    const articlePath = join(vault, 'notes', 'online.md');
+    await writeFile(
+      articlePath,
+      '---\npublication:\n  visibility: public\n  deployment:\n    url: /notes/online/\n---\n# Online article\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    await expect(
+      application.setPublishCenterInclusion('notes/online.md', false),
+    ).rejects.toMatchObject({ name: 'ArticleIntentConfirmationRequiredError' });
+    await application.setPublishCenterInclusion('notes/online.md', false, {
+      confirmTakedown: true,
+    });
+
+    await expect(readFile(articlePath, 'utf8')).resolves.toContain('visibility: private');
+    await application.shutdown();
+  });
+
   it('extracts external link candidates and checks them only through the manual application action', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
     vaults.push(vault);
@@ -184,6 +331,31 @@ describe('Pages Publish application', () => {
       name: 'PublishingBlockedError',
       issues: [expect.objectContaining({ code: 'content-root-missing' })],
     });
+  });
+
+  it('keeps the publish center open with source-located Blockers while disabling publish', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Blocked Center\n  home_layout: sections\ncontent_roots:\n  - path: missing-notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: blocked-center\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault);
+
+    await expect(application.getPublishCenter()).resolves.toMatchObject({
+      siteName: 'Blocked Center',
+      canPublish: false,
+      summary: { blockers: 1 },
+      issues: [
+        expect.objectContaining({
+          code: 'content-root-missing',
+          path: 'content_roots[0].path',
+        }),
+      ],
+    });
+    await application.shutdown();
   });
 
   it('creates the first local config and scans without opening a preview', async () => {

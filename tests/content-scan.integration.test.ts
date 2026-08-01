@@ -147,6 +147,38 @@ describe('site content scanner', () => {
     );
   });
 
+  it('changes the scan digest when a selected local image changes without editing its Markdown source', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-scan-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Asset Digest\n  home_layout: sections\ncontent_roots:\n  - path: notes\n    public_root: /notes\nassets:\n  exclude: []\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: asset-digest\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'article.md'),
+      '---\npublication:\n  visibility: public\n---\n# Article\n\n![Diagram](diagram.png)\n',
+      'utf8',
+    );
+    const assetPath = join(vault, 'notes', 'diagram.png');
+    await writeFile(assetPath, validPng);
+
+    const first = await scanSiteFromDirectory(vault);
+    const changedPng = Buffer.concat([
+      validPng.subarray(0, -12),
+      pngChunk('tEXt', Buffer.from('revision=2')),
+      validPng.subarray(-12),
+    ]);
+    await writeFile(assetPath, changedPng);
+    const second = await scanSiteFromDirectory(vault);
+
+    expect(second.candidates).toEqual(first.candidates);
+    expect(second.issues).toEqual(first.issues);
+    expect(second.digest).not.toBe(first.digest);
+  });
+
   it('keeps asset issue order and digest stable across directory enumeration order', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-scan-'));
     vaults.push(vault);

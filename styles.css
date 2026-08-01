@@ -1,4 +1,5 @@
 .pages-publish-view {
+  container-type: inline-size;
   padding: var(--size-4-4);
 }
 
@@ -9,24 +10,43 @@
 }
 
 .pages-publish-view__articles {
-  list-style: none;
   margin: var(--size-4-6) 0;
-  padding: 0;
+  width: 100%;
 }
 
-.pages-publish-view__articles li {
-  align-items: baseline;
+.pages-publish-view__articles th,
+.pages-publish-view__articles td {
   border-bottom: 1px solid var(--background-modifier-border);
-  display: flex;
-  gap: var(--size-4-3);
-  justify-content: space-between;
-  padding: var(--size-4-3) 0;
+  padding: var(--size-4-2) var(--size-4-3);
+  text-align: start;
+  vertical-align: top;
+}
+
+.pages-publish-view__articles tbody tr {
+  cursor: pointer;
+}
+
+.pages-publish-view__articles tbody tr:hover {
+  background: var(--background-modifier-hover);
+}
+
+.pages-publish-view__articles code {
+  color: var(--text-muted);
+  display: block;
+  margin-top: var(--size-2-1);
+  overflow-wrap: anywhere;
 }
 
 .pages-publish-view__actions {
+  background: var(--background-primary);
+  border-top: 1px solid var(--background-modifier-border);
   display: flex;
+  gap: var(--size-4-2);
   justify-content: flex-end;
-  margin-top: var(--size-4-6);
+  margin: var(--size-4-6) calc(-1 * var(--size-4-4)) 0;
+  padding: var(--size-4-3) var(--size-4-4);
+  position: sticky;
+  bottom: 0;
 }
 
 .pages-publish-view__scan {
@@ -37,6 +57,55 @@
   justify-content: space-between;
   margin: var(--size-4-4) 0;
   padding: var(--size-4-2) 0;
+}
+
+.pages-publish-view__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin: var(--size-4-4) 0;
+}
+
+.pages-publish-view__tabs .is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.pages-publish-view__review {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  margin: var(--size-4-4) 0;
+  padding: var(--size-4-4);
+}
+
+.pages-publish-view__review h3,
+.pages-publish-view__review h4 {
+  margin-top: 0;
+}
+
+@container (max-width: 640px) {
+  .pages-publish-view__articles thead {
+    display: none;
+  }
+
+  .pages-publish-view__articles,
+  .pages-publish-view__articles tbody,
+  .pages-publish-view__articles tr,
+  .pages-publish-view__articles td {
+    display: block;
+    width: 100%;
+  }
+
+  .pages-publish-view__articles td {
+    border-bottom: 0;
+    padding: var(--size-2-2) var(--size-4-2);
+  }
+
+  .pages-publish-view__articles tr {
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding: var(--size-4-2) 0;
+  }
 }
 
 .pages-publish-view__issues {

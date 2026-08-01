@@ -39,6 +39,7 @@ import {
   type PublicGraphEdge,
   type PublicDiscoveryPage,
 } from '../site/discovery';
+import type { PublicationVisibility } from '../publication/article-metadata';
 
 export interface PreviewPage {
   sourcePath: string;
@@ -46,9 +47,20 @@ export interface PreviewPage {
   url: string;
 }
 
+/** Local-only article facts used by the publish center; never emitted to the site. */
+export interface PreviewArticle {
+  sourcePath: string;
+  title: string;
+  url?: string;
+  onlineUrl?: string;
+  visibility: PublicationVisibility;
+  sourceDigest: string;
+}
+
 export interface LocalPreview {
   siteName: string;
   pages: PreviewPage[];
+  articles: PreviewArticle[];
   files: Record<string, string>;
   assets: Record<string, PreviewAsset>;
   routePlan: SiteRoutePlan;
@@ -302,9 +314,31 @@ export async function prepareLocalPreviewFromDirectory(
     );
   }
 
+  const routesBySource = new Map(
+    routePlan.articles.map((article) => [article.sourcePath, article]),
+  );
+  const articles = [...snapshots.values()]
+    .map((snapshot): PreviewArticle => {
+      const route = routesBySource.get(snapshot.sourcePath);
+      return {
+        sourcePath: snapshot.sourcePath,
+        title: snapshot.metadata.title.value,
+        visibility: snapshot.metadata.visibility.value,
+        sourceDigest: snapshot.revision,
+        ...(route?.url ? { url: route.url } : {}),
+        ...(snapshot.metadata.deployment?.url
+          ? { onlineUrl: snapshot.metadata.deployment.url }
+          : route?.onlineUrl
+            ? { onlineUrl: route.onlineUrl }
+            : {}),
+      };
+    })
+    .sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
+
   return {
     siteName: config.site.name,
     pages,
+    articles,
     files,
     assets: assetPlan.assets,
     routePlan,
@@ -502,6 +536,20 @@ export async function prepareArticlePreviewFromDirectory(
   const preview: ArticleLocalPreview = {
     siteName: loadedConfig.config.site.name,
     pages: [page],
+    articles: [
+      {
+        sourcePath,
+        title: metadata.title.value,
+        url,
+        visibility: metadata.visibility.value,
+        sourceDigest: snapshot.revision,
+        ...(metadata.deployment?.url
+          ? { onlineUrl: metadata.deployment.url }
+          : plannedArticle.onlineUrl
+            ? { onlineUrl: plannedArticle.onlineUrl }
+          : {}),
+      },
+    ],
     articlePath: url,
     assets: assetPlan.assets,
     files: {
