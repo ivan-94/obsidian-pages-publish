@@ -602,29 +602,29 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 设置页形成站点、内容范围、Cloudflare、站点功能、本地环境的单页锚点结构。
-- [ ] 本地设置保存、远端账号/项目/域名动作和缓存/诊断动作彼此隔离。
-- [ ] 支持环境修复、清理可重建缓存、打开日志、启动预览和导出诊断包。
-- [ ] 诊断包导出前展示包含/排除项，且不含凭据、Authorization header、正文、私密路径或构建产物。
-- [ ] 日志、构建目录和恢复收据具有有界保留策略；成功协调后的恢复收据及时清理。
-- [ ] 移除本地站点配置进入 Obsidian 回收站，不删除远端项目或线上内容。
-- [ ] 远端动作失败时保留现有绑定并给出恢复入口。
+- [x] 设置页形成站点、内容范围、Cloudflare、站点功能、本地环境的单页锚点结构。
+- [x] 本地设置保存、远端账号/项目/域名动作和缓存/诊断动作彼此隔离。
+- [ ] 支持环境修复、清理可重建缓存、打开日志、启动预览和导出诊断包。（预览、缓存、诊断已接入；S09/S10 的实际运行环境、连接与日志 host boundary 尚未从 `main.ts` 注入，UI 会显式禁用，而非伪报成功。）
+- [x] 诊断包导出前展示包含/排除项，且不含凭据、Authorization header、正文、私密路径或构建产物。
+- [ ] 日志、构建目录和恢复收据具有有界保留策略；成功协调后的恢复收据及时清理。（本地维护服务已经覆盖并有适配器集成测试；S14 的实际 state store 尚未从主插件接入同一路径，不能声称端到端收据保留已经启用。）
+- [x] 移除本地站点配置进入 Obsidian 回收站，不删除远端项目或线上内容。
+- [ ] 远端动作失败时保留现有绑定并给出恢复入口。（S10/S11 的服务契约已覆盖该语义，真实 host/UI 持久状态尚未接线。）
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先验证“保存普通设置绝不产生远端调用”，再逐个增加维护动作。
-- [ ] TDD：通过导出文件和可观察状态验证脱敏，不断言日志 formatter 私有方法。
-- [ ] TDD：运行设置集成、危险动作、脱敏负向搜索、类型检查和上游回归。
-- [ ] Review：独立 subagent 只读审查远端副作用隔离、删除语义、日志保留与敏感数据暴露。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。（仍有三个 host 接线验收条件未满足。）
+- [x] TDD：先验证“保存普通设置绝不产生远端调用”，再逐个增加维护动作。
+- [x] TDD：通过导出文件和可观察状态验证脱敏，不断言日志 formatter 私有方法。
+- [x] TDD：运行设置集成、危险动作、脱敏负向搜索、类型检查和上游回归。
+- [x] Review：独立 subagent 只读审查远端副作用隔离、删除语义、日志保留与敏感数据暴露。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录诊断包样本与脱敏检查：
+- [x] 记录分支/提交或 PR：`codex/s15-maintenance`；不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：RED：`npx vitest run tests/local-maintenance.test.ts` 因运行时 `obsidian` package 不可解析而失败（0 tests）；GREEN：将仅需类型的 `DataAdapter` 改为 type-only import，使用受控路径归一化，并加入 fake adapter 对启动 best-effort prune、递归构建目录、`rmdir(path, true)`、in-progress receipt 保护、诊断导出后 prune 和 cache 重建的集成测试。最终：`npm test`（28 files / 317 tests）、`npm run lint`、`npm run build`、`git diff --check` 全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：`/root/review_s14` 作为独立 reviewer。首轮 4 P1（诊断脱敏、不可用动作、配置删除入口、保留策略），二轮 2 P1（运行时诊断校验、主插件服务接入），三轮 1 P1（构建目录原子保留与触发时机）均已修复。其后 P2（真实 DataAdapter 映射测试）已补齐；最终复审 `0 P0 / 0 P1 / 0 P2`。
+- [x] 记录诊断包样本与脱敏检查：导出前必须二次确认；包仅包含 plugin version、platform、结构化配置摘要、维护状态和通过运行时 allowlist 校验的事件码/计数。负向测试验证 Authorization、token、私密路径和正文无法写入；导出清单明确排除凭据、授权头、文章正文、私密路径和构建产物。
 
 ### S16 — 全局入口、反馈、响应式与可访问性
 
@@ -796,6 +796,8 @@ flowchart LR
 - [`tests/publication-orchestrator.test.ts`](./tests/publication-orchestrator.test.ts)、[`tests/cloudflare-pages-deployment.test.ts`](./tests/cloudflare-pages-deployment.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S13 四阶段 tracer、失败/并发/重试、Pages hash/分批/部署轮询协议、browser bundle runtime 向量及应用层回归。
 - [`src/publication/deployment-facts.ts`](./src/publication/deployment-facts.ts)、[`src/publication/article-metadata.ts`](./src/publication/article-metadata.ts)、[`src/publication/publish-center.ts`](./src/publication/publish-center.ts)、[`src/core/preview.ts`](./src/core/preview.ts)、[`src/publication/publish-orchestrator.ts`](./src/publication/publish-orchestrator.ts)、[`src/application.ts`](./src/application.ts) 与 [`src/plugin/view.ts`](./src/plugin/view.ts)：S14 非机密部署清单、耐久恢复收据、文章事实投影/下线、历史日期、待协调状态、重启恢复与发布中心基线。
 - [`tests/deployment-facts.test.ts`](./tests/deployment-facts.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts)、[`tests/article-metadata.integration.test.ts`](./tests/article-metadata.integration.test.ts)、[`tests/current-article-panel.integration.test.ts`](./tests/current-article-panel.integration.test.ts) 与 [`tests/publication-orchestrator.test.ts`](./tests/publication-orchestrator.test.ts)：S14 激活后事实、回写失败/重放、远端 identity、目录 fsync、private/移出范围/删除下线、first/last 时间、协调锁与历史事实 UI 回归。
+- [`src/maintenance/maintenance-service.ts`](./src/maintenance/maintenance-service.ts)、[`src/maintenance/local-maintenance.ts`](./src/maintenance/local-maintenance.ts)、[`src/application.ts`](./src/application.ts)、[`src/main.ts`](./src/main.ts) 与 [`src/plugin/settings-tab.ts`](./src/plugin/settings-tab.ts)：S15 明确确认的无内容诊断导出、运行时 allowlist、可重建缓存、本地保留协调、维护能力投影、原生设置动作及 Obsidian 废纸篓删除语义。
+- [`tests/maintenance-service.test.ts`](./tests/maintenance-service.test.ts)、[`tests/local-maintenance.test.ts`](./tests/local-maintenance.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S15 脱敏负向场景、维护操作隔离、保留数量/大小/时效、恢复收据保护、真实 DataAdapter 目录映射和应用入口回归。
 - [Cloudflare Pages Direct Upload](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)、[Create Deployment API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/create/)、[Wrangler asset hash source](https://github.com/cloudflare/workers-sdk/blob/main/packages/deploy-helpers/src/deploy/helpers/hash.ts) 与 [Wrangler Pages upload source](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/pages/upload.ts)：S13 Direct Upload 次序、manifest 创建、BLAKE3 asset key 与 batch 限制的外部原始依据。
 
 ### Key decisions
@@ -812,6 +814,7 @@ flowchart LR
 - S09 对同类 prepare 合并，对显式 repair 则在活跃 prepare 后排队，确保不会并发写入环境缓存，也不会吞掉用户要求的强制更新。
 - S13 将远端发布限定为一个不可取消的四阶段事务：验证/准备、完整构建与稳定性检查、上传候选部署、以相同 deployment ID 的 `deploy:success` 确认激活；只有最后一步成功才形成部署 receipt。Pages 资源 key 与 Wrangler 对齐为 `BLAKE3(base64(bytes) + extension)` 前 32 位十六进制字符，使用可在 Obsidian browser bundle 执行的纯 JS 实现；单个上传 batch 限为 40 MiB 或 2,000 文件。
 - S14 把远端成功后的本地回写当作可重放事务：在首个 Frontmatter 写入前 durable receipt，恢复只接受同一 deployment ID、URL 与 `success` 状态；每篇文章的首次/最近成功时间决定与 receipt 一起保存，不因整站无变化重部署推进日期；成功下线移除在线事实但保留首次发布日期。
+- S15 将“本地维护”限制为可删除重建的数据：诊断采用确认门与运行时 allowlist，不记录异常原文、路径或正文；构建目录作为整目录 artifact 递归计量/删除，pending recovery receipt 永不因保留策略删除；未被宿主提供的远端或运行时动作明确标为 unavailable。
 
 ### Verification evidence
 
@@ -833,6 +836,7 @@ flowchart LR
 - S09 环境管理基础与并发安全已验证：系统 Node/已验证缓存复用、下载 hash/签名失败、离线错误、缓存回退、同类 prepare 合并、repair 排队均有测试。当前 23 files / 270 tests，工程门禁通过；reviewer `/root/review_s09_final` 的 1 个 P1 与 1 个测试时序 P2 均已按 RED → GREEN 修复。
 - S13 自动编排与 Pages Direct Upload 协议已完成：四阶段状态、失败不写成功事实、状态/receipt 不可变、View 关闭后仍可观察、并发合并、失败后新快照、Wrangler BLAKE3 key、40 MiB/2,000 文件 batch、直接上传失败窗口和 browser bundle runtime 均有回归。最终为 25 files / 288 tests，工程门禁通过；`/root/review_s13` 最终 `0 P0 / 0 P1 / 1 P2`。
 - S14 自动实现已完成：成功后事实/精细 baseline、private/移出范围/删除下线、耐久 receipt、重启验真重放、逐篇 first/last 时间与协调 UI 均有回归；`/root/review_s14` 经三轮复审最终 `0 P0 / 0 P1 / 0 P2`。最终门禁为 26 files / 307 tests、lint、typecheck/build 与 diff-check 全通过。Slice 总复选框仅保留等待 S10/S13 的真实 host 接线，使“清空所有本地数据后重新授权/绑定原项目”的端到端 AC 可在真实 Cloudflare 环境验证。
+- S15 已完成可安全自动接入的维护能力：设置页锚点与本地配置/远端动作隔离、预览、重建缓存、确认后脱敏诊断、原生废纸篓删除，以及 adapter-backed retention 均有回归；`/root/review_s14` 最终 `0 P0 / 0 P1 / 0 P2`。当前门禁为 28 files / 317 tests、lint、build 与 diff-check 全通过。总 Slice 仍等待 S09/S10/S14 真实 host/state-store 接线，避免把 disabled 维护动作宣称为可用。
 
 ### Open questions / risks
 
@@ -844,6 +848,7 @@ flowchart LR
 - S09 不能安全地选择虚构 release host：需要确认“发布引擎随插件构建打包”或提供版本化 engine manifest、固定 HTTPS origin、签名格式和受信公钥/轮换策略；在此之前，生产环境管理器不应被主插件接线为下载器。
 - S13 的 Pages HTTP adapter 通过测试，但尚未从 `main.ts` 实例化：需要 S10 提供真实 OAuth/API Token、Keychain 和 HTTP host 接线，并由用户提供隔离 Cloudflare 项目/账号完成首次、更新及失败的 HITL。这一 P2 跨 Slice 阻塞使 S13 不能标为完成，也不允许插件伪装为可发布。
 - S14 的协调逻辑、启动状态投影与恢复接口已就绪，但实际清空本地数据后的重新授权/绑定/恢复仍依赖 S10/S13 将真实 Keychain、HTTP host、Pages adapter 和隔离 Cloudflare 账号接入主插件；在此前不勾选 S14 总 Slice。
+- S15 的缓存/诊断和安全的设置删除已经从 `main.ts` 可用；环境修复、连接刷新、日志打开和实际恢复收据目录仍需将 S09/S10/S14 的具体边界注入同一维护服务。未接线时按钮禁用且不会触发远端副作用。
 - 当前 npm registry 镜像对 `npm audit` 返回 `NOT_IMPLEMENTED`；全量构建和测试不受影响，但在 registry 或 lockfile 环境变化后需要重跑生产依赖审计。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。

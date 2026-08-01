@@ -3,6 +3,7 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  TFile,
   type SettingDefinitionItem,
 } from 'obsidian';
 import type { PagesPublishApplication } from '../application';
@@ -21,6 +22,8 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   private session?: SiteConfigEditorSession;
   private editorState?: SiteConfigEditorState;
   private pendingUrlChanges?: SiteUrlChange[];
+  private diagnosticReview = false;
+  private siteConfigRemovalReview = false;
   private rendering = 0;
 
   constructor(
@@ -55,6 +58,8 @@ export class PagesPublishSettingTab extends PluginSettingTab {
     this.session = undefined;
     this.editorState = undefined;
     this.pendingUrlChanges = undefined;
+    this.diagnosticReview = false;
+    this.siteConfigRemovalReview = false;
     this.rendering += 1;
   }
 
@@ -289,6 +294,8 @@ export class PagesPublishSettingTab extends PluginSettingTab {
       }),
     );
 
+    this.renderMaintenance(container);
+
     if (this.pendingUrlChanges && this.pendingUrlChanges.length > 0) {
       const impact = container.createDiv({ cls: 'pages-publish-view__warning' });
       impact.createEl('p', {
@@ -364,6 +371,114 @@ export class PagesPublishSettingTab extends PluginSettingTab {
             }
           }),
       );
+  }
+
+  private renderMaintenance(container: HTMLElement): void {
+    new Setting(container).setName('本地环境').setHeading();
+    new Setting(container)
+      .setName('本地预览')
+      .setDesc('使用当前本地配置与内容构建预览；不会发布或修改远端。')
+      .addButton((button) => button.setButtonText('启动预览').onClick(async () => {
+        try {
+          await this.application.openPreview();
+          new Notice('本地预览已打开。');
+        } catch (error) {
+          new Notice(`无法启动本地预览：${errorMessage(error)}`);
+        }
+      }));
+    const status = this.application.getMaintenanceStatus();
+    if ('state' in status) {
+      container.createEl('p', {
+        cls: 'pages-publish-view__warning',
+        text: '本地环境、日志与诊断边界尚未由宿主接入；不会尝试修改远端或本地缓存。',
+      });
+      this.renderSiteConfigRemoval(container);
+      return;
+    }
+    new Setting(container)
+      .setName('运行时与缓存')
+      .setDesc(`环境：${status.environment.stage}；缓存：${status.cache.state}；连接：${status.connection.state}`)
+      .addButton((button) => button.setButtonText('修复本地环境').setDisabled(!status.capabilities.repairEnvironment).onClick(async () => {
+        await this.runMaintenanceAction('本地环境已修复。', () => this.application.repairEnvironment());
+      }))
+      .addButton((button) => button.setButtonText('清理可重建缓存').onClick(async () => {
+        await this.runMaintenanceAction('可重建缓存已清理；不会影响 Vault、线上站点或凭据。', () => this.application.clearRebuildableCache());
+      }))
+      .addButton((button) => button.setButtonText('刷新连接状态').setDisabled(!status.capabilities.refreshConnection).onClick(async () => {
+        await this.runMaintenanceAction('连接状态已刷新。', () => this.application.refreshMaintenanceConnection());
+      }));
+    new Setting(container)
+      .setName('日志与诊断')
+      .setDesc('诊断导出不包含凭据、授权头、文章正文、私密路径或构建产物。')
+      .addButton((button) => button.setButtonText('打开日志').setDisabled(!status.capabilities.openLogs).onClick(async () => {
+        await this.runMaintenanceAction('已打开本地日志。', () => this.application.openMaintenanceLogs());
+      }))
+      .addButton((button) => button.setButtonText('导出诊断包').onClick(() => {
+        this.diagnosticReview = true;
+        this.update();
+      }));
+    if (this.diagnosticReview) {
+      const summary = this.application.describeDiagnosticExport();
+      const review = container.createDiv({ cls: 'pages-publish-view__warning' });
+      review.createEl('p', { text: `将包含：${summary.included.join('、')}。` });
+      review.createEl('p', { text: `将排除：${summary.excluded.join('、')}。` });
+      new Setting(review).addButton((button) =>
+        button.setButtonText('确认并导出诊断包').setCta().onClick(async () => {
+          try {
+            const result = await this.application.exportDiagnostics({ confirmed: true });
+            this.diagnosticReview = false;
+            new Notice(`诊断包已导出：${result.path}`);
+            this.update();
+          } catch (error) {
+            new Notice(`无法导出诊断包：${errorMessage(error)}`);
+          }
+        }),
+      );
+    }
+    this.renderSiteConfigRemoval(container);
+  }
+
+  private renderSiteConfigRemoval(container: HTMLElement): void {
+    new Setting(container)
+      .setName('移除本地站点配置')
+      .setDesc('将 .publish/site.yml 移入系统废纸篓；不会删除 Cloudflare 项目或线上内容。')
+      .addButton((button) => button.setButtonText('移入废纸篓').setDestructive().onClick(() => {
+        this.siteConfigRemovalReview = true;
+        this.update();
+      }));
+    if (this.siteConfigRemovalReview) {
+      const review = container.createDiv({ cls: 'pages-publish-view__warning' });
+      review.createEl('p', { text: '此操作只会将 .publish/site.yml 移入废纸篓；Cloudflare 项目、线上内容、Keychain 凭据与 Vault 文章均不会删除。' });
+      new Setting(review).addButton((button) =>
+        button.setButtonText('确认移入废纸篓').setDestructive().onClick(async () => {
+          const file = this.app.vault.getAbstractFileByPath('.publish/site.yml');
+          if (!(file instanceof TFile)) {
+            new Notice('未找到可移除的本地站点配置。');
+            return;
+          }
+          try {
+            await this.app.fileManager.trashFile(file);
+            this.hide();
+            new Notice('本地站点配置已移入废纸篓。');
+          } catch (error) {
+            new Notice(`无法移除本地站点配置：${errorMessage(error)}`);
+          }
+        }),
+      );
+    }
+  }
+
+  private async runMaintenanceAction(
+    success: string,
+    action: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await action();
+      new Notice(success);
+      this.update();
+    } catch (error) {
+      new Notice(`维护操作失败：${errorMessage(error)}`);
+    }
   }
 
   private updateDraft(change: Parameters<SiteConfigEditorSession['update']>[0]): void {

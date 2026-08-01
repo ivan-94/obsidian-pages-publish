@@ -64,6 +64,10 @@ import {
   DeploymentFactsCoordinator,
   type ActivatedDeploymentInspector,
 } from './publication/deployment-facts';
+import {
+  PagesPublishMaintenanceService,
+  type MaintenanceStatus,
+} from './maintenance/maintenance-service';
 import { collectDirectoryRouteSources } from './routing/directory-route-sources';
 import {
   normalizeRouteUrlPath,
@@ -108,6 +112,14 @@ export class PublicationUnavailableError extends Error {
   }
 }
 
+export class MaintenanceUnavailableError extends Error {
+  readonly name = 'MaintenanceUnavailableError';
+
+  constructor() {
+    super('Local maintenance is unavailable until the host supplies its environment and diagnostics boundaries.');
+  }
+}
+
 export interface InitialSetupConnectionBoundary {
   refreshStatus(): Promise<{
     state: 'disconnected' | 'connected' | 'expired';
@@ -141,6 +153,7 @@ export class PagesPublishApplication {
     | PublicationOrchestrator<PublicationPreparation>
     | undefined;
   private readonly deploymentFacts: DeploymentFactsCoordinator | undefined;
+  private readonly maintenance: PagesPublishMaintenanceService | undefined;
   private preparedPublishSnapshot: PublicationSnapshot | undefined;
 
   constructor(
@@ -154,11 +167,13 @@ export class PagesPublishApplication {
       setupConnection?: InitialSetupConnectionBoundary;
       deploymentAdapter?: CloudflarePagesDeploymentBoundary;
       deploymentFacts?: DeploymentFactsCoordinator;
+      maintenance?: PagesPublishMaintenanceService;
     } = {},
   ) {
     this.setup = options.setup;
     this.setupConnection = options.setupConnection;
     this.deploymentFacts = options.deploymentFacts;
+    this.maintenance = options.maintenance;
     this.scanCoordinator = new ContentScanCoordinator(
       options.scan ??
         (async ({ signal }) =>
@@ -286,6 +301,38 @@ export class PagesPublishApplication {
   /** Refreshes durable publication recovery state when the host starts. */
   async hydratePublicationFacts(): Promise<void> {
     await this.publisher?.refreshPublicationFacts();
+  }
+
+  isMaintenanceAvailable(): boolean {
+    return this.maintenance !== undefined;
+  }
+
+  getMaintenanceStatus(): MaintenanceStatus | { state: 'unavailable' } {
+    return this.maintenance?.getStatus() ?? { state: 'unavailable' };
+  }
+
+  async repairEnvironment(): Promise<void> {
+    await this.requireMaintenance().repairEnvironment();
+  }
+
+  async clearRebuildableCache(): Promise<void> {
+    await this.requireMaintenance().clearRebuildableCache();
+  }
+
+  async refreshMaintenanceConnection(): Promise<void> {
+    await this.requireMaintenance().refreshConnection();
+  }
+
+  async openMaintenanceLogs(): Promise<void> {
+    await this.requireMaintenance().openLogs();
+  }
+
+  describeDiagnosticExport(): { included: string[]; excluded: string[] } {
+    return this.requireMaintenance().describeDiagnosticExport();
+  }
+
+  async exportDiagnostics(input: { confirmed?: boolean }): Promise<{ path: string }> {
+    return this.requireMaintenance().exportDiagnostics(input);
   }
 
   private async prepareStablePreview(
@@ -559,6 +606,11 @@ export class PagesPublishApplication {
   private requirePublisher(): PublicationOrchestrator<PublicationPreparation> {
     if (!this.publisher) throw new PublicationUnavailableError();
     return this.publisher;
+  }
+
+  private requireMaintenance(): PagesPublishMaintenanceService {
+    if (!this.maintenance) throw new MaintenanceUnavailableError();
+    return this.maintenance;
   }
 
   private async defaultPublishBaseline(

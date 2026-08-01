@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PagesPublishApplication } from '../src/application';
 import { DeploymentFactsCoordinator, FileSystemDeploymentStateStore } from '../src/publication/deployment-facts';
+import { PagesPublishMaintenanceService } from '../src/maintenance/maintenance-service';
 import type { SiteScanResult } from '../src/content/site-scanner';
 import type { SiteConfigV1 } from '../src/config/site-config';
 import {
@@ -49,6 +50,28 @@ describe('Pages Publish application', () => {
     );
 
     await expect(application.getLaunchTarget()).resolves.toBe('publish-center');
+  });
+
+  it('exposes user-requested maintenance actions without treating them as ordinary configuration saves', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const clear = vi.fn(async () => undefined);
+    const maintenance = new PagesPublishMaintenanceService({
+      cache: { clear },
+      diagnostics: {
+        collect: async () => ({ pluginVersion: '0.1.0', platform: 'darwin', logs: [] }),
+        write: async () => '/tmp/diagnostics.json',
+      },
+    });
+    const application = new PagesPublishApplication(vault, undefined, { maintenance });
+
+    expect(application.getMaintenanceStatus()).toMatchObject({ cache: { state: 'ready' } });
+    await application.clearRebuildableCache();
+    await expect(application.exportDiagnostics({ confirmed: true })).resolves.toEqual({
+      path: '/tmp/diagnostics.json',
+    });
+    expect(clear).toHaveBeenCalledTimes(1);
+    await application.shutdown();
   });
 
   it('exposes final setup confirmation through the application and then enters publish center', async () => {

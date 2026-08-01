@@ -5,6 +5,7 @@ import { activatePagesPublish, type PagesPublishActivation } from './plugin/life
 import { ObsidianPagesPublishHost } from './plugin/obsidian-host';
 import { isSupportedPlatform } from './plugin/platform';
 import { PagesPublishSettingTab } from './plugin/settings-tab';
+import { createLocalMaintenanceService } from './maintenance/local-maintenance';
 import {
   CURRENT_ARTICLE_VIEW_TYPE,
   CurrentArticleView,
@@ -22,6 +23,7 @@ export default class PagesPublishPlugin extends Plugin {
     }
 
     const adapter = this.app.vault.adapter as FileSystemAdapter;
+    const maintenanceDirectory = `${this.manifest.dir ?? `.obsidian/plugins/${this.manifest.id}`}/maintenance`;
     const application = new PagesPublishApplication(
       adapter.getBasePath(),
       (url) => {
@@ -32,6 +34,12 @@ export default class PagesPublishPlugin extends Plugin {
           set: (callback, delayMs) => window.setTimeout(callback, delayMs),
           clear: (handle) => window.clearTimeout(handle as number),
         },
+        maintenance: createLocalMaintenanceService({
+          directory: maintenanceDirectory,
+          pluginVersion: this.manifest.version,
+          platform: process.platform,
+          adapter: this.app.vault.adapter,
+        }),
       },
     );
     // The application currently has no host-provided Pages adapter until its
