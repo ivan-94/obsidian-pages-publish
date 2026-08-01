@@ -405,29 +405,29 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 兼容系统 Node 可复用；不兼容或缺失时使用插件受管理运行时。
+- [x] 兼容系统 Node 可复用；不兼容或缺失时使用插件受管理运行时。
 - [ ] 下载的运行时/引擎验证来源、版本和校验值；失败保留最后已验证版本。
 - [ ] 发行源提供签名时同时验证签名；离线、校验失败和无可用回退版本时显示准确影响与下一步。
-- [ ] 准备、修复和更新不修改系统 Node、npm、PATH 或全局包。
-- [ ] 环境准备/修复显示真实阶段、失败原因、重试和详情入口。
-- [ ] 预览服务可启动、停止、重启，插件卸载时安全释放资源。
+- [x] 准备、修复和更新不修改系统 Node、npm、PATH 或全局包。
+- [x] 环境准备/修复显示真实阶段、失败原因、重试和详情入口。
+- [x] 预览服务可启动、停止、重启，插件卸载时安全释放资源。
 - [ ] 设置页展示实际使用的运行时与引擎状态，不回显敏感路径/参数。
 
 #### TDD & review gate
 
 - [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先验证“兼容则复用、否则选择受管理运行时”的失败决策测试，再接下载边界。
-- [ ] TDD：时间、下载和进程使用边界 fake；不要 mock 自有环境决策模块。
-- [ ] TDD：运行版本矩阵、校验失败、回退、进程生命周期、类型检查和 S01 回归。
-- [ ] Review：独立 subagent 只读审查供应链安全、系统环境不变性和进程清理。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：先验证“兼容则复用、否则选择受管理运行时”的失败决策测试，再接下载边界。
+- [x] TDD：时间、下载和进程使用边界 fake；不要 mock 自有环境决策模块。
+- [x] TDD：运行版本矩阵、校验失败、回退、进程生命周期、类型检查和 S01 回归。
+- [x] Review：独立 subagent 只读审查供应链安全、系统环境不变性和进程清理。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录版本范围/发行源风险：
+- [x] 记录分支/提交或 PR：`codex/s09-runtime`；`6d85d88 feat: add environment manager foundation`、`6c322f2 fix: serialize runtime preparation and repair`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：既有兼容系统 Node、已验证受管理运行时、下载/校验、签名失败、回退与离线失败测试之上，RED 为两个 prepare 并发重复检查、prepare 期间 repair 被吞掉；GREEN 将同类请求合并，显式 repair 在 prepare 后串行执行。最终 `npm test`（23 files / 270 tests）、`npm run typecheck`、`npm run lint`、`npm run build`、`git diff --check` 全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：有效 reviewer `/root/review_s09_final` 首轮为 `0 P0 / 1 P1 / 0 P2`，发现 repair 被 prepare 合并而消失；已按 RED → GREEN 改为排队。复核为 `0 P0 / 0 P1 / 1 P2`，再将第一份 release 设为 deferred，断言第二份不会提前启动并重跑全量门禁。
+- [ ] 记录版本范围/发行源风险：兼容范围当前为 Node `>=20.19`；Node.js 官方发行页提供 `nodejs.org/dist` 的 SHA-256 与 PGP 签名材料，但发布引擎是否随插件构建打包、其实际发行源与公钥/签名根尚未由产品决策指定。当前 `releases.pages-publish.dev` 仅为测试契约占位，不能用于生产下载或勾选供应链验收。
 
 ### S10 — Cloudflare OAuth、Token 与 Keychain
 
@@ -787,6 +787,7 @@ flowchart LR
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试；S06 图片/附件矩阵、恶意格式/注入/路径/TOCTOU/预算、宿主解码取消、外链定位与 SSRF/超时回归测试；S07 页面/首页布局/排序、Markdown 词汇、安全 Mermaid、Obsidian 注释隐私边界、响应式 CSS、可访问 outline 与 404 HTTP 语义回归测试；S08 最终搜索/图谱/sitemap/canonical/noindex 输出、feature 开关、private/unlisted 负向泄漏、XML MIME 与静态文件路由冲突回归测试
 - [`src/cloudflare/connection.ts`](./src/cloudflare/connection.ts)：S10 OAuth S256 PKCE/state 事务、Pages capability 适配边界、Keychain/非敏感 binding、账号选择、串行变更、补偿恢复、过期状态与脱敏错误。
 - [`tests/cloudflare-connection.test.ts`](./tests/cloudflare-connection.test.ts)：S10 OAuth 回放、最小权限、账号选择/错配、过期、并发、Keychain/binding 回滚、恢复状态和敏感错误负向回归。
+- [`src/runtime/environment-manager.ts`](./src/runtime/environment-manager.ts) 与 [`tests/environment-manager.test.ts`](./tests/environment-manager.test.ts)：S09 系统/受管理运行时决策、校验/签名/回退错误语义，以及 prepare/repair 事务合并和串行化回归。
 - [`src/setup/site-setup.ts`](./src/setup/site-setup.ts)、[`src/application.ts`](./src/application.ts)、[`src/plugin/view.ts`](./src/plugin/view.ts) 与 [`src/content/site-scanner.ts`](./src/content/site-scanner.ts)：S11 最终确认前无副作用的四步草稿、账户/项目组合边界、创建/绑定幂等事务、域名计划与内存配置扫描。
 - [`tests/site-setup.test.ts`](./tests/site-setup.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S11 确认时机、重试、不同计划并发、域名错误、项目列表和应用层发布中心转换回归。
 - [`src/publication/publish-center.ts`](./src/publication/publish-center.ts)、[`src/application.ts`](./src/application.ts)、[`src/core/preview.ts`](./src/core/preview.ts)、[`src/content/site-scanner.ts`](./src/content/site-scanner.ts) 与 [`src/plugin/view.ts`](./src/plugin/view.ts)：S12 发布中心状态、同源预览、扫描一致性和 Obsidian UI 投影。
@@ -803,6 +804,7 @@ flowchart LR
 - S10 将 OAuth scope、API Token capability 与凭据存储边界分离：OAuth 强制本地生成 S256 PKCE/state；Token capability 由 Cloudflare adapter 映射；凭据仅在 Keychain，binding 只保存状态、方式与已选账号。
 - S12 在拿到完整部署 manifest 时投影准确变化；缺失 manifest 时保持 `unknown` 而非虚构差异。确认发布将 HTML、文件列表和资源编码为冻结值，后续消费者按需得到新字节副本，Vault 的后续编辑只属于下一版。
 - S11 将建站拆成“可自由编辑的本地草稿”和“最终确认的一次性事务”：只读连接/项目查询与草稿扫描可提前发生，创建/绑定、域名变更和正式 `site.yml` 写入只能在确认后发生。相同冻结计划可合并并发请求；不同计划会拒绝，避免把 A 的成功误报为 B。
+- S09 对同类 prepare 合并，对显式 repair 则在活跃 prepare 后排队，确保不会并发写入环境缓存，也不会吞掉用户要求的强制更新。
 
 ### Verification evidence
 
@@ -821,6 +823,7 @@ flowchart LR
 - S10 自动实现、逐行为 TDD 与独立 subagent 多轮安全 review 已完成；OAuth S256 PKCE 与一次性 state、generic Pages capabilities、Keychain-only 凭据、账号选择、双记录补偿/串行化、跨重启账号错配预检和过期/脱敏边界均已验证。最终为 21 files / 245 tests，工程门禁通过，review 结论 `0 P0 / 0 P1 / 0 P2`；真实 Cloudflare 授权仍待 HITL。
 - S12 自动实现、逐行为 TDD 与独立 subagent 多轮 review 已完成；发布中心四 Tab、成员选择/下线确认、可定位问题、未知基线、扫描稳定性及不可变发布快照均已验证。最终 `npm test` 为 22 files / 256 tests，且 typecheck、lint、build 与 diff-check 均通过；review 结论 `0 P0 / 0 P1 / 0 P2`。
 - S11 自动编排、草稿 UI 和组合边界已完成；四步向导、无副作用草稿扫描、已授权账号/已有兼容项目选择、create/bind、custom-domain 计划、并发计划隔离、失败后复用和应用层进入发布中心均有回归。最终为 23 files / 267 tests，工程门禁通过；`/root/review_s11` 最终 `0 P0 / 0 P1 / 2 P2`，其中草稿摘要 P2 已修复，域名结果持久呈现移交 S15。
+- S09 环境管理基础与并发安全已验证：系统 Node/已验证缓存复用、下载 hash/签名失败、离线错误、缓存回退、同类 prepare 合并、repair 排队均有测试。当前 23 files / 270 tests，工程门禁通过；reviewer `/root/review_s09_final` 的 1 个 P1 与 1 个测试时序 P2 均已按 RED → GREEN 修复。
 
 ### Open questions / risks
 
@@ -829,6 +832,7 @@ flowchart LR
 - S10 自动化服务边界已完成，但真实 Cloudflare OAuth Client、隔离测试账号和测试域名尚未提供；在无真实账户回调、撤销与重授权证据前，S10 保持 HITL 未完成。S11/S13 也使用同一非生产资源。
 - S12 不持有远端完整部署 manifest；因此对只有线上事实而本地扫描无法确认的条目保持未知。S13/S14 必须接入并持久化经过确认的成功部署 manifest，才能可靠展示远端待下线与精确变化。
 - S11 仍等待 S10 的实际 OAuth/API host adapter、Keychain 配置和隔离 Cloudflare 测试资源；主插件在未注入这些组合边界时会安全禁用最终建站。自定义域名 pending/active/failed 的首次结果当前以 Notice 显示，S15 应持久化并提供可回看/刷新状态。
+- S09 不能安全地选择虚构 release host：需要确认“发布引擎随插件构建打包”或提供版本化 engine manifest、固定 HTTPS origin、签名格式和受信公钥/轮换策略；在此之前，生产环境管理器不应被主插件接线为下载器。
 - 当前 npm registry 镜像对 `npm audit` 返回 `NOT_IMPLEMENTED`；全量构建和测试不受影响，但在 registry 或 lockfile 环境变化后需要重跑生产依赖审计。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。
