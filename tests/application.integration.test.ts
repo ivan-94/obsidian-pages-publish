@@ -52,6 +52,47 @@ describe('Pages Publish application', () => {
     await expect(application.getLaunchTarget()).resolves.toBe('publish-center');
   });
 
+  it('projects scans into global feedback without treating idle work as a notification', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), 'configured', 'utf8');
+    let completeScan!: (value: SiteScanResult) => void;
+    const application = new PagesPublishApplication(vault, undefined, {
+      scan: async () => new Promise<SiteScanResult>((resolve) => {
+        completeScan = resolve;
+      }),
+    });
+    const updates = vi.fn();
+    const unsubscribe = application.subscribeGlobalUiState(updates);
+
+    const scan = application.requestScan('manual-refresh');
+    await expect(application.getGlobalUiState()).resolves.toEqual({
+      ribbon: { route: 'publish-center', tooltip: '正在扫描发布内容' },
+      statusBar: { route: 'publish-center', text: 'Pages：正在扫描…' },
+    });
+    completeScan({
+      configRevision: 'revision',
+      digest: 'digest',
+      candidates: [],
+      issues: [{
+        severity: 'blocker',
+        code: 'content-root-missing',
+        path: 'content_roots[0].path',
+        message: 'Configured content root is missing; publishing is blocked.',
+      }],
+    });
+    await scan;
+
+    await expect(application.getGlobalUiState()).resolves.toEqual({
+      ribbon: { route: 'publish-center', tooltip: '打开发布中心：1 个阻塞' },
+      statusBar: { route: 'publish-center', text: 'Pages：1 个阻塞' },
+    });
+    expect(updates).toHaveBeenCalled();
+    unsubscribe();
+    await application.shutdown();
+  });
+
   it('exposes user-requested maintenance actions without treating them as ordinary configuration saves', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
     vaults.push(vault);

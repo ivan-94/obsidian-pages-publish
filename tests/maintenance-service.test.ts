@@ -181,6 +181,29 @@ describe('Pages Publish maintenance service', () => {
     });
   });
 
+  it('projects a user-requested environment repair while the host operation is still in flight', async () => {
+    let finishRepair!: () => void;
+    const service = new PagesPublishMaintenanceService({
+      environment: {
+        getStatus: () => ({ stage: 'ready' }),
+        repair: async () => new Promise<{ stage: string }>((resolve) => {
+          finishRepair = () => resolve({ stage: 'ready' });
+        }),
+      },
+      cache: { clear: async () => undefined },
+      diagnostics: {
+        collect: async () => ({ pluginVersion: '0.1.0', platform: 'darwin', logs: [] }),
+        write: async () => '/tmp/diagnostics.json',
+      },
+    });
+
+    const repair = service.repairEnvironment();
+    expect(service.getStatus().environment).toEqual({ stage: 'repairing' });
+    finishRepair();
+    await repair;
+    expect(service.getStatus().environment).toEqual({ stage: 'ready' });
+  });
+
   it('rejects unavailable optional host actions instead of reporting a false success', async () => {
     const service = new PagesPublishMaintenanceService({
       cache: { clear: async () => undefined },

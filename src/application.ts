@@ -68,6 +68,11 @@ import {
   PagesPublishMaintenanceService,
   type MaintenanceStatus,
 } from './maintenance/maintenance-service';
+import {
+  projectGlobalUiState,
+  type GlobalUiProjection,
+  type GlobalPublicationState,
+} from './plugin/global-ui-state';
 import { collectDirectoryRouteSources } from './routing/directory-route-sources';
 import {
   normalizeRouteUrlPath,
@@ -154,6 +159,11 @@ export class PagesPublishApplication {
     | undefined;
   private readonly deploymentFacts: DeploymentFactsCoordinator | undefined;
   private readonly maintenance: PagesPublishMaintenanceService | undefined;
+  private readonly globalUiListeners = new Set<() => void>();
+  private unsubscribePublisherUi: (() => void) | undefined;
+  private activeScans = 0;
+  private latestScan: SiteScanResult | undefined;
+  private pendingPublicationChanges: number | 'unknown' | undefined;
   private preparedPublishSnapshot: PublicationSnapshot | undefined;
 
   constructor(
@@ -186,6 +196,10 @@ export class PagesPublishApplication {
         build: (preparation) => this.buildPublication(preparation),
         adapter: options.deploymentAdapter,
         ...(this.deploymentFacts === undefined ? {} : { facts: this.deploymentFacts }),
+      });
+      this.unsubscribePublisherUi = this.publisher.subscribe((status) => {
+        if (status.state === 'succeeded') this.pendingPublicationChanges = 0;
+        this.notifyGlobalUiChange();
       });
     }
   }
@@ -231,8 +245,9 @@ export class PagesPublishApplication {
     options: { baseline?: PublishBaseline } = {},
   ): Promise<PublishCenterState> {
     const initialScan = await this.requestScan('manual-refresh');
+    let center: PublishCenterState;
     if (initialScan.value.issues.some((issue) => issue.severity === 'blocker')) {
-      return createPublishCenterState({
+      center = createPublishCenterState({
         siteName: await this.publishCenterSiteName(),
         scan: initialScan.value,
         articles: initialScan.value.candidates.map((candidate) => ({
@@ -249,15 +264,19 @@ export class PagesPublishApplication {
           assetBytes: 0,
         },
       });
+    } else {
+      const prepared = await this.prepareStablePreview('manual-refresh');
+      center = createPublishCenterState({
+        siteName: prepared.preview.siteName,
+        scan: prepared.scan.value,
+        articles: prepared.preview.articles,
+        baseline: options.baseline ?? await this.defaultPublishBaseline(prepared.preview),
+        output: previewOutput(prepared.preview),
+      });
     }
-    const prepared = await this.prepareStablePreview('manual-refresh');
-    return createPublishCenterState({
-      siteName: prepared.preview.siteName,
-      scan: prepared.scan.value,
-      articles: prepared.preview.articles,
-      baseline: options.baseline ?? await this.defaultPublishBaseline(prepared.preview),
-      output: previewOutput(prepared.preview),
-    });
+    this.pendingPublicationChanges = center.summary.changes;
+    this.notifyGlobalUiChange();
+    return center;
   }
 
   async preparePublishSnapshot(): Promise<PublicationSnapshot> {
@@ -277,6 +296,28 @@ export class PagesPublishApplication {
 
   getPublicationStatus(): PublicationServiceStatus {
     return this.publisher?.getStatus() ?? { state: 'unavailable' };
+  }
+
+  /**
+   * A low-noise projection for global Obsidian surfaces. It deliberately uses
+   * the latest publish-center result for change counts; a scan alone cannot
+   * safely infer whether a candidate is a pending change.
+   */
+  async getGlobalUiState(): Promise<GlobalUiProjection> {
+    const configured = (await this.getLaunchTarget()) === 'publish-center';
+    return projectGlobalUiState({
+      configured,
+      scan: this.activeScans > 0 ? 'scanning' : 'idle',
+      blockers: this.latestScan?.issues.filter((issue) => issue.severity === 'blocker').length,
+      pending: this.pendingPublicationChanges,
+      publication: toGlobalPublicationState(this.getPublicationStatus()),
+      environment: this.globalEnvironmentState(),
+    });
+  }
+
+  subscribeGlobalUiState(listener: () => void): () => void {
+    this.globalUiListeners.add(listener);
+    return () => this.globalUiListeners.delete(listener);
   }
 
   publishSite(): Promise<PublicationDeployment> {
@@ -312,7 +353,13 @@ export class PagesPublishApplication {
   }
 
   async repairEnvironment(): Promise<void> {
-    await this.requireMaintenance().repairEnvironment();
+    const repair = this.requireMaintenance().repairEnvironment();
+    this.notifyGlobalUiChange();
+    try {
+      await repair;
+    } finally {
+      this.notifyGlobalUiChange();
+    }
   }
 
   async clearRebuildableCache(): Promise<void> {
@@ -569,15 +616,28 @@ export class PagesPublishApplication {
   async requestScan(
     trigger: ScanTrigger,
   ): Promise<CoordinatedScanResult<SiteScanResult>> {
-    let pending = this.scanCoordinator.request(trigger);
-    while (true) {
-      try {
-        const result = await pending;
-        if (result.status === 'applied') return result;
-      } catch (error) {
-        if (!isAbortError(error)) throw error;
+    this.activeScans += 1;
+    this.notifyGlobalUiChange();
+    try {
+      let pending = this.scanCoordinator.request(trigger);
+      while (true) {
+        try {
+          const result = await pending;
+          if (result.status === 'applied') {
+            this.latestScan = result.value;
+            this.pendingPublicationChanges = scanMayChangePublication(trigger)
+              ? 'unknown'
+              : undefined;
+            return result;
+          }
+        } catch (error) {
+          if (!isAbortError(error)) throw error;
+        }
+        pending = this.scanCoordinator.waitForLatest();
       }
-      pending = this.scanCoordinator.waitForLatest();
+    } finally {
+      this.activeScans = Math.max(0, this.activeScans - 1);
+      this.notifyGlobalUiChange();
     }
   }
 
@@ -592,6 +652,9 @@ export class PagesPublishApplication {
   }
 
   async shutdown(): Promise<void> {
+    this.unsubscribePublisherUi?.();
+    this.unsubscribePublisherUi = undefined;
+    this.globalUiListeners.clear();
     this.currentArticleListeners.clear();
     this.preparedPublishSnapshot = undefined;
     this.scanCoordinator.dispose();
@@ -611,6 +674,21 @@ export class PagesPublishApplication {
   private requireMaintenance(): PagesPublishMaintenanceService {
     if (!this.maintenance) throw new MaintenanceUnavailableError();
     return this.maintenance;
+  }
+
+  private notifyGlobalUiChange(): void {
+    for (const listener of this.globalUiListeners) listener();
+  }
+
+  private globalEnvironmentState(): 'preparing' | 'failed' | undefined {
+    const maintenance = this.getMaintenanceStatus();
+    if ('state' in maintenance) return undefined;
+    if (maintenance.environment.stage === 'failed') return 'failed';
+    return maintenance.environment.stage === 'idle' ||
+      maintenance.environment.stage === 'ready' ||
+      maintenance.environment.stage === 'unavailable'
+      ? undefined
+      : 'preparing';
   }
 
   private async defaultPublishBaseline(
@@ -645,6 +723,19 @@ function deploymentUrlPath(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function toGlobalPublicationState(
+  status: PublicationServiceStatus,
+): GlobalPublicationState {
+  if (status.state === 'running' || status.state === 'failed') {
+    return { state: status.state, stage: status.stage };
+  }
+  return { state: status.state };
+}
+
+function scanMayChangePublication(trigger: ScanTrigger): boolean {
+  return trigger === 'file-change' || trigger === 'config-save';
 }
 
 function normalizeRouteIntentPatch(

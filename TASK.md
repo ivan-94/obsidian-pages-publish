@@ -635,29 +635,29 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 单一 Ribbon 图标按未配置、准备中、空闲、发布中和失败状态路由到正确界面。
-- [ ] 命令面板与 Markdown 右键菜单只提供 `UI-SPEC.MD` 定义的安全动作。
-- [ ] 状态栏空闲隐藏；扫描、待发布、Blocker、发布中和失败时显示并可导航。
-- [ ] Notice 只用于主动操作结果、授权/配置重要变化和后台发布完成。
-- [ ] 四个核心界面满足 DESIGN 的颜色、按钮、焦点、文案和容器响应式规则。
-- [ ] 仅用键盘可完成首次设置、问题定位、预览、发布与失败重试。
+- [ ] 单一 Ribbon 图标按未配置、准备中、空闲、发布中和失败状态路由到正确界面。（状态投影和 host 接线已自动验证；真实 S09/S10/S13 host 尚未注入主插件，不能宣称端到端完成。）
+- [x] 命令面板与 Markdown 右键菜单只提供 `UI-SPEC.MD` 定义的安全动作；没有“直接发布”或跳过检查的入口。
+- [ ] 状态栏空闲隐藏；扫描、待发布、Blocker、发布中和失败时显示并可导航。（投影、DOM 和 lifecycle 自动测试通过；真实 Obsidian HAT 待执行。）
+- [x] Notice 只用于主动操作结果、授权/配置重要变化和后台发布完成。
+- [ ] 四个核心界面满足 DESIGN 的颜色、按钮、焦点、文案和容器响应式规则。（焦点、窄容器与语义表格自动检查通过；主题/缩放视觉结论待 HAT。）
+- [ ] 仅用键盘可完成首次设置、问题定位、预览、发布与失败重试。（状态栏键盘处理已实现；依赖真实 host 的完整流程待 HAT。）
 - [ ] 完成明暗主题、左右侧栏、分屏、<640px 容器和 200% 缩放人工验收。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先验证统一状态投影到 Ribbon/状态栏的行为，再逐个接入命令、菜单和 Notice。
-- [ ] TDD：对可访问语义和状态行为做自动测试，视觉验证保留独立截图/HAT 证据。
-- [ ] TDD：运行 UI 状态、键盘、可访问性 smoke、类型检查和全量回归。
-- [ ] Review：独立 subagent 只读审查状态一致性、危险入口、焦点/键盘、文案和响应式实现。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。（真实 host/HAT 条件仍未完成。）
+- [x] TDD：先验证统一状态投影到 Ribbon/状态栏的行为，再逐个接入命令、菜单和 Notice。
+- [x] TDD：对可访问语义和状态行为做自动测试，视觉验证保留独立截图/HAT 证据。
+- [x] TDD：运行 UI 状态、键盘、可访问性 smoke、类型检查和全量回归。
+- [x] Review：独立 subagent 只读审查状态一致性、危险入口、焦点/键盘、文案和响应式实现。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### HITL & Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录主题/尺寸/键盘人工验收证据：
+- [x] 记录分支/提交或 PR：`codex/s16-global-ux`；不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：RED：`tests/global-ui-state.test.ts`、`tests/safe-actions.test.ts` 首次因对应模块不存在失败；随后以全局投影、主应用/lifecycle、命令允许列表、窄屏 CSS 和真实 View DOM 语义测试逐项转绿。review 后新增环境 repair in-flight、发布优先级、文章意图变更的 conservative pending，以及“配置删除后的后台发布仍指向发布中心”回归。最终：`npm test -- --run`（33 files / 328 tests）、`npm run typecheck`、`npm run lint`、`npm run build`、`git diff --check` 全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：`/root/review_s14` 独立审查。两轮共 6 个 P1（环境状态缺失、成功后 stale pending、文章变更未标待发布、窄屏表头语义、发布/环境优先级、配置删除后的后台发布路由）均已修复并由新增回归覆盖；最终复审 `0 P0 / 0 P1`。P2：Obsidian 公共 `MenuItem` API 不提供 submenu，改用带标签的 `Pages Publish` 分组而不依赖 DOM 私有实现；线上页面的动态禁用需未来由已接线的部署事实提供。设置跳转收窄为运行时形状校验与 Notice 降级，兼容边界已有自动测试。
+- [ ] 记录主题/尺寸/键盘人工验收证据：（待在真实 Obsidian 完成明暗主题、两侧栏/分屏、<640px、200% 缩放和纯键盘 HAT。）
 
 ### S17 — 干净 Vault 到首次生产发布的候选版旅程
 
@@ -798,6 +798,8 @@ flowchart LR
 - [`tests/deployment-facts.test.ts`](./tests/deployment-facts.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts)、[`tests/article-metadata.integration.test.ts`](./tests/article-metadata.integration.test.ts)、[`tests/current-article-panel.integration.test.ts`](./tests/current-article-panel.integration.test.ts) 与 [`tests/publication-orchestrator.test.ts`](./tests/publication-orchestrator.test.ts)：S14 激活后事实、回写失败/重放、远端 identity、目录 fsync、private/移出范围/删除下线、first/last 时间、协调锁与历史事实 UI 回归。
 - [`src/maintenance/maintenance-service.ts`](./src/maintenance/maintenance-service.ts)、[`src/maintenance/local-maintenance.ts`](./src/maintenance/local-maintenance.ts)、[`src/application.ts`](./src/application.ts)、[`src/main.ts`](./src/main.ts) 与 [`src/plugin/settings-tab.ts`](./src/plugin/settings-tab.ts)：S15 明确确认的无内容诊断导出、运行时 allowlist、可重建缓存、本地保留协调、维护能力投影、原生设置动作及 Obsidian 废纸篓删除语义。
 - [`tests/maintenance-service.test.ts`](./tests/maintenance-service.test.ts)、[`tests/local-maintenance.test.ts`](./tests/local-maintenance.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S15 脱敏负向场景、维护操作隔离、保留数量/大小/时效、恢复收据保护、真实 DataAdapter 目录映射和应用入口回归。
+- [`src/plugin/global-ui-state.ts`](./src/plugin/global-ui-state.ts)、[`src/plugin/safe-actions.ts`](./src/plugin/safe-actions.ts)、[`src/plugin/settings-navigation.ts`](./src/plugin/settings-navigation.ts)、[`src/plugin/lifecycle.ts`](./src/plugin/lifecycle.ts)、[`src/plugin/obsidian-host.ts`](./src/plugin/obsidian-host.ts)、[`src/plugin/view.ts`](./src/plugin/view.ts)、[`src/application.ts`](./src/application.ts)、[`src/main.ts`](./src/main.ts) 与 [`styles.css`](./styles.css)：S16 全局 Ribbon/状态栏单一投影、安全命令及 Markdown 菜单、设置兼容降级、键盘可导航状态栏、焦点可见性和窄容器语义表格。
+- [`tests/global-ui-state.test.ts`](./tests/global-ui-state.test.ts)、[`tests/safe-actions.test.ts`](./tests/safe-actions.test.ts)、[`tests/settings-navigation.test.ts`](./tests/settings-navigation.test.ts)、[`tests/publish-center-a11y.test.ts`](./tests/publish-center-a11y.test.ts)、[`tests/ui-style-smoke.test.ts`](./tests/ui-style-smoke.test.ts)、[`tests/plugin-lifecycle.integration.test.ts`](./tests/plugin-lifecycle.integration.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts) 与 [`tests/maintenance-service.test.ts`](./tests/maintenance-service.test.ts)：S16 状态优先级、pending 保守投影、host lifecycle、命令白名单、运行时设置降级、发布中心表头/单元格语义及焦点/窄容器 smoke 回归。
 - [Cloudflare Pages Direct Upload](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)、[Create Deployment API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/create/)、[Wrangler asset hash source](https://github.com/cloudflare/workers-sdk/blob/main/packages/deploy-helpers/src/deploy/helpers/hash.ts) 与 [Wrangler Pages upload source](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/pages/upload.ts)：S13 Direct Upload 次序、manifest 创建、BLAKE3 asset key 与 batch 限制的外部原始依据。
 
 ### Key decisions
@@ -815,6 +817,7 @@ flowchart LR
 - S13 将远端发布限定为一个不可取消的四阶段事务：验证/准备、完整构建与稳定性检查、上传候选部署、以相同 deployment ID 的 `deploy:success` 确认激活；只有最后一步成功才形成部署 receipt。Pages 资源 key 与 Wrangler 对齐为 `BLAKE3(base64(bytes) + extension)` 前 32 位十六进制字符，使用可在 Obsidian browser bundle 执行的纯 JS 实现；单个上传 batch 限为 40 MiB 或 2,000 文件。
 - S14 把远端成功后的本地回写当作可重放事务：在首个 Frontmatter 写入前 durable receipt，恢复只接受同一 deployment ID、URL 与 `success` 状态；每篇文章的首次/最近成功时间决定与 receipt 一起保存，不因整站无变化重部署推进日期；成功下线移除在线事实但保留首次发布日期。
 - S15 将“本地维护”限制为可删除重建的数据：诊断采用确认门与运行时 allowlist，不记录异常原文、路径或正文；构建目录作为整目录 artifact 递归计量/删除，pending recovery receipt 永不因保留策略删除；未被宿主提供的远端或运行时动作明确标为 unavailable。
+- S16 以应用层的单一全局投影驱动 Ribbon 与状态栏；扫描只能得出 blocker，无法安全推导发布差异，故内容/配置变更显示保守的“有待发布变化”直至发布中心完成比较，成功发布才清零。发布/失败反馈优先于环境准备状态。
 
 ### Verification evidence
 
@@ -833,6 +836,7 @@ flowchart LR
 - S10 自动实现、逐行为 TDD 与独立 subagent 多轮安全 review 已完成；OAuth S256 PKCE 与一次性 state、generic Pages capabilities、Keychain-only 凭据、账号选择、双记录补偿/串行化、跨重启账号错配预检和过期/脱敏边界均已验证。最终为 21 files / 245 tests，工程门禁通过，review 结论 `0 P0 / 0 P1 / 0 P2`；真实 Cloudflare 授权仍待 HITL。
 - S12 自动实现、逐行为 TDD 与独立 subagent 多轮 review 已完成；发布中心四 Tab、成员选择/下线确认、可定位问题、未知基线、扫描稳定性及不可变发布快照均已验证。最终 `npm test` 为 22 files / 256 tests，且 typecheck、lint、build 与 diff-check 均通过；review 结论 `0 P0 / 0 P1 / 0 P2`。
 - S11 自动编排、草稿 UI 和组合边界已完成；四步向导、无副作用草稿扫描、已授权账号/已有兼容项目选择、create/bind、custom-domain 计划、并发计划隔离、失败后复用和应用层进入发布中心均有回归。最终为 23 files / 267 tests，工程门禁通过；`/root/review_s11` 最终 `0 P0 / 0 P1 / 2 P2`，其中草稿摘要 P2 已修复，域名结果持久呈现移交 S15。
+- S16 自动部分完成：全局状态投影、安全命令/Markdown 菜单、状态栏和响应式/语义 DOM 回归均已实现；33 files / 328 tests、typecheck、lint、build 与 diff-check 通过。`/root/review_s14` 首轮 P1 已修复；真实 Obsidian 主题/键盘/缩放 HAT 及 S09/S10/S13 实际 host 接线仍是发布前条件。
 - S09 环境管理基础与并发安全已验证：系统 Node/已验证缓存复用、下载 hash/签名失败、离线错误、缓存回退、同类 prepare 合并、repair 排队均有测试。当前 23 files / 270 tests，工程门禁通过；reviewer `/root/review_s09_final` 的 1 个 P1 与 1 个测试时序 P2 均已按 RED → GREEN 修复。
 - S13 自动编排与 Pages Direct Upload 协议已完成：四阶段状态、失败不写成功事实、状态/receipt 不可变、View 关闭后仍可观察、并发合并、失败后新快照、Wrangler BLAKE3 key、40 MiB/2,000 文件 batch、直接上传失败窗口和 browser bundle runtime 均有回归。最终为 25 files / 288 tests，工程门禁通过；`/root/review_s13` 最终 `0 P0 / 0 P1 / 1 P2`。
 - S14 自动实现已完成：成功后事实/精细 baseline、private/移出范围/删除下线、耐久 receipt、重启验真重放、逐篇 first/last 时间与协调 UI 均有回归；`/root/review_s14` 经三轮复审最终 `0 P0 / 0 P1 / 0 P2`。最终门禁为 26 files / 307 tests、lint、typecheck/build 与 diff-check 全通过。Slice 总复选框仅保留等待 S10/S13 的真实 host 接线，使“清空所有本地数据后重新授权/绑定原项目”的端到端 AC 可在真实 Cloudflare 环境验证。

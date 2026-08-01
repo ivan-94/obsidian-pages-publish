@@ -168,7 +168,7 @@ export class PagesPublishView extends ItemView {
     const table = container.createEl('table', { cls: 'pages-publish-view__articles' });
     const header = table.createEl('thead').createEl('tr');
     for (const label of ['上线', '文章 / 路径', '公开方式', '状态变化', '检查']) {
-      header.createEl('th', { text: label });
+      header.createEl('th', { attr: { scope: 'col' }, text: label });
     }
     const body = table.createEl('tbody');
     for (const article of center.articles.filter((item) => this.matchesTab(item))) {
@@ -177,7 +177,7 @@ export class PagesPublishView extends ItemView {
         if (event.target instanceof HTMLInputElement) return;
         this.selectArticle(article);
       });
-      const selection = row.createEl('td');
+      const selection = row.createEl('td', { attr: { 'data-label': '下一版包含' } });
       const checkbox = selection.createEl('input', { type: 'checkbox' });
       checkbox.checked = article.nextIncluded;
       checkbox.disabled = article.availability !== 'ready';
@@ -186,15 +186,22 @@ export class PagesPublishView extends ItemView {
       checkbox.addEventListener('change', () => {
         void this.updateInclusion(article, checkbox.checked);
       });
-      const title = row.createEl('td');
+      const title = row.createEl('td', { attr: { 'data-label': '文章 / 路径' } });
       new ButtonComponent(title)
         .setButtonText(article.title)
         .setTooltip(`审阅 ${article.title}`)
         .onClick(() => this.selectArticle(article));
       title.createEl('code', { text: article.sourcePath });
-      row.createEl('td', { text: visibilityLabel(article.visibility) });
-      row.createEl('td', { text: changeLabel(article.change) });
       row.createEl('td', {
+        attr: { 'data-label': '公开方式' },
+        text: visibilityLabel(article.visibility),
+      });
+      row.createEl('td', {
+        attr: { 'data-label': '状态变化' },
+        text: changeLabel(article.change),
+      });
+      row.createEl('td', {
+        attr: { 'data-label': '检查' },
         text: article.issues.length === 0
           ? '通过'
           : `${article.issues.some((issue) => issue.severity === 'blocker') ? '阻塞' : '警告'} ${article.issues.length}`,

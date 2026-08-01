@@ -168,8 +168,14 @@ export class PagesPublishMaintenanceService {
 
   async repairEnvironment(): Promise<void> {
     if (!this.dependencies.environment) throw new MaintenanceActionUnavailableError('Environment repair');
-    const result = await this.dependencies.environment.repair();
-    this.status = { ...this.status, environment: { stage: result.stage } };
+    this.status = { ...this.status, environment: { stage: 'repairing' } };
+    try {
+      const result = await this.dependencies.environment.repair();
+      this.status = { ...this.status, environment: { stage: result.stage } };
+    } catch (error) {
+      this.status = { ...this.status, environment: { stage: 'failed' } };
+      throw error;
+    }
   }
 
   async clearRebuildableCache(): Promise<void> {

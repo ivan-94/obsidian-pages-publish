@@ -4,6 +4,8 @@ import { watchSiteConfigChanges } from './config/site-config-watcher';
 import { activatePagesPublish, type PagesPublishActivation } from './plugin/lifecycle';
 import { ObsidianPagesPublishHost } from './plugin/obsidian-host';
 import { isSupportedPlatform } from './plugin/platform';
+import { pagesPublishAction } from './plugin/safe-actions';
+import { openPluginSettingsInHost } from './plugin/settings-navigation';
 import { PagesPublishSettingTab } from './plugin/settings-tab';
 import { createLocalMaintenanceService } from './maintenance/local-maintenance';
 import {
@@ -85,24 +87,99 @@ export default class PagesPublishPlugin extends Plugin {
           this.openPublishCenter(),
         ),
     );
+    const openArticlePanel = pagesPublishAction('open-current-article-panel');
     this.addCommand({
-      id: 'open-current-article-panel',
-      name: '打开当前文章面板',
+      id: openArticlePanel.id,
+      name: openArticlePanel.name,
       callback: () => {
         void this.openCurrentArticlePanel();
       },
+    });
+    const previewCurrentArticle = pagesPublishAction('preview-current-article');
+    this.addCommand({
+      id: previewCurrentArticle.id,
+      name: previewCurrentArticle.name,
+      checkCallback: (checking) => {
+        const file = this.activeMarkdownFile();
+        if (!file) return false;
+        if (!checking) void this.previewArticle(application, file.path);
+        return true;
+      },
+    });
+    const previewSite = pagesPublishAction('preview-site');
+    this.addCommand({
+      id: previewSite.id,
+      name: previewSite.name,
+      callback: () => {
+        void this.previewSite(application);
+      },
+    });
+    const changeVisibility = pagesPublishAction('change-current-article-visibility');
+    this.addCommand({
+      id: changeVisibility.id,
+      name: changeVisibility.name,
+      checkCallback: (checking) => {
+        if (!this.activeMarkdownFile()) return false;
+        if (!checking) void this.openCurrentArticlePanel();
+        return true;
+      },
+    });
+    const openOnlinePage = pagesPublishAction('open-current-article-online-page');
+    this.addCommand({
+      id: openOnlinePage.id,
+      name: openOnlinePage.name,
+      checkCallback: (checking) => {
+        const file = this.activeMarkdownFile();
+        if (!file) return false;
+        if (!checking) void this.openArticleOnlinePage(application, file.path);
+        return true;
+      },
+    });
+    const openSettings = pagesPublishAction('open-plugin-settings');
+    this.addCommand({
+      id: openSettings.id,
+      name: openSettings.name,
+      callback: () => this.openPluginSettings(),
     });
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file) => {
         if (!(file instanceof TFile) || file.extension.toLowerCase() !== 'md') {
           return;
         }
+        // Obsidian's public MenuItem API has no submenu primitive. A labelled
+        // section preserves the Pages Publish grouping without relying on DOM
+        // internals that would make the menu brittle across desktop releases.
+        menu.addItem((item) => item.setTitle('Pages publish').setIsLabel(true));
         menu.addItem((item) =>
           item
-            .setTitle('Pages publish：打开当前文章面板')
+            .setTitle(pagesPublishAction('open-article-panel').name)
             .setIcon('file-up')
             .onClick(() => {
-              void this.openCurrentArticlePanel();
+              void this.openArticlePanelFor(file.path);
+            }),
+        );
+        menu.addItem((item) =>
+          item
+            .setTitle(pagesPublishAction('change-visibility').name)
+            .setIcon('eye')
+            .onClick(() => {
+              void this.openArticlePanelFor(file.path);
+            }),
+        );
+        menu.addItem((item) =>
+          item
+            .setTitle(pagesPublishAction('preview-article').name)
+            .setIcon('monitor-play')
+            .onClick(() => {
+              void this.previewArticle(application, file.path);
+            }),
+        );
+        menu.addItem((item) =>
+          item
+            .setTitle(pagesPublishAction('open-online-page').name)
+            .setIcon('external-link')
+            .onClick(() => {
+              void this.openArticleOnlinePage(application, file.path);
             }),
         );
       }),
@@ -130,6 +207,15 @@ export default class PagesPublishPlugin extends Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
 
+  private async openArticlePanelFor(sourcePath: string): Promise<void> {
+    try {
+      await this.app.workspace.openLinkText(sourcePath, '', false);
+      await this.openCurrentArticlePanel();
+    } catch (error) {
+      new Notice(`无法打开当前文章面板：${errorMessage(error)}`);
+    }
+  }
+
   private async openPublishCenter(): Promise<void> {
     const leaf = this.app.workspace.getLeaf('tab');
     await leaf.setViewState({
@@ -138,4 +224,56 @@ export default class PagesPublishPlugin extends Plugin {
     });
     await this.app.workspace.revealLeaf(leaf);
   }
+
+  private activeMarkdownFile(): TFile | undefined {
+    const file = this.app.workspace.getActiveFile();
+    return file?.extension.toLowerCase() === 'md' ? file : undefined;
+  }
+
+  private async previewArticle(
+    application: PagesPublishApplication,
+    sourcePath: string,
+  ): Promise<void> {
+    try {
+      await application.openArticlePreview(sourcePath);
+      new Notice('本地预览已打开；没有发布线上内容。');
+    } catch (error) {
+      new Notice(`无法打开当前文章预览：${errorMessage(error)}`);
+    }
+  }
+
+  private async previewSite(application: PagesPublishApplication): Promise<void> {
+    try {
+      await application.openPreview();
+      new Notice('本地预览已打开；没有发布线上内容。');
+    } catch (error) {
+      new Notice(`无法打开本地预览：${errorMessage(error)}`);
+    }
+  }
+
+  private async openArticleOnlinePage(
+    application: PagesPublishApplication,
+    sourcePath: string,
+  ): Promise<void> {
+    try {
+      const state = await application.getCurrentArticlePanel({ activePath: sourcePath });
+      if (state.status !== 'article' || !state.metadata.deployment?.url) {
+        new Notice('此文章尚无可打开的线上页面。');
+        return;
+      }
+      window.open(state.metadata.deployment.url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      new Notice(`无法读取当前文章的线上页面：${errorMessage(error)}`);
+    }
+  }
+
+  private openPluginSettings(): void {
+    if (!openPluginSettingsInHost(this.app, this.manifest.id)) {
+      new Notice('请在 Obsidian 设置中打开此插件的设置。');
+    }
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : '发生未知错误。';
 }

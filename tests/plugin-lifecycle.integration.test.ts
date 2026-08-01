@@ -5,8 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PagesPublishApplication } from '../src/application';
 import {
   activatePagesPublish,
+  type PagesPublishGlobalFeedback,
   type PagesPublishHost,
 } from '../src/plugin/lifecycle';
+import type { GlobalUiProjection, GlobalUiRoute } from '../src/plugin/global-ui-state';
 
 describe('plugin lifecycle', () => {
   const vaults: string[] = [];
@@ -91,6 +93,40 @@ describe('plugin lifecycle', () => {
     });
     await activation.dispose();
   });
+
+  it('keeps the Ribbon and status bar on the same global state projection', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-plugin-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), 'configured', 'utf8');
+    const application = new PagesPublishApplication(vault, undefined, {
+      scan: async () => ({
+        configRevision: 'config',
+        digest: 'scan',
+        candidates: [],
+        issues: [{
+          severity: 'blocker' as const,
+          code: 'content-root-missing',
+          path: 'content_roots[0].path',
+          message: 'Configured content root is missing; publishing is blocked.',
+        }],
+      }),
+    });
+    const host = new RecordingHost();
+    const activation = activatePagesPublish(application, host);
+
+    await vi.waitFor(() => {
+      expect(host.globalFeedback?.presentation).toEqual({
+        ribbon: { route: 'publish-center', tooltip: '打开发布中心：1 个阻塞' },
+        statusBar: { route: 'publish-center', text: 'Pages：1 个阻塞' },
+      });
+    });
+    await host.clickGlobalFeedback();
+    expect(host.openedTargets).toEqual(['publish-center']);
+
+    await activation.dispose();
+    expect(host.globalFeedback?.disposed).toBe(true);
+  });
 });
 
 class RecordingHost implements PagesPublishHost {
@@ -103,6 +139,13 @@ class RecordingHost implements PagesPublishHost {
   openedTargets: string[] = [];
   disposedRegistrations = 0;
   vaultChange: (() => void) | undefined;
+  globalFeedback:
+    | {
+      presentation: GlobalUiProjection | undefined;
+      callback: (route: GlobalUiRoute) => Promise<void>;
+      disposed: boolean;
+    }
+    | undefined;
 
   registerRibbon(
     icon: string,
@@ -132,6 +175,20 @@ class RecordingHost implements PagesPublishHost {
     };
   }
 
+  registerGlobalFeedback(
+    callback: (route: GlobalUiRoute) => Promise<void>,
+  ): PagesPublishGlobalFeedback {
+    this.globalFeedback = { callback, presentation: undefined, disposed: false };
+    return {
+      update: (presentation) => {
+        if (this.globalFeedback) this.globalFeedback.presentation = presentation;
+      },
+      dispose: () => {
+        if (this.globalFeedback) this.globalFeedback.disposed = true;
+      },
+    };
+  }
+
   async openWorkspace(target: 'setup' | 'publish-center'): Promise<void> {
     this.openedTargets.push(target);
   }
@@ -144,6 +201,14 @@ class RecordingHost implements PagesPublishHost {
     if (this.command?.id === id) {
       await this.command.callback();
     }
+  }
+
+  async clickGlobalFeedback(): Promise<void> {
+    const presentation = this.globalFeedback?.presentation;
+    if (!presentation || !this.globalFeedback) return;
+    await this.globalFeedback.callback(
+      presentation.statusBar?.route ?? presentation.ribbon.route,
+    );
   }
 
   emitVaultChange(): void {
