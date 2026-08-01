@@ -35,6 +35,11 @@ export interface NoteReferenceIssue {
   dormant: boolean;
 }
 
+export interface PublicNoteLink {
+  sourcePath: string;
+  targetPath: string;
+}
+
 const resolverEnvironmentKey = 'pagesPublishNoteReferenceResolver';
 const tokenMetadataKey = 'pagesPublishNoteReference';
 const degradedReferenceTokenType = 'pages_publish_note_reference_text';
@@ -237,6 +242,35 @@ export function inspectNoteReferences(
       left.sourcePath.localeCompare(right.sourcePath) ||
       left.line - right.line ||
       left.column - right.column,
+  );
+}
+
+export function collectPublicNoteLinks(
+  snapshots: Map<string, ArticleSourceSnapshot>,
+): PublicNoteLink[] {
+  const links: PublicNoteLink[] = [];
+  const targetIndex = buildNoteTargetIndex(snapshots);
+  for (const snapshot of snapshots.values()) {
+    if (snapshot.metadata.visibility.value !== 'public') continue;
+    for (const reference of extractNoteReferences(snapshot)) {
+      if (hasUnsupportedNoteAnchor(reference.target)) continue;
+      const target = resolveNoteTarget(
+        snapshot.sourcePath,
+        reference.target,
+        snapshots,
+        targetIndex,
+      );
+      if (target.status !== 'resolved') continue;
+      if (snapshots.get(target.sourcePath)?.metadata.visibility.value !== 'public') {
+        continue;
+      }
+      links.push({ sourcePath: snapshot.sourcePath, targetPath: target.sourcePath });
+    }
+  }
+  return links.sort(
+    (left, right) =>
+      left.sourcePath.localeCompare(right.sourcePath) ||
+      left.targetPath.localeCompare(right.targetPath),
   );
 }
 

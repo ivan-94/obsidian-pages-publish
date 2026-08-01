@@ -100,4 +100,17 @@ describe('local preview server', () => {
     expect(explicitResponse.status).toBe(404);
     expect(await explicitResponse.text()).toBe(notFound);
   });
+
+  it('serves a generated sitemap as XML', async () => {
+    const server = new LocalPreviewServer();
+    servers.push(server);
+    const sitemap = '<?xml version="1.0"?><urlset></urlset>';
+    const session = await server.start({ '/sitemap.xml': sitemap });
+
+    const response = await fetch(`${session.url}sitemap.xml`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/xml; charset=utf-8');
+    expect(await response.text()).toBe(sitemap);
+  });
 });

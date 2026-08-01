@@ -144,6 +144,58 @@ describe('route planner', () => {
     );
   });
 
+  it('reserves the sitemap file route against article, section, and redirect output', () => {
+    const config = siteConfig();
+    config.contentRoots[0]!.publicRoot = '/';
+    const plan = planSiteRoutes(config, [
+      {
+        sourcePath: 'notes/sitemap-article.md',
+        visibility: 'public',
+        slug: 'sitemap.xml',
+        kind: 'article',
+        redirects: [],
+      },
+      {
+        sourcePath: 'notes/sitemap.xml/_index.md',
+        visibility: 'public',
+        slug: '_index',
+        kind: 'index',
+        redirects: [],
+      },
+      {
+        sourcePath: 'notes/redirect-owner.md',
+        visibility: 'public',
+        slug: 'new',
+        kind: 'article',
+        redirects: ['/sitemap.xml'],
+      },
+    ]);
+
+    expect(plan.systemRoutes).toContain('/sitemap.xml');
+    expect(plan.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'blocker',
+          code: 'system-route-conflict',
+          route: '/sitemap.xml/',
+          sourcePath: 'notes/sitemap-article.md',
+        }),
+        expect.objectContaining({
+          severity: 'blocker',
+          code: 'section-system-route-conflict',
+          route: '/sitemap.xml/',
+          directoryPath: 'notes/sitemap.xml',
+        }),
+        expect.objectContaining({
+          severity: 'blocker',
+          code: 'redirect-route-conflict',
+          route: '/sitemap.xml/',
+          sourcePath: 'notes/redirect-owner.md',
+        }),
+      ]),
+    );
+  });
+
   it('uses _index.md as the sole directory index when index.md also exists', () => {
     const plan = planSiteRoutes(siteConfig(), [
       {

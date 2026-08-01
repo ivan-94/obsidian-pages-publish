@@ -173,6 +173,7 @@ export function planSiteRoutes(
     '/',
     '/404/',
     '/privacy/',
+    '/sitemap.xml',
     ...(routingConfig.features.search ? ['/search/'] : []),
     ...(routingConfig.features.graph ? ['/graph/'] : []),
   ];
@@ -192,7 +193,7 @@ export function planSiteRoutes(
         message: `Multiple articles generate ${route}.`,
       });
     }
-    if (systemRoutes.includes(route)) {
+    if (conflictsWithSystemRoute(route, systemRoutes)) {
       for (const sourcePath of owners) {
         if (
           route === '/' &&
@@ -242,7 +243,7 @@ export function planSiteRoutes(
         message: `Multiple sections generate ${route}.`,
       });
     }
-    if (route !== '/' && systemRoutes.includes(route)) {
+    if (route !== '/' && conflictsWithSystemRoute(route, systemRoutes)) {
       for (const owner of owners) {
         issues.push({
           severity: 'blocker',
@@ -266,7 +267,7 @@ export function planSiteRoutes(
       if (
         articleOwners.has(redirect.from) ||
         sectionOwners.has(redirect.from) ||
-        systemRoutes.includes(redirect.from)
+        conflictsWithSystemRoute(redirect.from, systemRoutes)
       ) {
         issues.push({
           severity: 'blocker',
@@ -318,6 +319,17 @@ export function planSiteRoutes(
     }
   }
   return { articles, sections, systemRoutes, redirects, issues };
+}
+
+function conflictsWithSystemRoute(
+  route: string,
+  systemRoutes: readonly string[],
+): boolean {
+  return systemRoutes.some(
+    (systemRoute) =>
+      route === systemRoute ||
+      (!systemRoute.endsWith('/') && route === `${systemRoute}/`),
+  );
 }
 
 function resolveRedirects(

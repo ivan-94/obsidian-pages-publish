@@ -32,6 +32,13 @@ import {
   defaultThemeCss,
   defaultThemePath,
 } from '../site/default-theme';
+import {
+  canonicalUrl,
+  createSiteDiscoveryProjection,
+  siteCanonicalOrigin,
+  type PublicGraphEdge,
+  type PublicDiscoveryPage,
+} from '../site/discovery';
 
 export interface PreviewPage {
   sourcePath: string;
@@ -69,6 +76,7 @@ export async function prepareLocalPreviewFromDirectory(
     );
   }
   const config = loadedConfig.config;
+  const canonicalOrigin = siteCanonicalOrigin(config);
   const { snapshots, inputs } = await loadDirectoryRouteSources(
     vaultRoot,
     config,
@@ -88,20 +96,37 @@ export async function prepareLocalPreviewFromDirectory(
       html: string;
       listed: boolean;
       kind: 'article' | 'index';
+      visibility: 'public' | 'unlisted';
       date?: string;
       order?: number;
+      searchText: string;
     }
   >;
   for (const article of routePlan.articles) {
     const snapshot = snapshots.get(article.sourcePath);
     if (!snapshot) continue;
     const title = snapshot.metadata.title.value;
+    const visibility = snapshot.metadata.visibility.value;
+    if (visibility === 'private') continue;
+    const content = renderArticleContent(
+      title,
+      renderArticleBody(article.sourcePath, snapshots, routePlan, assetPlan),
+    );
+    const description = safeArticleDescription(
+      article.sourcePath,
+      snapshot.metadata.summary?.value,
+      config.site.description,
+      snapshots,
+      routePlan,
+      assetPlan,
+    );
     renderedPages.push({
       sourcePath: article.sourcePath,
       title,
       url: article.url,
-      listed: snapshot.metadata.visibility.value === 'public',
+      listed: visibility === 'public',
       kind: snapshot.metadata.kind.value,
+      visibility,
       ...(snapshot.metadata.date
         ? { date: snapshot.metadata.date.value }
         : {}),
@@ -111,11 +136,23 @@ export async function prepareLocalPreviewFromDirectory(
       html: renderDocument(
         config.site.name,
         title,
-        renderArticleContent(
-          title,
-          renderArticleBody(article.sourcePath, snapshots, routePlan, assetPlan),
-        ),
+        content,
         renderRouteSummary(article),
+        {
+          canonicalUrl: canonicalUrl(canonicalOrigin, article.url),
+          ...(visibility === 'unlisted'
+            ? { robots: 'noindex, nofollow' }
+            : {}),
+          description,
+          features: config.features,
+        },
+      ),
+      searchText: renderSafeArticleText(
+        article.sourcePath,
+        snapshot.body,
+        snapshots,
+        routePlan,
+        assetPlan,
       ),
     });
   }
@@ -131,8 +168,10 @@ export async function prepareLocalPreviewFromDirectory(
         html: _html,
         listed: _listed,
         kind: _kind,
+        visibility: _visibility,
         date: _date,
         order: _order,
+        searchText: _searchText,
         ...page
       }) => page,
     );
@@ -145,16 +184,57 @@ export async function prepareLocalPreviewFromDirectory(
     routePlan,
     snapshots,
   );
+  const discovery = createSiteDiscoveryProjection(
+    config,
+    snapshots,
+    renderedPages
+      .filter((page) => page.visibility === 'public')
+      .map(
+        (page): PublicDiscoveryPage => ({
+          sourcePath: page.sourcePath,
+          title: page.title,
+          url: page.url,
+          text: page.searchText,
+        }),
+      ),
+    indexableSitePaths(config, routePlan, snapshots, renderedPages),
+  );
   const files: Record<string, string> = {
     [defaultThemePath]: defaultThemeCss,
     '/index.html': renderIndex(
       config.site.name,
       config.site.homeLayout === 'sections' ? sectionHomePages : latestPages,
       config.site.description,
+      {
+        canonicalUrl: canonicalUrl(canonicalOrigin, '/'),
+        features: config.features,
+      },
     ),
-    '/404/index.html': renderNotFound(config.site.name),
-    '/privacy/index.html': renderPrivacy(config.site.name),
+    '/404/index.html': renderNotFound(config.site.name, config.features),
+    '/privacy/index.html': renderPrivacy(
+      config.site.name,
+      config.features,
+      canonicalUrl(canonicalOrigin, '/privacy/'),
+    ),
+    '/sitemap.xml': discovery.sitemapXml,
   };
+  if (config.features.search) {
+    files['/search/index.html'] = renderSearch(config.site.name, discovery.pages, {
+      canonicalUrl: canonicalUrl(canonicalOrigin, '/search/'),
+      features: config.features,
+    });
+  }
+  if (config.features.graph) {
+    files['/graph/index.html'] = renderGraph(
+      config.site.name,
+      discovery.pages,
+      discovery.graphEdges,
+      {
+        canonicalUrl: canonicalUrl(canonicalOrigin, '/graph/'),
+        features: config.features,
+      },
+    );
+  }
   for (const page of renderedPages) {
     files[`${page.url}index.html`] = page.html;
   }
@@ -178,6 +258,14 @@ export async function prepareLocalPreviewFromDirectory(
           (article) => article.sourcePath === section.sourcePath,
         )
       : undefined;
+    const description = safeArticleDescription(
+      sectionSnapshot?.sourcePath ?? section.directoryPath,
+      sectionSnapshot?.metadata.summary?.value,
+      config.site.description,
+      snapshots,
+      routePlan,
+      assetPlan,
+    );
     files[filePath] = renderSection(
       config.site.name,
       sectionSnapshot?.metadata.title.value ??
@@ -195,6 +283,14 @@ export async function prepareLocalPreviewFromDirectory(
             ),
           )}${renderRouteSummary(sectionArticle)}`
         : undefined,
+      {
+        canonicalUrl: canonicalUrl(canonicalOrigin, section.url),
+        ...(sectionSnapshot?.metadata.visibility.value === 'unlisted'
+          ? { robots: 'noindex, nofollow' }
+          : {}),
+        description,
+        features: config.features,
+      },
     );
   }
   for (const redirect of routePlan.redirects) {
@@ -202,6 +298,7 @@ export async function prepareLocalPreviewFromDirectory(
       config.site.name,
       redirect.from,
       redirect.to,
+      config.features,
     );
   }
 
@@ -308,6 +405,37 @@ function homeSectionPages(
   );
 }
 
+function indexableSitePaths(
+  config: import('../config/site-config').SiteConfigV1,
+  routePlan: SiteRoutePlan,
+  snapshots: Map<string, import('../publication/article-metadata').ArticleSourceSnapshot>,
+  pages: ReadonlyArray<{
+    url: string;
+    visibility: 'public' | 'unlisted';
+  }>,
+): string[] {
+  const paths = new Set<string>(['/privacy/']);
+  const rootSection = routePlan.sections.find((section) => section.url === '/');
+  if (
+    !rootSection?.sourcePath ||
+    snapshots.get(rootSection.sourcePath)?.metadata.visibility.value === 'public'
+  ) {
+    paths.add('/');
+  }
+  if (config.features.search) paths.add('/search/');
+  if (config.features.graph) paths.add('/graph/');
+  for (const page of pages) {
+    if (page.visibility === 'public') paths.add(page.url);
+  }
+  for (const section of routePlan.sections) {
+    const visibility = section.sourcePath
+      ? snapshots.get(section.sourcePath)?.metadata.visibility.value
+      : 'public';
+    if (visibility === 'public') paths.add(section.url);
+  }
+  return [...paths];
+}
+
 export async function prepareArticlePreviewFromDirectory(
   vaultRoot: string,
   sourcePath: string,
@@ -331,6 +459,7 @@ export async function prepareArticlePreviewFromDirectory(
   const snapshot = snapshots.get(sourcePath);
   if (!snapshot) throw new Error('Article is missing from the configured content roots.');
   const metadata = snapshot.metadata;
+  const canonicalOrigin = siteCanonicalOrigin(loadedConfig.config);
   const routePlan = planSiteRoutes(
     loadedConfig.config,
     inputs.map((input) =>
@@ -362,6 +491,14 @@ export async function prepareArticlePreviewFromDirectory(
     title: metadata.title.value,
     url,
   };
+  const description = safeArticleDescription(
+    sourcePath,
+    metadata.summary?.value,
+    loadedConfig.config.site.description,
+    snapshots,
+    routePlan,
+    assetPlan,
+  );
   const preview: ArticleLocalPreview = {
     siteName: loadedConfig.config.site.name,
     pages: [page],
@@ -369,7 +506,10 @@ export async function prepareArticlePreviewFromDirectory(
     assets: assetPlan.assets,
     files: {
       [defaultThemePath]: defaultThemeCss,
-      '/index.html': renderIndex(loadedConfig.config.site.name, [page]),
+      '/index.html': renderIndex(loadedConfig.config.site.name, [page], undefined, {
+        canonicalUrl: canonicalUrl(canonicalOrigin, '/'),
+        features: loadedConfig.config.features,
+      }),
       [`${url}index.html`]: renderDocument(
         loadedConfig.config.site.name,
         metadata.title.value,
@@ -378,6 +518,14 @@ export async function prepareArticlePreviewFromDirectory(
           renderArticleBody(sourcePath, snapshots, routePlan, assetPlan),
         ),
         renderRouteSummary(articleProjection),
+        {
+          canonicalUrl: canonicalUrl(canonicalOrigin, url),
+          ...(metadata.visibility.value === 'public'
+            ? {}
+            : { robots: 'noindex, nofollow' }),
+          description,
+          features: loadedConfig.config.features,
+        },
       ),
     },
     routePlan,
@@ -387,6 +535,7 @@ export async function prepareArticlePreviewFromDirectory(
       loadedConfig.config.site.name,
       redirect.from,
       redirect.to,
+      loadedConfig.config.features,
     );
   }
   return preview;
@@ -405,41 +554,116 @@ function renderArticleBody(
 ): string {
   const snapshot = snapshots.get(sourcePath);
   if (!snapshot) return '';
+  return renderSourceMarkdown(
+    sourcePath,
+    snapshot.body,
+    snapshots,
+    routePlan,
+    assetPlan,
+    state,
+  );
+}
+
+function renderSafeArticleText(
+  sourcePath: string,
+  source: string,
+  snapshots: Map<string, import('../publication/article-metadata').ArticleSourceSnapshot>,
+  routePlan: SiteRoutePlan,
+  assetPlan: LocalAssetPlan,
+): string {
+  return plainTextFromHtml(
+    renderSourceMarkdown(
+      sourcePath,
+      source,
+      snapshots,
+      routePlan,
+      assetPlan,
+      {
+        ancestors: new Set(),
+        depth: 0,
+        budget: { expansions: 0, outputCharacters: 0 },
+      },
+      false,
+    ),
+  );
+}
+
+function safeArticleDescription(
+  sourcePath: string,
+  summary: string | undefined,
+  fallback: string | undefined,
+  snapshots: Map<string, import('../publication/article-metadata').ArticleSourceSnapshot>,
+  routePlan: SiteRoutePlan,
+  assetPlan: LocalAssetPlan,
+): string | undefined {
+  // An embed can expand to a very large public note. Its rendered article is
+  // already searchable, so preserve the site-level fallback instead of
+  // duplicating that expansion in metadata.
+  if (!summary || summary.includes('![[')) return fallback;
+  return (
+    renderSafeArticleText(sourcePath, summary, snapshots, routePlan, assetPlan) ||
+    fallback
+  );
+}
+
+function renderSourceMarkdown(
+  sourcePath: string,
+  source: string,
+  snapshots: Map<string, import('../publication/article-metadata').ArticleSourceSnapshot>,
+  routePlan: SiteRoutePlan,
+  assetPlan: LocalAssetPlan,
+  state: EmbedRenderState = {
+    ancestors: new Set(),
+    depth: 0,
+    budget: { expansions: 0, outputCharacters: 0 },
+  },
+  includeEmbeds = true,
+): string {
   const nextAncestors = new Set(state.ancestors);
   nextAncestors.add(sourcePath);
+  const referenceResolver = createNoteReferenceResolver(
+    sourcePath,
+    snapshots,
+    routePlan,
+    {
+      renderEmbed: (targetPath) => {
+        const targetSnapshot = snapshots.get(targetPath);
+        if (
+          !includeEmbeds ||
+          !targetSnapshot ||
+          nextAncestors.has(targetPath) ||
+          state.depth >= NOTE_EMBED_LIMITS.maxDepth ||
+          state.budget.expansions >= NOTE_EMBED_LIMITS.maxExpansions ||
+          state.budget.outputCharacters + targetSnapshot.body.length >
+            NOTE_EMBED_LIMITS.maxOutputCharacters
+        ) {
+          return undefined;
+        }
+        state.budget.expansions += 1;
+        state.budget.outputCharacters += targetSnapshot.body.length;
+        return renderArticleBody(
+          targetPath,
+          snapshots,
+          routePlan,
+          assetPlan,
+          {
+            ancestors: nextAncestors,
+            depth: state.depth + 1,
+            budget: state.budget,
+          },
+        );
+      },
+    },
+  );
   return markdown.render(
-    degradeUnsupportedSyntax(snapshot.body),
+    degradeUnsupportedSyntax(source),
     {
       ...localAssetEnvironment(sourcePath, assetPlan),
       ...noteReferenceEnvironment(
-        createNoteReferenceResolver(sourcePath, snapshots, routePlan, {
-          renderEmbed: (targetPath) => {
-            const targetSnapshot = snapshots.get(targetPath);
-            if (
-              !targetSnapshot ||
-              nextAncestors.has(targetPath) ||
-              state.depth >= NOTE_EMBED_LIMITS.maxDepth ||
-              state.budget.expansions >= NOTE_EMBED_LIMITS.maxExpansions ||
-              state.budget.outputCharacters + targetSnapshot.body.length >
-                NOTE_EMBED_LIMITS.maxOutputCharacters
-            ) {
-              return undefined;
-            }
-            state.budget.expansions += 1;
-            state.budget.outputCharacters += targetSnapshot.body.length;
-            return renderArticleBody(
-              targetPath,
-              snapshots,
-              routePlan,
-              assetPlan,
-              {
-                ancestors: nextAncestors,
-                depth: state.depth + 1,
-                budget: state.budget,
-              },
-            );
-          },
-        }),
+        (target, alias, embed) =>
+          !includeEmbeds && embed
+            ? { kind: 'text', text: '' }
+            : referenceResolver(target, alias, embed),
       ),
     },
   );
@@ -468,6 +692,7 @@ function renderIndex(
   siteName: string,
   pages: PreviewPage[],
   description?: string,
+  options: RenderDocumentOptions = {},
 ): string {
   const links = pages
     .map(
@@ -481,7 +706,16 @@ function renderIndex(
     `<section class="site-hero"><h1>${escapeHtml(siteName)}</h1>${
       description ? `<p>${escapeHtml(description)}</p>` : ''
     }</section><ul>${links}</ul>`,
+    '',
+    options,
   );
+}
+
+interface RenderDocumentOptions {
+  canonicalUrl?: string;
+  robots?: 'noindex, nofollow';
+  description?: string;
+  features?: { search: boolean; graph: boolean };
 }
 
 function renderDocument(
@@ -489,6 +723,7 @@ function renderDocument(
   title: string,
   body: string,
   routeSummary = '',
+  options: RenderDocumentOptions = {},
 ): string {
   return [
     '<!doctype html>',
@@ -496,13 +731,22 @@ function renderDocument(
     '<head>',
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    options.description
+      ? `<meta name="description" content="${escapeHtml(options.description)}">`
+      : '',
+    options.robots ? `<meta name="robots" content="${options.robots}">` : '',
+    options.canonicalUrl
+      ? `<link rel="canonical" href="${escapeHtml(options.canonicalUrl)}">`
+      : '',
     `<link rel="stylesheet" href="${defaultThemePath}">`,
     `<title>${escapeHtml(title)} · ${escapeHtml(siteName)}</title>`,
     '</head>',
     '<body>',
     '<a class="skip-link" href="#content">跳到正文</a>',
     '<aside data-pages-preview="local" role="status">本地预览 · 尚未发布</aside>',
-    `<header class="site-header"><a href="/">${escapeHtml(siteName)}</a><nav aria-label="主要导航"><a href="/">首页</a><a href="/privacy/">隐私</a></nav></header>`,
+    `<header class="site-header"><a href="/">${escapeHtml(siteName)}</a>${renderNavigation(
+      options.features,
+    )}</header>`,
     `<main id="content">${body}${routeSummary}</main>`,
     `<footer><p>由 ${escapeHtml(siteName)} 发布</p></footer>`,
     '</body>',
@@ -510,20 +754,145 @@ function renderDocument(
   ].join('');
 }
 
-function renderNotFound(siteName: string): string {
+function renderNavigation(features: RenderDocumentOptions['features']): string {
+  return `<nav aria-label="主要导航"><a href="/">首页</a>${
+    features?.search ? '<a href="/search/">搜索</a>' : ''
+  }${features?.graph ? '<a href="/graph/">图谱</a>' : ''}<a href="/privacy/">隐私</a></nav>`;
+}
+
+function renderNotFound(
+  siteName: string,
+  features: RenderDocumentOptions['features'],
+): string {
   return renderDocument(
     siteName,
     '页面未找到',
     '<h1>页面未找到</h1><p>这个地址没有对应的公开内容。</p><p><a href="/">返回首页</a></p>',
+    '',
+    { robots: 'noindex, nofollow', features },
   );
 }
 
-function renderPrivacy(siteName: string): string {
+function renderPrivacy(
+  siteName: string,
+  features: RenderDocumentOptions['features'],
+  canonical: string,
+): string {
   return renderDocument(
     siteName,
     '隐私说明',
     '<h1>隐私说明</h1><p>本站默认不启用评论或访问统计，也不会由发布插件代理外部资源。</p>',
+    '',
+    { canonicalUrl: canonical, features },
   );
+}
+
+function renderSearch(
+  siteName: string,
+  pages: readonly PublicDiscoveryPage[],
+  options: RenderDocumentOptions,
+): string {
+  const initialResults = pages
+    .map(
+      (page) =>
+        `<li><a href="${escapeHtml(page.url)}">${escapeHtml(page.title)}</a><p>${escapeHtml(
+          searchExcerpt(page.text),
+        )}</p></li>`,
+    )
+    .join('');
+  const index = safeJsonForHtml(
+    pages.map((page) => ({ title: page.title, url: page.url, text: page.text })),
+  );
+  return renderDocument(
+    siteName,
+    '搜索',
+    `<section data-pages-search><h1>搜索</h1><form role="search"><label for="pages-search-query">搜索公开内容</label><input id="pages-search-query" name="q" type="search" autocomplete="off"><button type="submit">搜索</button></form><p data-pages-search-status aria-live="polite"></p><ol data-pages-search-results>${initialResults}</ol><script type="application/json" data-pages-search-index>${index}</script><script>${searchClientScript}</script></section>`,
+    '',
+    options,
+  );
+}
+
+function renderGraph(
+  siteName: string,
+  pages: readonly PublicDiscoveryPage[],
+  edges: readonly PublicGraphEdge[],
+  options: RenderDocumentOptions,
+): string {
+  const titlesByUrl = new Map(pages.map((page) => [page.url, page.title]));
+  const nodes = pages
+    .map(
+      (page) => `<li><a href="${escapeHtml(page.url)}">${escapeHtml(page.title)}</a></li>`,
+    )
+    .join('');
+  const relations = edges
+    .map(
+      (edge) =>
+        `<li><a href="${escapeHtml(edge.from)}">${escapeHtml(
+          titlesByUrl.get(edge.from) ?? edge.from,
+        )}</a> → <a href="${escapeHtml(edge.to)}">${escapeHtml(
+          titlesByUrl.get(edge.to) ?? edge.to,
+        )}</a></li>`,
+    )
+    .join('');
+  return renderDocument(
+    siteName,
+    '知识图谱',
+    `<section data-pages-graph><h1>知识图谱</h1><p>仅包含公开文章及其公开引用关系。</p><section aria-label="图谱节点"><h2>文章</h2><ul>${nodes}</ul></section><section aria-label="图谱关系"><h2>引用关系</h2><ul>${relations || '<li>暂无公开引用关系。</li>'}</ul></section></section>`,
+    '',
+    options,
+  );
+}
+
+const searchClientScript = `(() => {
+  const root = document.querySelector('[data-pages-search]');
+  if (!root) return;
+  const form = root.querySelector('form');
+  const input = root.querySelector('input[type="search"]');
+  const results = root.querySelector('[data-pages-search-results]');
+  const status = root.querySelector('[data-pages-search-status]');
+  const payload = root.querySelector('[data-pages-search-index]');
+  if (!form || !input || !results || !status || !payload) return;
+  const pages = JSON.parse(payload.textContent || '[]');
+  const render = () => {
+    const query = input.value.trim().toLocaleLowerCase();
+    const matches = query ? pages.filter((page) => (page.title + ' ' + page.text).toLocaleLowerCase().includes(query)) : pages;
+    results.replaceChildren(...matches.map((page) => {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = page.url;
+      link.textContent = page.title;
+      item.append(link);
+      return item;
+    }));
+    status.textContent = query ? '找到 ' + matches.length + ' 篇公开文章。' : '';
+  };
+  form.addEventListener('submit', (event) => { event.preventDefault(); render(); });
+  input.addEventListener('input', render);
+})();`;
+
+function searchExcerpt(value: string): string {
+  return value.length <= 180 ? value : `${value.slice(0, 177)}…`;
+}
+
+function safeJsonForHtml(value: unknown): string {
+  return JSON.stringify(value)
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('&', '\\u0026')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029');
+}
+
+function plainTextFromHtml(value: string): string {
+  return value
+    .replace(/<[^>]*>/gu, ' ')
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#039;', "'")
+    .replace(/\s+/gu, ' ')
+    .trim();
 }
 
 function renderRouteSummary(article: PlannedArticleRoute): string {
@@ -543,11 +912,18 @@ function renderRouteSummary(article: PlannedArticleRoute): string {
   ].join('');
 }
 
-function renderRedirect(siteName: string, from: string, to: string): string {
+function renderRedirect(
+  siteName: string,
+  from: string,
+  to: string,
+  features: RenderDocumentOptions['features'],
+): string {
   return renderDocument(
     siteName,
     '永久重定向',
     `<p><code>${escapeHtml(from)}</code> → <a href="${escapeHtml(to)}">${escapeHtml(to)}</a></p>`,
+    '',
+    { robots: 'noindex, nofollow', features },
   );
 }
 
@@ -556,6 +932,7 @@ function renderSection(
   title: string,
   pages: PreviewPage[],
   introduction?: string,
+  options: RenderDocumentOptions = {},
 ): string {
   const links = pages
     .map(
@@ -570,6 +947,8 @@ function renderSection(
       introduction ??
       `<h1>${escapeHtml(title)}</h1><p>此栏目由目录结构自动生成。</p>`
     }<section aria-label="栏目文章"><ul>${links}</ul></section>`,
+    '',
+    options,
   );
 }
 

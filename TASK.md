@@ -55,7 +55,7 @@
 - [x] S05 — 私密安全的笔记链接与嵌入
 - [x] S06 — 图片资源管线与内容安全
 - [ ] S07 — 内置默认站点与核心 Markdown 体验
-- [ ] S08 — 搜索、知识图谱与可见性 SEO
+- [x] S08 — 搜索、知识图谱与可见性 SEO
 - [ ] S09 — Node/发布引擎与预览生命周期
 - [ ] S10 — Cloudflare OAuth、Token 与 Keychain
 - [ ] S11 — 首次建站、项目绑定与域名
@@ -373,28 +373,28 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] public 内容进入全文搜索、知识图谱、导航和站点地图。
-- [ ] unlisted 页面可直链且带 `noindex`，不进入搜索、图谱、导航或站点地图。
-- [ ] private 内容不生成页面，也不进入任何客户端索引或构建元数据。
-- [ ] 搜索与图谱开关关闭后不生成对应入口和索引负载。
-- [ ] public 页面生成 canonical 与必要基础 metadata。
-- [ ] 构建测试对产物执行 private/unlisted 信息负向搜索。
+- [x] public 内容进入全文搜索、知识图谱、导航和站点地图。
+- [x] unlisted 页面可直链且带 `noindex`，不进入搜索、图谱、导航或站点地图。
+- [x] private 内容不生成页面，也不进入任何客户端索引或构建元数据。
+- [x] 搜索与图谱开关关闭后不生成对应入口和索引负载。
+- [x] public 页面生成 canonical 与必要基础 metadata。
+- [x] 构建测试对产物执行 private/unlisted 信息负向搜索。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先写三种可见性在搜索索引中的行为测试，再逐个增加图谱/SEO 输出。
-- [ ] TDD：通过用户可下载的最终产物验证，不能只检查构建器内存状态。
-- [ ] TDD：运行收录矩阵、负向泄漏、HTML metadata、类型检查和上游回归。
-- [ ] Review：独立 subagent 只读审查所有公开索引面、noindex 语义和客户端数据泄漏。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：先写三种可见性在搜索索引中的行为测试，再逐个增加图谱/SEO 输出。
+- [x] TDD：通过用户可下载的最终产物验证，不能只检查构建器内存状态。
+- [x] TDD：运行收录矩阵、负向泄漏、HTML metadata、类型检查和上游回归。
+- [x] Review：独立 subagent 只读审查所有公开索引面、noindex 语义和客户端数据泄漏。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录索引体积/隐私风险：
+- [x] 记录分支/提交或 PR：本地分支 `codex/s08-search-seo`；不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：先以缺失 `/search/index.html` 的失败测试建立 tracer；随后公开/未列出/私密矩阵、feature 关闭、custom-domain canonical 与 XML MIME 逐项 RED → GREEN。上游回归发现原始 summary 会进入 SEO description，改为安全渲染后恢复。独立审查又提出并以失败测试修复四项 P1：`/sitemap.xml` 文件路由冲突、public→unlisted embed 进入搜索、sitemap 遗漏可索引 canonical 页面、unlisted 根 `_index.md` 仍进入 sitemap。最终 `npm test -- --run`（19 files / 223 tests）、`npm run typecheck`、`npm run lint`、`npm run build`、`git diff --check` 与官方 registry `npm audit --omit=dev`（0 vulnerabilities）全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：独立 reviewer `/root/review_s08` 只读审查发现并复测上述 4 个 P1；修复后复审签字 `0 P0 / 0 P1 / 0 P2`，未修改文件。
+- [x] 记录索引体积/隐私风险：搜索索引为可下载静态 HTML 中的 JSON，只包含 public 页的 title、URL 与经安全渲染且不展开嵌入的正文文本；unlisted/private 标题、正文、路径和图关系均以最终 `files` 产物作负向断言。索引随公开正文线性增长；首版无压缩/分片策略，性能门槛交由 S17 端到端旅程验证。
 
 ### S09 — Node/发布引擎与预览生命周期
 
@@ -783,8 +783,8 @@ flowchart LR
 
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/TASK.md`
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/package.json`、`manifest.json`、`versions.json`、构建/测试/类型检查配置与 `styles.css`
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务；S05 可见性安全的 Wiki link/embed 解析、依赖问题检查、资源预算与当前文章精确定位；S06 本地图片收集/宿主 WebP 解码、资源/路径安全、HTML/SVG 策略、外链候选与手动 SSRF-safe 检查；S07 默认站点页面/响应式主题、GFM/Callout/Mermaid 受控渲染、可定位语法降级、effective title outline 与设计 404 响应
-- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试；S06 图片/附件矩阵、恶意格式/注入/路径/TOCTOU/预算、宿主解码取消、外链定位与 SSRF/超时回归测试；S07 页面/首页布局/排序、Markdown 词汇、安全 Mermaid、Obsidian 注释隐私边界、响应式 CSS、可访问 outline 与 404 HTTP 语义回归测试
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务；S05 可见性安全的 Wiki link/embed 解析、依赖问题检查、资源预算与当前文章精确定位；S06 本地图片收集/宿主 WebP 解码、资源/路径安全、HTML/SVG 策略、外链候选与手动 SSRF-safe 检查；S07 默认站点页面/响应式主题、GFM/Callout/Mermaid 受控渲染、可定位语法降级、effective title outline 与设计 404 响应；S08 public-only 搜索/图谱投影、sitemap、canonical/noindex metadata、静态搜索页与 XML MIME、sitemap 文件路由保护
+- `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试；S06 图片/附件矩阵、恶意格式/注入/路径/TOCTOU/预算、宿主解码取消、外链定位与 SSRF/超时回归测试；S07 页面/首页布局/排序、Markdown 词汇、安全 Mermaid、Obsidian 注释隐私边界、响应式 CSS、可访问 outline 与 404 HTTP 语义回归测试；S08 最终搜索/图谱/sitemap/canonical/noindex 输出、feature 开关、private/unlisted 负向泄漏、XML MIME 与静态文件路由冲突回归测试
 
 ### Key decisions
 
@@ -808,10 +808,12 @@ flowchart LR
 - S05 已完成实现、逐行为 TDD、独立 subagent 多轮隐私/资源攻击审查与 15 files / 155 tests 全量回归；可见性安全链接/嵌入、精确问题定位、扫描/预览共享预算和 private dormant 语义均已验证，最终审查为 `0 P0 / 0 P1 / 0 P2`。
 - S06 已完成实现、逐行为 TDD、独立安全 subagent 多轮攻击审查与 17 files / 204 tests 全量回归；本地图片、宿主 WebP 解码、HTML/SVG、安全路径/预算和 SSRF-safe 手动外链检查均已验证，最终审查为 `0 P0 / 0 P1 / 0 P2`。
 - S07 自动实现、TDD、浏览器明暗/响应式检查与独立 subagent 五轮 review 已完成；18 files / 215 tests 和全部工程门禁通过，最终审查为 `0 P0 / 0 P1 / 0 P2`。Slice 仅等待用户对三张默认站点截图给出 HITL 视觉结论。
+- S08 自动实现、逐行为 TDD 与独立 subagent 多轮 review 已完成；public-only 搜索/图谱、public canonical/sitemap、unlisted noindex、private 负向产物、搜索/图谱开关、JSON XSS 边界、XML MIME 和 sitemap 物化冲突均已验证。最终为 19 files / 223 tests，工程门禁与生产依赖 audit 均通过，review 结论 `0 P0 / 0 P1 / 0 P2`。
 
 ### Open questions / risks
 
 - S07 的默认主题已生成桌面、窄屏明暗截图并完成自动指标检查；仍需用户给出 HITL 视觉验收结论，未确认前不勾选 Slice。
+- S08 的静态全文索引随 public 正文线性增长，当前没有分片或压缩策略；由 S17 在干净 Vault 端到端旅程中验证性能门槛。
 - S10/S11/S13 需要隔离 Cloudflare 账号、OAuth 配置和测试域名，开始前应准备非生产资源。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。

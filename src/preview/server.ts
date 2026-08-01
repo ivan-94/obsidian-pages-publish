@@ -117,5 +117,6 @@ export class LocalPreviewServer {
 
 function contentTypeForGeneratedFile(path: string): string {
   if (path.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (path.endsWith('.xml')) return 'application/xml; charset=utf-8';
   return 'text/html; charset=utf-8';
 }
