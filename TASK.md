@@ -438,28 +438,28 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] OAuth 是默认入口，申请范围仅覆盖首版 Pages 能力。
-- [ ] API Token 位于高级入口，并在保存前验证权限与账号。
-- [ ] OAuth/Token 只写 Keychain；Vault、配置、普通日志、诊断包和 UI 不出现明文。
-- [ ] 支持多账号选择、连接状态、重新授权和更换账号。
-- [ ] 授权失效时本地内容编辑/预览仍可用，发布和远端动作暂停。
+- [x] OAuth 是默认入口，申请范围仅覆盖首版 Pages 能力。
+- [x] API Token 位于高级入口，并在保存前验证权限与账号。
+- [x] OAuth/Token 只写 Keychain；Vault、配置、普通日志、诊断包和 UI 不出现明文。
+- [x] 支持多账号选择、连接状态、重新授权和更换账号。
+- [x] 授权失效时本地内容编辑/预览仍可用，发布和远端动作暂停。
 - [ ] 真实 Cloudflare 测试账号完成 OAuth 回调与撤销/重授权验收。
 
 #### TDD & review gate
 
 - [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先用 Cloudflare/Keychain 边界 fake 验证“成功连接但凭据不落盘”行为。
-- [ ] TDD：逐个覆盖取消授权、过期、权限不足、Keychain 失败和账号切换。
-- [ ] TDD：运行凭据负向搜索、适配器契约、类型检查和上游回归。
-- [ ] Review：独立 subagent 只读安全审查权限范围、回调校验、Token 生命周期与脱敏。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：先用 Cloudflare/Keychain 边界 fake 验证“成功连接但凭据不落盘”行为。
+- [x] TDD：逐个覆盖取消授权、过期、权限不足、Keychain 失败和账号切换。
+- [x] TDD：运行凭据负向搜索、适配器契约、类型检查和上游回归。
+- [x] Review：独立 subagent 只读安全审查权限范围、回调校验、Token 生命周期与脱敏。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### HITL & Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录真实账号验收步骤与结果（不得记录密钥）：
+- [x] 记录分支/提交或 PR：`codex/s10-auth`；`8ec0c72 feat: add Cloudflare connection service`、`3f1bb23 fix: harden Cloudflare credential connection`。
+- [x] 记录 RED/GREEN/回归命令：RED `npm test -- --run tests/cloudflare-connection.test.ts`（PKCE、权限能力、账号选择、回滚、脱敏与跨重启错配的新增断言失败）；GREEN 定向 15 tests；最终 `npm test`（21 files / 245 tests）、`npm run typecheck`、`npm run lint`、`npm run build`、`git diff --check` 均通过。`npm audit --omit=dev --audit-level=high` 未执行完成：当前 npm 镜像不实现 audit API，见 Source Manifest 风险。
+- [x] 记录 reviewer task/thread ID 与结论：`/root/review_s10` 只读多轮安全复审；最终 `0 P0 / 0 P1 / 0 P2`。已处理 PKCE/state/replay、串行化与双记录补偿、错误脱敏、多账号选择、账号错配和过期恢复问题。
+- [ ] 记录真实账号验收步骤与结果（不得记录密钥）：待提供隔离的 Cloudflare OAuth Client/测试账号后，完成默认 OAuth 回调、API Token 权限不足/多账号切换、撤销后重授权，以及 Keychain/Vault/日志负向检查；不得把 Token、授权码或回调完整 URL 写入本文件。
 
 ### S11 — 首次建站、项目绑定与域名
 
@@ -785,6 +785,8 @@ flowchart LR
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/package.json`、`manifest.json`、`versions.json`、构建/测试/类型检查配置与 `styles.css`
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/src/`：S01 插件生命周期、核心预览与 loopback server；S02 schema v1 配置仓库、设置会话/UI、安全配置事务、内容扫描器与协调器；S03 文章发布元数据/安全事务、当前文章面板与控制器、单篇预览和应用失效通知；S04 canonical URL/路由规划器、栏目与重定向、全局路由源收集、面板/预览投影、route-aware UI 编辑及配置+文章 URL 迁移事务；S05 可见性安全的 Wiki link/embed 解析、依赖问题检查、资源预算与当前文章精确定位；S06 本地图片收集/宿主 WebP 解码、资源/路径安全、HTML/SVG 策略、外链候选与手动 SSRF-safe 检查；S07 默认站点页面/响应式主题、GFM/Callout/Mermaid 受控渲染、可定位语法降级、effective title outline 与设计 404 响应；S08 public-only 搜索/图谱投影、sitemap、canonical/noindex metadata、静态搜索页与 XML MIME、sitemap 文件路由保护
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试；S06 图片/附件矩阵、恶意格式/注入/路径/TOCTOU/预算、宿主解码取消、外链定位与 SSRF/超时回归测试；S07 页面/首页布局/排序、Markdown 词汇、安全 Mermaid、Obsidian 注释隐私边界、响应式 CSS、可访问 outline 与 404 HTTP 语义回归测试；S08 最终搜索/图谱/sitemap/canonical/noindex 输出、feature 开关、private/unlisted 负向泄漏、XML MIME 与静态文件路由冲突回归测试
+- [`src/cloudflare/connection.ts`](./src/cloudflare/connection.ts)：S10 OAuth S256 PKCE/state 事务、Pages capability 适配边界、Keychain/非敏感 binding、账号选择、串行变更、补偿恢复、过期状态与脱敏错误。
+- [`tests/cloudflare-connection.test.ts`](./tests/cloudflare-connection.test.ts)：S10 OAuth 回放、最小权限、账号选择/错配、过期、并发、Keychain/binding 回滚、恢复状态和敏感错误负向回归。
 
 ### Key decisions
 
@@ -794,6 +796,7 @@ flowchart LR
 - 每个 Slice 的完成门禁都包含逐行为 TDD、全量受影响回归和独立只读 subagent review。
 - reviewer 不修改代码；实现者处理 finding，P0/P1 必须清零，P2 必须有明确处置。
 - S17 不是泛化的水平“收尾”，而是用干净环境完成安装到首次生产发布的具体端到端旅程。
+- S10 将 OAuth scope、API Token capability 与凭据存储边界分离：OAuth 强制本地生成 S256 PKCE/state；Token capability 由 Cloudflare adapter 映射；凭据仅在 Keychain，binding 只保存状态、方式与已选账号。
 
 ### Verification evidence
 
@@ -809,12 +812,14 @@ flowchart LR
 - S06 已完成实现、逐行为 TDD、独立安全 subagent 多轮攻击审查与 17 files / 204 tests 全量回归；本地图片、宿主 WebP 解码、HTML/SVG、安全路径/预算和 SSRF-safe 手动外链检查均已验证，最终审查为 `0 P0 / 0 P1 / 0 P2`。
 - S07 自动实现、TDD、浏览器明暗/响应式检查与独立 subagent 五轮 review 已完成；18 files / 215 tests 和全部工程门禁通过，最终审查为 `0 P0 / 0 P1 / 0 P2`。Slice 仅等待用户对三张默认站点截图给出 HITL 视觉结论。
 - S08 自动实现、逐行为 TDD 与独立 subagent 多轮 review 已完成；public-only 搜索/图谱、public canonical/sitemap、unlisted noindex、private 负向产物、搜索/图谱开关、JSON XSS 边界、XML MIME 和 sitemap 物化冲突均已验证。最终为 19 files / 223 tests，工程门禁与生产依赖 audit 均通过，review 结论 `0 P0 / 0 P1 / 0 P2`。
+- S10 自动实现、逐行为 TDD 与独立 subagent 多轮安全 review 已完成；OAuth S256 PKCE 与一次性 state、generic Pages capabilities、Keychain-only 凭据、账号选择、双记录补偿/串行化、跨重启账号错配预检和过期/脱敏边界均已验证。最终为 21 files / 245 tests，工程门禁通过，review 结论 `0 P0 / 0 P1 / 0 P2`；真实 Cloudflare 授权仍待 HITL。
 
 ### Open questions / risks
 
 - S07 的默认主题已生成桌面、窄屏明暗截图并完成自动指标检查；仍需用户给出 HITL 视觉验收结论，未确认前不勾选 Slice。
 - S08 的静态全文索引随 public 正文线性增长，当前没有分片或压缩策略；由 S17 在干净 Vault 端到端旅程中验证性能门槛。
-- S10/S11/S13 需要隔离 Cloudflare 账号、OAuth 配置和测试域名，开始前应准备非生产资源。
+- S10 自动化服务边界已完成，但真实 Cloudflare OAuth Client、隔离测试账号和测试域名尚未提供；在无真实账户回调、撤销与重授权证据前，S10 保持 HITL 未完成。S11/S13 也使用同一非生产资源。
+- 当前 npm registry 镜像对 `npm audit` 返回 `NOT_IMPLEMENTED`；全量构建和测试不受影响，但在 registry 或 lockfile 环境变化后需要重跑生产依赖审计。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。
 - S04 的配置+多文章 URL 迁移已覆盖进程内失败和外部写入恢复，但跨进程崩溃仍缺耐久 journal/恢复收据，交由 S14；永久重定向的真实 HTTP 状态码与部署平台行为交由后续构建/部署 Slice 验证。
