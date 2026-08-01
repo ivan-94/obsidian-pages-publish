@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   PublicationOrchestrator,
   type CloudflarePagesDeploymentBoundary,
@@ -13,6 +13,7 @@ function snapshot(scanDigest = 'scan-1'): PublicationSnapshot {
       '/notes/release/index.html': '<article>Ready</article>',
     }),
     assets: Object.freeze({}),
+    articles: Object.freeze([]),
     output: Object.freeze({ fileCount: 2, assetCount: 0, assetBytes: 0 }),
   };
 }
@@ -283,5 +284,117 @@ describe('publication orchestrator', () => {
     });
 
     expect({ prepares, builds, uploads }).toEqual({ prepares: 2, builds: 2, uploads: 1 });
+  });
+
+  it('reports remote success with local reconciliation pending and blocks a second publish', async () => {
+    let uploads = 0;
+    const orchestrator = new PublicationOrchestrator({
+      prepare: async () => snapshot(),
+      build: async (input) => input,
+      adapter: {
+        validate: async () => undefined,
+        upload: async () => {
+          uploads += 1;
+          return { deploymentId: 'staged-1' };
+        },
+        activate: async () => ({
+          deploymentId: 'staged-1',
+          url: 'https://release.pages.dev',
+        }),
+      },
+      facts: {
+        assertReadyForPublication: async () => undefined,
+        reconcile: async () => {
+          throw new Error('disk full while writing facts');
+        },
+      },
+    });
+
+    await expect(orchestrator.publish()).rejects.toThrow(
+      'The site is online, but local publishing facts need repair before another publish can start.',
+    );
+    expect(orchestrator.getStatus()).toEqual({
+      state: 'reconciliation-required',
+      deployment: {
+        deploymentId: 'staged-1',
+        url: 'https://release.pages.dev',
+        scanDigest: 'scan-1',
+        output: { fileCount: 2, assetCount: 0, assetBytes: 0 },
+      },
+      message: 'The site is online, but local publishing facts need repair before another publish can start.',
+    });
+    await expect(orchestrator.publish()).rejects.toThrow(
+      'The site is online, but local publishing facts need repair before another publish can start.',
+    );
+    expect(uploads).toBe(1);
+  });
+
+  it('blocks a publish before remote validation when a prior reconciliation receipt is pending', async () => {
+    const validate = vi.fn(async () => undefined);
+    const orchestrator = new PublicationOrchestrator({
+      prepare: async () => snapshot(),
+      build: async (input) => input,
+      adapter: {
+        validate,
+        upload: async () => ({ deploymentId: 'not-reached' }),
+        activate: async () => ({
+          deploymentId: 'not-reached',
+          url: 'https://not-reached.pages.dev',
+        }),
+      },
+      facts: {
+        assertReadyForPublication: async () => {
+          throw new Error('pending receipt');
+        },
+        reconcile: async () => undefined,
+      },
+    });
+
+    await expect(orchestrator.publish()).rejects.toThrow(
+      'The site is online, but local publishing facts need repair before another publish can start.',
+    );
+    expect(validate).not.toHaveBeenCalled();
+    expect(orchestrator.getStatus()).toEqual({
+      state: 'reconciliation-required',
+      message: 'The site is online, but local publishing facts need repair before another publish can start.',
+    });
+  });
+
+  it('unlocks a completed recovery and permits the next publish in the same process', async () => {
+    let receiptPending = false;
+    let reconciliations = 0;
+    let uploads = 0;
+    const orchestrator = new PublicationOrchestrator({
+      prepare: async () => snapshot(),
+      build: async (input) => input,
+      adapter: {
+        validate: async () => undefined,
+        upload: async () => ({ deploymentId: `staged-${++uploads}` }),
+        activate: async ({ deploymentId }) => ({
+          deploymentId,
+          url: 'https://release.pages.dev',
+        }),
+      },
+      facts: {
+        assertReadyForPublication: async () => {
+          if (receiptPending) throw new Error('pending receipt');
+        },
+        reconcile: async () => {
+          reconciliations += 1;
+          if (reconciliations === 1) {
+            receiptPending = true;
+            throw new Error('local fact write interrupted');
+          }
+        },
+      },
+    });
+
+    await expect(orchestrator.publish()).rejects.toThrow('local publishing facts need repair');
+    receiptPending = false; // The application has just completed durable recovery.
+
+    await expect(orchestrator.refreshPublicationFacts()).resolves.toBeUndefined();
+    expect(orchestrator.getStatus()).toEqual({ state: 'idle' });
+    await expect(orchestrator.publish()).resolves.toMatchObject({ deploymentId: 'staged-2' });
+    expect(uploads).toBe(2);
   });
 });

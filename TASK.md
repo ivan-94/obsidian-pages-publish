@@ -568,30 +568,30 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 仅在远端激活成功后写 `publication.deployment`、日期和最近部署清单。
-- [ ] 构建/上传/激活失败不改变成功时间、URL、digest 或 deployment ID。
-- [ ] 删除、明确移出范围、移动或 private 的线上文章在下一次成功完整部署后下线。
-- [ ] 内容根暂时缺失继续按 Blocker 处理，不伪装成用户确认下线。
-- [ ] 远端成功/本地多文件回写失败时写持久恢复收据，进入待协调状态并阻止新发布。
-- [ ] 重启后可识别收据、验证远端 deployment ID 并幂等完成回写；完成后删除收据。
-- [ ] 最近部署清单丢失不影响完整构建正确性，只降低精细变化展示。
+- [x] 仅在远端激活成功后写 `publication.deployment`、日期和最近部署清单。
+- [x] 构建/上传/激活失败不改变成功时间、URL、digest 或 deployment ID。
+- [x] 删除、明确移出范围、移动或 private 的线上文章在下一次成功完整部署后下线。
+- [x] 内容根暂时缺失继续按 Blocker 处理，不伪装成用户确认下线。
+- [x] 远端成功/本地多文件回写失败时写持久恢复收据，进入待协调状态并阻止新发布。
+- [x] 重启后可识别收据、验证远端 deployment ID 并幂等完成回写；完成后删除收据。
+- [x] 最近部署清单丢失不影响完整构建正确性，只降低精细变化展示。
 - [ ] 清空插件本地数据、缓存和 Keychain 后，仅凭 Vault 内容与 `site.yml`，用户可重新授权、绑定原项目并构建语义等价站点。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先验证“成功写事实、失败不写事实”成对行为，再覆盖删除与协调失败。
-- [ ] TDD：用 fake 远端、可注入文件系统/时间边界模拟每个故障窗口。
-- [ ] TDD：运行恢复/重启、下线、日期时区、全量回归和类型检查。
-- [ ] Review：独立 subagent 只读审查分布式一致性窗口、收据耐久性、重复回写和数据丢失风险。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条自动可验证 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：先验证“成功写事实、失败不写事实”成对行为，再覆盖删除与协调失败。
+- [x] TDD：用 fake 远端、可注入文件系统/时间边界模拟每个故障窗口。
+- [x] TDD：运行恢复/重启、下线、日期时区、全量回归和类型检查。
+- [x] Review：独立 subagent 只读审查分布式一致性窗口、收据耐久性、重复回写和数据丢失风险。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录所有故障注入点和恢复证据：
+- [x] 记录分支/提交或 PR：`codex/s14-reconcile`（提交见当前工作树交付）。
+- [x] 记录 RED/GREEN/回归命令：RED：`npm test -- --run tests/deployment-facts.test.ts`（远端 URL / directory fsync 失败）；`npm test -- --run tests/deployment-facts.test.ts tests/current-article-panel.integration.test.ts`（逐篇 last 时间与 historical-first 语义）；GREEN：相同定向命令；回归：`npm test`（26 files / 307 tests）、`npm run lint`、`npm run build`、`git diff --check`。
+- [x] 记录 reviewer task/thread ID 与结论：`/root/review_s14`，首轮 4 P1、二轮 2 P1、末轮 1 P2 均修复；最终 `0 P0 / 0 P1 / 0 P2`。
+- [x] 记录所有故障注入点和恢复证据：多文件写失败、目录 fsync 失败、异常/篡改 receipt、错误 ID/URL/非 success 远端、重启恢复、private/移出范围/删除下线、私有后重新发布与不变内容重部署均有公共接口回归。
 
 ### S15 — 设置维护、日志与脱敏诊断
 
@@ -794,6 +794,8 @@ flowchart LR
 - [`tests/publish-center.test.ts`](./tests/publish-center.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts) 与 [`tests/content-scan.integration.test.ts`](./tests/content-scan.integration.test.ts)：S12 差异、未知基线、下线确认、快照隔离、扫描资产 digest 和应用集成回归。
 - [`src/publication/publish-orchestrator.ts`](./src/publication/publish-orchestrator.ts)、[`src/cloudflare/pages-deployment.ts`](./src/cloudflare/pages-deployment.ts)、[`src/application.ts`](./src/application.ts) 与 [`src/plugin/view.ts`](./src/plugin/view.ts)：S13 单一后台发布事务、四阶段状态、Cloudflare Pages Direct Upload 适配器、冻结快照交接和关闭 View 后的持续可观察性。
 - [`tests/publication-orchestrator.test.ts`](./tests/publication-orchestrator.test.ts)、[`tests/cloudflare-pages-deployment.test.ts`](./tests/cloudflare-pages-deployment.test.ts) 与 [`tests/application.integration.test.ts`](./tests/application.integration.test.ts)：S13 四阶段 tracer、失败/并发/重试、Pages hash/分批/部署轮询协议、browser bundle runtime 向量及应用层回归。
+- [`src/publication/deployment-facts.ts`](./src/publication/deployment-facts.ts)、[`src/publication/article-metadata.ts`](./src/publication/article-metadata.ts)、[`src/publication/publish-center.ts`](./src/publication/publish-center.ts)、[`src/core/preview.ts`](./src/core/preview.ts)、[`src/publication/publish-orchestrator.ts`](./src/publication/publish-orchestrator.ts)、[`src/application.ts`](./src/application.ts) 与 [`src/plugin/view.ts`](./src/plugin/view.ts)：S14 非机密部署清单、耐久恢复收据、文章事实投影/下线、历史日期、待协调状态、重启恢复与发布中心基线。
+- [`tests/deployment-facts.test.ts`](./tests/deployment-facts.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts)、[`tests/article-metadata.integration.test.ts`](./tests/article-metadata.integration.test.ts)、[`tests/current-article-panel.integration.test.ts`](./tests/current-article-panel.integration.test.ts) 与 [`tests/publication-orchestrator.test.ts`](./tests/publication-orchestrator.test.ts)：S14 激活后事实、回写失败/重放、远端 identity、目录 fsync、private/移出范围/删除下线、first/last 时间、协调锁与历史事实 UI 回归。
 - [Cloudflare Pages Direct Upload](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)、[Create Deployment API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/create/)、[Wrangler asset hash source](https://github.com/cloudflare/workers-sdk/blob/main/packages/deploy-helpers/src/deploy/helpers/hash.ts) 与 [Wrangler Pages upload source](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/pages/upload.ts)：S13 Direct Upload 次序、manifest 创建、BLAKE3 asset key 与 batch 限制的外部原始依据。
 
 ### Key decisions
@@ -809,6 +811,7 @@ flowchart LR
 - S11 将建站拆成“可自由编辑的本地草稿”和“最终确认的一次性事务”：只读连接/项目查询与草稿扫描可提前发生，创建/绑定、域名变更和正式 `site.yml` 写入只能在确认后发生。相同冻结计划可合并并发请求；不同计划会拒绝，避免把 A 的成功误报为 B。
 - S09 对同类 prepare 合并，对显式 repair 则在活跃 prepare 后排队，确保不会并发写入环境缓存，也不会吞掉用户要求的强制更新。
 - S13 将远端发布限定为一个不可取消的四阶段事务：验证/准备、完整构建与稳定性检查、上传候选部署、以相同 deployment ID 的 `deploy:success` 确认激活；只有最后一步成功才形成部署 receipt。Pages 资源 key 与 Wrangler 对齐为 `BLAKE3(base64(bytes) + extension)` 前 32 位十六进制字符，使用可在 Obsidian browser bundle 执行的纯 JS 实现；单个上传 batch 限为 40 MiB 或 2,000 文件。
+- S14 把远端成功后的本地回写当作可重放事务：在首个 Frontmatter 写入前 durable receipt，恢复只接受同一 deployment ID、URL 与 `success` 状态；每篇文章的首次/最近成功时间决定与 receipt 一起保存，不因整站无变化重部署推进日期；成功下线移除在线事实但保留首次发布日期。
 
 ### Verification evidence
 
@@ -829,6 +832,7 @@ flowchart LR
 - S11 自动编排、草稿 UI 和组合边界已完成；四步向导、无副作用草稿扫描、已授权账号/已有兼容项目选择、create/bind、custom-domain 计划、并发计划隔离、失败后复用和应用层进入发布中心均有回归。最终为 23 files / 267 tests，工程门禁通过；`/root/review_s11` 最终 `0 P0 / 0 P1 / 2 P2`，其中草稿摘要 P2 已修复，域名结果持久呈现移交 S15。
 - S09 环境管理基础与并发安全已验证：系统 Node/已验证缓存复用、下载 hash/签名失败、离线错误、缓存回退、同类 prepare 合并、repair 排队均有测试。当前 23 files / 270 tests，工程门禁通过；reviewer `/root/review_s09_final` 的 1 个 P1 与 1 个测试时序 P2 均已按 RED → GREEN 修复。
 - S13 自动编排与 Pages Direct Upload 协议已完成：四阶段状态、失败不写成功事实、状态/receipt 不可变、View 关闭后仍可观察、并发合并、失败后新快照、Wrangler BLAKE3 key、40 MiB/2,000 文件 batch、直接上传失败窗口和 browser bundle runtime 均有回归。最终为 25 files / 288 tests，工程门禁通过；`/root/review_s13` 最终 `0 P0 / 0 P1 / 1 P2`。
+- S14 自动实现已完成：成功后事实/精细 baseline、private/移出范围/删除下线、耐久 receipt、重启验真重放、逐篇 first/last 时间与协调 UI 均有回归；`/root/review_s14` 经三轮复审最终 `0 P0 / 0 P1 / 0 P2`。最终门禁为 26 files / 307 tests、lint、typecheck/build 与 diff-check 全通过。Slice 总复选框仅保留等待 S10/S13 的真实 host 接线，使“清空所有本地数据后重新授权/绑定原项目”的端到端 AC 可在真实 Cloudflare 环境验证。
 
 ### Open questions / risks
 
@@ -839,6 +843,7 @@ flowchart LR
 - S11 仍等待 S10 的实际 OAuth/API host adapter、Keychain 配置和隔离 Cloudflare 测试资源；主插件在未注入这些组合边界时会安全禁用最终建站。自定义域名 pending/active/failed 的首次结果当前以 Notice 显示，S15 应持久化并提供可回看/刷新状态。
 - S09 不能安全地选择虚构 release host：需要确认“发布引擎随插件构建打包”或提供版本化 engine manifest、固定 HTTPS origin、签名格式和受信公钥/轮换策略；在此之前，生产环境管理器不应被主插件接线为下载器。
 - S13 的 Pages HTTP adapter 通过测试，但尚未从 `main.ts` 实例化：需要 S10 提供真实 OAuth/API Token、Keychain 和 HTTP host 接线，并由用户提供隔离 Cloudflare 项目/账号完成首次、更新及失败的 HITL。这一 P2 跨 Slice 阻塞使 S13 不能标为完成，也不允许插件伪装为可发布。
+- S14 的协调逻辑、启动状态投影与恢复接口已就绪，但实际清空本地数据后的重新授权/绑定/恢复仍依赖 S10/S13 将真实 Keychain、HTTP host、Pages adapter 和隔离 Cloudflare 账号接入主插件；在此前不勾选 S14 总 Slice。
 - 当前 npm registry 镜像对 `npm audit` 返回 `NOT_IMPLEMENTED`；全量构建和测试不受影响，但在 registry 或 lockfile 环境变化后需要重跑生产依赖审计。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。

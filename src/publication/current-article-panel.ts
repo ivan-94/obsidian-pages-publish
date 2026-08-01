@@ -199,10 +199,11 @@ function isErrno(error: unknown, code: string): boolean {
 function publicationState(
   metadata: ArticlePublicationMetadata,
 ): ArticlePublicationState {
+  const isOnline = metadata.deployment?.url !== undefined;
   if (metadata.visibility.value === 'private') {
-    return metadata.deployment ? 'pending-takedown' : 'private';
+    return isOnline ? 'pending-takedown' : 'private';
   }
-  return metadata.deployment ? 'deployed' : 'pending-first-publish';
+  return isOnline ? 'deployed' : 'pending-first-publish';
 }
 
 function pathIsInside(sourcePath: string, rootPath: string): boolean {

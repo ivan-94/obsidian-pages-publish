@@ -83,6 +83,10 @@ export interface PublicationSnapshot {
   scanDigest: string;
   files: Readonly<Record<string, string>>;
   assets: Readonly<Record<string, PublicationSnapshotAsset>>;
+  /** The frozen article manifest required to persist the successful baseline. */
+  articles: readonly PublicationSnapshotArticle[];
+  /** Frozen site timezone for first/last publication fact timestamps. */
+  timeZone?: string;
   output: {
     fileCount: number;
     assetCount: number;
@@ -93,6 +97,16 @@ export interface PublicationSnapshot {
 export interface PublicationSnapshotAsset {
   contentBase64: string;
   contentType: string;
+}
+
+export interface PublicationSnapshotArticle {
+  sourcePath: string;
+  title: string;
+  url?: string;
+  visibility: PublishVisibility;
+  sourceDigest: string;
+  firstPublishedAt?: string;
+  lastPublishedAt?: string;
 }
 
 export function createPublishCenterState(input: {
@@ -180,6 +194,20 @@ export function createPublicationSnapshot(
     scanDigest: scan.digest,
     files,
     assets,
+    articles: Object.freeze(preview.articles.map((article) => Object.freeze({
+      sourcePath: article.sourcePath,
+      title: article.title,
+      ...(article.url === undefined ? {} : { url: article.url }),
+      visibility: article.visibility,
+      sourceDigest: article.sourceDigest,
+      ...(article.firstPublishedAt === undefined
+        ? {}
+        : { firstPublishedAt: article.firstPublishedAt }),
+      ...(article.lastPublishedAt === undefined
+        ? {}
+        : { lastPublishedAt: article.lastPublishedAt }),
+    }))),
+    ...(preview.timeZone === undefined ? {} : { timeZone: preview.timeZone }),
     output,
   });
 }

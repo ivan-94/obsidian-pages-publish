@@ -60,6 +60,10 @@ import {
   type PublicationDeployment,
   type PublicationRunStatus,
 } from './publication/publish-orchestrator';
+import {
+  DeploymentFactsCoordinator,
+  type ActivatedDeploymentInspector,
+} from './publication/deployment-facts';
 import { collectDirectoryRouteSources } from './routing/directory-route-sources';
 import {
   normalizeRouteUrlPath,
@@ -136,6 +140,7 @@ export class PagesPublishApplication {
   private readonly publisher:
     | PublicationOrchestrator<PublicationPreparation>
     | undefined;
+  private readonly deploymentFacts: DeploymentFactsCoordinator | undefined;
   private preparedPublishSnapshot: PublicationSnapshot | undefined;
 
   constructor(
@@ -148,10 +153,12 @@ export class PagesPublishApplication {
       setup?: SiteSetupService;
       setupConnection?: InitialSetupConnectionBoundary;
       deploymentAdapter?: CloudflarePagesDeploymentBoundary;
+      deploymentFacts?: DeploymentFactsCoordinator;
     } = {},
   ) {
     this.setup = options.setup;
     this.setupConnection = options.setupConnection;
+    this.deploymentFacts = options.deploymentFacts;
     this.scanCoordinator = new ContentScanCoordinator(
       options.scan ??
         (async ({ signal }) =>
@@ -163,6 +170,7 @@ export class PagesPublishApplication {
         prepare: () => this.preparePublication(),
         build: (preparation) => this.buildPublication(preparation),
         adapter: options.deploymentAdapter,
+        ...(this.deploymentFacts === undefined ? {} : { facts: this.deploymentFacts }),
       });
     }
   }
@@ -218,7 +226,7 @@ export class PagesPublishApplication {
           sourceDigest: candidate.sourceDigest,
           availability: 'unavailable' as const,
         })),
-        baseline: options.baseline ?? { status: 'first-publish' },
+        baseline: options.baseline ?? await this.defaultPublishBaseline(),
         output: {
           status: 'unknown',
           fileCount: 0,
@@ -232,11 +240,7 @@ export class PagesPublishApplication {
       siteName: prepared.preview.siteName,
       scan: prepared.scan.value,
       articles: prepared.preview.articles,
-      baseline: options.baseline ?? (
-        prepared.preview.articles.some((article) => article.onlineUrl)
-          ? { status: 'missing' }
-          : { status: 'first-publish' }
-      ),
+      baseline: options.baseline ?? await this.defaultPublishBaseline(prepared.preview),
       output: previewOutput(prepared.preview),
     });
   }
@@ -269,6 +273,19 @@ export class PagesPublishApplication {
     listener: (status: PublicationRunStatus) => void,
   ): () => void {
     return this.requirePublisher().subscribe(listener);
+  }
+
+  async recoverPublicationFacts(
+    inspector: ActivatedDeploymentInspector,
+  ): Promise<void> {
+    if (!this.deploymentFacts) throw new PublicationUnavailableError();
+    await this.deploymentFacts.recover(inspector);
+    await this.publisher?.refreshPublicationFacts();
+  }
+
+  /** Refreshes durable publication recovery state when the host starts. */
+  async hydratePublicationFacts(): Promise<void> {
+    await this.publisher?.refreshPublicationFacts();
   }
 
   private async prepareStablePreview(
@@ -542,6 +559,25 @@ export class PagesPublishApplication {
   private requirePublisher(): PublicationOrchestrator<PublicationPreparation> {
     if (!this.publisher) throw new PublicationUnavailableError();
     return this.publisher;
+  }
+
+  private async defaultPublishBaseline(
+    preview?: LocalPreview,
+  ): Promise<PublishBaseline> {
+    if (this.deploymentFacts) {
+      const baseline = await this.deploymentFacts.getBaseline();
+      if (
+        baseline.status === 'missing' &&
+        preview !== undefined &&
+        !preview.articles.some((article) => article.onlineUrl)
+      ) {
+        return { status: 'first-publish' };
+      }
+      return baseline;
+    }
+    return preview?.articles.some((article) => article.onlineUrl)
+      ? { status: 'missing' }
+      : { status: 'first-publish' };
   }
 }
 

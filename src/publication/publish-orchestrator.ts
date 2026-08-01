@@ -26,6 +26,16 @@ export interface PublicationDeployment {
   output: PublicationSnapshot['output'];
 }
 
+export interface PublicationFactsBoundary {
+  /** Rejects a new remote publication while an earlier local reconciliation is pending. */
+  assertReadyForPublication(): Promise<void>;
+  /** Persists post-activation local facts and the complete deployment baseline. */
+  reconcile(
+    deployment: PublicationDeployment,
+    snapshot: PublicationSnapshot,
+  ): Promise<unknown>;
+}
+
 export type PublicationRunStatus =
   | { state: 'idle' }
   | { state: 'running'; stage: PublicationStage }
@@ -37,6 +47,11 @@ export type PublicationRunStatus =
   | {
     state: 'failed';
     stage: PublicationStage;
+    message: string;
+  }
+  | {
+    state: 'reconciliation-required';
+    deployment?: PublicationDeployment;
     message: string;
   };
 
@@ -52,12 +67,21 @@ class PublicationOrchestrationError extends Error {
   }
 }
 
+class PublicationReconciliationPendingError extends Error {
+  readonly name = 'PublicationReconciliationPendingError';
+
+  constructor() {
+    super('The site is online, but local publishing facts need repair before another publish can start.');
+  }
+}
+
 export interface PublicationOrchestratorDependencies<TPreparation = PublicationSnapshot> {
   /** Revalidates current input before an immutable output snapshot is built. */
   prepare(): Promise<TPreparation>;
   /** Builds and checks that snapshot before any remote mutation starts. */
   build(preparation: TPreparation): Promise<PublicationSnapshot>;
   adapter: CloudflarePagesDeploymentBoundary;
+  facts?: PublicationFactsBoundary;
 }
 
 /**
@@ -88,7 +112,29 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Re-checks a durable recovery receipt after application startup or a
+   * successful recovery action. A cleared receipt deliberately returns the
+   * in-memory publisher to idle so the next user action can begin a publish.
+   */
+  async refreshPublicationFacts(): Promise<void> {
+    if (!this.dependencies.facts) return;
+    try {
+      await this.dependencies.facts.assertReadyForPublication();
+    } catch {
+      const pending = new PublicationReconciliationPendingError();
+      this.setStatus({ state: 'reconciliation-required', message: pending.message });
+      throw pending;
+    }
+    if (this.status.state === 'reconciliation-required') {
+      this.setStatus({ state: 'idle' });
+    }
+  }
+
   publish(): Promise<PublicationDeployment> {
+    if (this.status.state === 'reconciliation-required') {
+      return Promise.reject(new PublicationReconciliationPendingError());
+    }
     if (this.activePublish) return this.activePublish;
     const publish = this.publishExclusive();
     this.activePublish = publish;
@@ -102,6 +148,15 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
     let stage: PublicationStage = 'prepare';
     try {
       this.setStatus({ state: 'running', stage });
+      if (this.dependencies.facts) {
+        try {
+          await this.dependencies.facts.assertReadyForPublication();
+        } catch {
+          const pending = new PublicationReconciliationPendingError();
+          this.setStatus({ state: 'reconciliation-required', message: pending.message });
+          throw pending;
+        }
+      }
       await this.dependencies.adapter.validate();
       const snapshot = await this.dependencies.prepare();
 
@@ -135,9 +190,21 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
         output: Object.freeze({ ...built.output }),
       });
       this.lastDeployment = deployment;
+      try {
+        await this.dependencies.facts?.reconcile(deployment, built);
+      } catch {
+        const pending = new PublicationReconciliationPendingError();
+        this.setStatus({
+          state: 'reconciliation-required',
+          deployment,
+          message: pending.message,
+        });
+        throw pending;
+      }
       this.setStatus({ state: 'succeeded', stage: 'activate', deployment });
       return deployment;
     } catch (error) {
+      if (error instanceof PublicationReconciliationPendingError) throw error;
       const failure = error instanceof PublicationOrchestrationError
         ? error
         : new PublicationOrchestrationError(stage, safeFailureMessage(stage));
@@ -160,6 +227,19 @@ function copyStatus(status: PublicationRunStatus): PublicationRunStatus {
         ...status.deployment,
         output: { ...status.deployment.output },
       },
+    };
+  }
+  if (status.state === 'reconciliation-required') {
+    return {
+      ...status,
+      ...(status.deployment === undefined
+        ? {}
+        : {
+            deployment: {
+              ...status.deployment,
+              output: { ...status.deployment.output },
+            },
+          }),
     };
   }
   return { ...status };

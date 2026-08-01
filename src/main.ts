@@ -34,6 +34,10 @@ export default class PagesPublishPlugin extends Plugin {
         },
       },
     );
+    // The application currently has no host-provided Pages adapter until its
+    // connection boundary is configured. Calling this now keeps startup
+    // recovery wired for that boundary without exposing an unhandled promise.
+    void application.hydratePublicationFacts().catch(() => undefined);
     const settingTab = new PagesPublishSettingTab(
       this,
       adapter.getBasePath(),

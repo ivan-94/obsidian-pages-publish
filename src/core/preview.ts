@@ -55,10 +55,14 @@ export interface PreviewArticle {
   onlineUrl?: string;
   visibility: PublicationVisibility;
   sourceDigest: string;
+  /** Historical system facts retained even after a successful takedown. */
+  firstPublishedAt?: string;
+  lastPublishedAt?: string;
 }
 
 export interface LocalPreview {
   siteName: string;
+  timeZone?: string;
   pages: PreviewPage[];
   articles: PreviewArticle[];
   files: Record<string, string>;
@@ -324,19 +328,26 @@ export async function prepareLocalPreviewFromDirectory(
         sourcePath: snapshot.sourcePath,
         title: snapshot.metadata.title.value,
         visibility: snapshot.metadata.visibility.value,
-        sourceDigest: snapshot.revision,
+        sourceDigest: snapshot.contentDigest ?? snapshot.revision,
         ...(route?.url ? { url: route.url } : {}),
         ...(snapshot.metadata.deployment?.url
           ? { onlineUrl: snapshot.metadata.deployment.url }
           : route?.onlineUrl
             ? { onlineUrl: route.onlineUrl }
             : {}),
+        ...(snapshot.metadata.deployment?.firstPublishedAt === undefined
+          ? {}
+          : { firstPublishedAt: snapshot.metadata.deployment.firstPublishedAt }),
+        ...(snapshot.metadata.deployment?.lastPublishedAt === undefined
+          ? {}
+          : { lastPublishedAt: snapshot.metadata.deployment.lastPublishedAt }),
       };
     })
     .sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
 
   return {
     siteName: config.site.name,
+    ...(config.site.timezone === undefined ? {} : { timeZone: config.site.timezone }),
     pages,
     articles,
     files,
@@ -542,12 +553,18 @@ export async function prepareArticlePreviewFromDirectory(
         title: metadata.title.value,
         url,
         visibility: metadata.visibility.value,
-        sourceDigest: snapshot.revision,
+        sourceDigest: snapshot.contentDigest ?? snapshot.revision,
         ...(metadata.deployment?.url
           ? { onlineUrl: metadata.deployment.url }
           : plannedArticle.onlineUrl
             ? { onlineUrl: plannedArticle.onlineUrl }
           : {}),
+        ...(metadata.deployment?.firstPublishedAt === undefined
+          ? {}
+          : { firstPublishedAt: metadata.deployment.firstPublishedAt }),
+        ...(metadata.deployment?.lastPublishedAt === undefined
+          ? {}
+          : { lastPublishedAt: metadata.deployment.lastPublishedAt }),
       },
     ],
     articlePath: url,

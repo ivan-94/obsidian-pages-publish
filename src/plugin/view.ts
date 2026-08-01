@@ -236,7 +236,8 @@ export class PagesPublishView extends ItemView {
       .setDisabled(
         !center.canPublish ||
           publication.state === 'unavailable' ||
-          publication.state === 'running',
+          publication.state === 'running' ||
+          publication.state === 'reconciliation-required',
       )
       .onClick(async () => {
         try {
@@ -256,7 +257,7 @@ export class PagesPublishView extends ItemView {
   ): void {
     if (status.state === 'idle' || status.state === 'unavailable') return;
     const element = container.createEl('p', {
-      cls: status.state === 'failed'
+      cls: status.state === 'failed' || status.state === 'reconciliation-required'
         ? 'pages-publish-view__error'
         : 'pages-publish-view__summary',
       text: publicationStatusText(status),
@@ -701,6 +702,7 @@ function publishButtonLabel(
   if (!canPublish) return '发布站点（不可用）';
   if (status.state === 'unavailable') return '发布站点（需要连接）';
   if (status.state === 'running') return '发布中';
+  if (status.state === 'reconciliation-required') return '本地同步待修复';
   if (status.state === 'failed') return '重试发布';
   return '发布站点';
 }
@@ -711,6 +713,9 @@ function publicationStatusText(status: Exclude<PublicationServiceStatus, { state
   }
   if (status.state === 'succeeded') {
     return `发布成功：${status.deployment.output.fileCount} 个文件已激活。`;
+  }
+  if (status.state === 'reconciliation-required') {
+    return `线上发布成功，但本地事实待协调：${status.message}`;
   }
   return `发布失败：${status.message}`;
 }

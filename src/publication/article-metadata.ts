@@ -80,10 +80,84 @@ export interface PublicationDeploymentFacts {
   deploymentId?: string;
 }
 
+/**
+ * Writes the system-owned deployment facts while preserving user-owned
+ * publication intent and all unrelated Frontmatter fields.
+ */
+export async function writeArticleDeploymentFactsToDirectory(
+  vaultRoot: string,
+  sourcePath: string,
+  facts: PublicationDeploymentFacts,
+): Promise<ArticlePublicationMetadata> {
+  const relativePath = safeRelativeArticlePath(vaultRoot, sourcePath);
+  const targetPath = join(vaultRoot, relativePath);
+  await assertSafeArticleFile(vaultRoot, targetPath);
+  const currentSource = await readFile(targetPath, 'utf8');
+  const current = readArticleMetadataFromSource(relativePath, currentSource);
+  const deployment = compactDeployment({
+    ...current.deployment,
+    ...facts,
+    // First publication is immutable once established; later successful
+    // deployments may update only the most recent publication time.
+    firstPublishedAt:
+      current.deployment?.firstPublishedAt ?? facts.firstPublishedAt,
+  });
+  if (!deployment) {
+    throw new ArticleMetadataValidationError([
+      invalidPublicationField(
+        'publication.deployment',
+        'Deployment facts must contain at least one value.',
+      ),
+    ]);
+  }
+  const sourcePreview = applyDeploymentFacts(currentSource, deployment);
+  const next = readArticleMetadataFromSource(relativePath, sourcePreview);
+  await replaceArticleSourceAtomically(
+    vaultRoot,
+    relativePath,
+    digest(currentSource),
+    sourcePreview,
+  );
+  return next;
+}
+
+/** Removes only the system-owned deployment mapping after a successful takedown. */
+export async function clearArticleDeploymentFactsToDirectory(
+  vaultRoot: string,
+  sourcePath: string,
+  retainedFirstPublishedAt?: string,
+): Promise<ArticlePublicationMetadata> {
+  const relativePath = safeRelativeArticlePath(vaultRoot, sourcePath);
+  const targetPath = join(vaultRoot, relativePath);
+  await assertSafeArticleFile(vaultRoot, targetPath);
+  const currentSource = await readFile(targetPath, 'utf8');
+  const current = readArticleMetadataFromSource(relativePath, currentSource);
+  if (current.deployment === undefined) return current;
+  // A successful takedown removes mutable online facts, but the historical
+  // first-success date remains part of the article's system record. This lets
+  // a later re-publication retain its original publication date.
+  const firstPublishedAt = retainedFirstPublishedAt ?? current.deployment.firstPublishedAt;
+  const sourcePreview = firstPublishedAt === undefined
+    ? removeDeploymentFacts(currentSource)
+    : applyDeploymentFacts(currentSource, {
+      firstPublishedAt,
+    });
+  const next = readArticleMetadataFromSource(relativePath, sourcePreview);
+  await replaceArticleSourceAtomically(
+    vaultRoot,
+    relativePath,
+    digest(currentSource),
+    sourcePreview,
+  );
+  return next;
+}
+
 export interface ArticleSourceSnapshot {
   sourcePath: string;
   source: string;
   revision: string;
+  /** Stable source identity that deliberately excludes system deployment facts. */
+  contentDigest?: string;
   body: string;
   bodyStartLine: number;
   metadata: ArticlePublicationMetadata;
@@ -190,6 +264,7 @@ export function readArticleSnapshotFromSource(
     sourcePath,
     source,
     revision: digest(source),
+    contentDigest: digestPublishedContent(document.frontmatter, document.body),
     body: document.body,
     bodyStartLine:
       source.slice(0, document.bodyStart).split('\n').length,
@@ -452,7 +527,7 @@ function requiredTakedownConfirmation(
   next: ArticlePublicationMetadata,
 ): { kind: 'takedown'; onlineUrl?: string } | undefined {
   if (
-    current.deployment === undefined ||
+    current.deployment?.url === undefined ||
     current.visibility.value === 'private' ||
     next.visibility.value !== 'private'
   ) {
@@ -645,6 +720,129 @@ function applyIntentPatch(source: string, patch: ArticleIntentPatch): string {
   return `${bom}---${lineEnding}${yaml}${lineEnding}---${lineEnding}${body}`;
 }
 
+function applyDeploymentFacts(
+  source: string,
+  facts: PublicationDeploymentFacts,
+): string {
+  const boundary = findFrontmatterBoundary(source);
+  const document = parseDocument(
+    boundary ? source.slice(boundary.yamlStart, boundary.closingStart) : '',
+  );
+  document.setIn(['publication', 'deployment'], {
+    ...(facts.url === undefined ? {} : { url: facts.url }),
+    ...(facts.firstPublishedAt === undefined
+      ? {}
+      : { first_published_at: facts.firstPublishedAt }),
+    ...(facts.lastPublishedAt === undefined
+      ? {}
+      : { last_published_at: facts.lastPublishedAt }),
+    ...(facts.sourceDigest === undefined
+      ? {}
+      : { source_digest: facts.sourceDigest }),
+    ...(facts.deploymentId === undefined
+      ? {}
+      : { deployment_id: facts.deploymentId }),
+  });
+  const bom = source.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const lineEnding = boundary?.lineEnding ?? '\n';
+  const body = boundary
+    ? source.slice(boundary.bodyStart)
+    : source.slice(bom.length);
+  const yaml = document
+    .toString()
+    .trimEnd()
+    .replaceAll('\n', lineEnding);
+  return `${bom}---${lineEnding}${yaml}${lineEnding}---${lineEnding}${body}`;
+}
+
+function removeDeploymentFacts(source: string): string {
+  const boundary = findFrontmatterBoundary(source);
+  if (!boundary) return source;
+  const document = parseDocument(source.slice(boundary.yamlStart, boundary.closingStart));
+  document.deleteIn(['publication', 'deployment']);
+  const bom = source.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const lineEnding = boundary.lineEnding;
+  const body = source.slice(boundary.bodyStart);
+  const yaml = document
+    .toString()
+    .trimEnd()
+    .replaceAll('\n', lineEnding);
+  return `${bom}---${lineEnding}${yaml}${lineEnding}---${lineEnding}${body}`;
+}
+
+async function replaceArticleSourceAtomically(
+  vaultRoot: string,
+  sourcePath: string,
+  expectedRevision: string,
+  sourcePreview: string,
+): Promise<void> {
+  const relativePath = safeRelativeArticlePath(vaultRoot, sourcePath);
+  const targetPath = join(vaultRoot, relativePath);
+  await assertSafeArticleFile(vaultRoot, targetPath);
+  const temporaryPath = `${targetPath}.tmp-${randomUUID()}`;
+  const displacedPath = `${targetPath}.previous-${randomUUID()}`;
+  let temporaryCreated = false;
+  let displacedCreated = false;
+  try {
+    const currentMode = (await stat(targetPath)).mode;
+    const handle = await open(temporaryPath, 'wx', currentMode & 0o777);
+    temporaryCreated = true;
+    try {
+      await handle.writeFile(sourcePreview, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await chmod(temporaryPath, currentMode & 0o777);
+    await assertSafeArticleFile(vaultRoot, targetPath);
+    await rename(targetPath, displacedPath);
+    displacedCreated = true;
+    await assertSafeArticleFile(vaultRoot, displacedPath);
+    const claimedSource = await readFile(displacedPath, 'utf8');
+    const claimedRevision = digest(claimedSource);
+    if (claimedRevision !== expectedRevision) {
+      await rename(displacedPath, targetPath);
+      displacedCreated = false;
+      throw new ArticleSourceRestoreConflictError(
+        expectedRevision,
+        claimedRevision,
+        claimedSource,
+      );
+    }
+    try {
+      await assertSafeArticleFile(vaultRoot, displacedPath);
+      await link(temporaryPath, targetPath);
+    } catch (error) {
+      if (!isErrno(error, 'EEXIST')) throw error;
+      const externalSource = await readFile(targetPath, 'utf8');
+      throw new ArticleSourceRestoreConflictError(
+        expectedRevision,
+        digest(externalSource),
+        externalSource,
+      );
+    }
+    await unlink(displacedPath).catch(() => undefined);
+    displacedCreated = false;
+    await unlink(temporaryPath).catch(() => undefined);
+    temporaryCreated = false;
+  } catch (error) {
+    if (displacedCreated) {
+      try {
+        await lstat(targetPath);
+      } catch (targetError) {
+        if (isErrno(targetError, 'ENOENT')) {
+          await rename(displacedPath, targetPath);
+          displacedCreated = false;
+        }
+      }
+    }
+    throw error;
+  } finally {
+    if (temporaryCreated) await unlink(temporaryPath).catch(() => undefined);
+    if (displacedCreated) await unlink(displacedPath).catch(() => undefined);
+  }
+}
+
 function safeRelativeArticlePath(vaultRoot: string, sourcePath: string): string {
   const absolutePath = resolve(vaultRoot, sourcePath);
   const relativePath = relative(resolve(vaultRoot), absolutePath);
@@ -695,6 +893,30 @@ async function assertSafeArticleFile(
 
 function digest(source: string): string {
   return createHash('sha256').update(source).digest('hex');
+}
+
+function digestPublishedContent(
+  frontmatter: Record<string, unknown>,
+  body: string,
+): string {
+  const publishedFrontmatter = structuredClone(frontmatter);
+  const publication = recordValue(publishedFrontmatter.publication);
+  if (publication) delete publication.deployment;
+  return createHash('sha256')
+    .update(stableJson({ frontmatter: publishedFrontmatter, body }))
+    .digest('hex');
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  const record = recordValue(value);
+  if (record) {
+    return `{${Object.keys(record)
+      .sort((left, right) => left.localeCompare(right))
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
 }
 
 function isErrno(error: unknown, code: string): boolean {

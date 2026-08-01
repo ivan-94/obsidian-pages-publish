@@ -413,6 +413,29 @@ describe('article publication metadata', () => {
     });
   });
 
+  it('does not request another takedown confirmation for an offline article retaining only its first publication date', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-article-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, 'notes', 'historical.md'),
+      '---\npublication:\n  visibility: public\n  deployment:\n    first_published_at: 2026-08-01T10:20:30+08:00\n---\n# Historical\n',
+      'utf8',
+    );
+
+    const edit = await prepareArticleIntentEditFromDirectory(
+      vault,
+      'notes/historical.md',
+      { visibility: 'private' },
+    );
+
+    expect(edit.confirmation).toBeUndefined();
+    await expect(commitArticleIntentEditToDirectory(vault, edit)).resolves.toMatchObject({
+      visibility: { value: 'private' },
+      deployment: { firstPublishedAt: '2026-08-01T10:20:30+08:00' },
+    });
+  });
+
   it('previews legacy publish booleans losslessly and migrates only to the new schema', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-article-'));
     vaults.push(vault);
@@ -580,7 +603,7 @@ describe('article publication metadata', () => {
     await mkdir(join(vault, 'notes'), { recursive: true });
     const articlePath = join(vault, 'notes', 'tampered-confirmation.md');
     const source =
-      '---\npublication:\n  visibility: public\n  deployment:\n    deployment_id: online\n---\n# Online\n';
+      '---\npublication:\n  visibility: public\n  deployment:\n    url: /online/\n    deployment_id: online\n---\n# Online\n';
     await writeFile(articlePath, source, 'utf8');
     const edit = await prepareArticleIntentEditFromDirectory(
       vault,

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PagesPublishApplication } from '../src/application';
+import { DeploymentFactsCoordinator, FileSystemDeploymentStateStore } from '../src/publication/deployment-facts';
 import type { SiteScanResult } from '../src/content/site-scanner';
 import type { SiteConfigV1 } from '../src/config/site-config';
 import {
@@ -408,6 +409,135 @@ describe('Pages Publish application', () => {
       stage: 'activate',
     });
     await application.shutdown();
+  });
+
+  it('records the activated deployment as the next complete baseline so an explicit private change becomes a takedown', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    const stateDirectory = await mkdtemp(join(tmpdir(), 'pages-publish-state-'));
+    vaults.push(vault, stateDirectory);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Deploy Facts Wiki\n  home_layout: sections\n  timezone: Asia/Shanghai\ncontent_roots:\n  - path: notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: deploy-facts-wiki\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'release.md'),
+      '---\npublication:\n  visibility: public\n---\n# First version\n',
+      'utf8',
+    );
+    let deploymentNumber = 0;
+    const application = new PagesPublishApplication(vault, undefined, {
+      deploymentFacts: new DeploymentFactsCoordinator({
+        vaultRoot: vault,
+        store: new FileSystemDeploymentStateStore(stateDirectory),
+        now: () => new Date('2026-08-01T02:20:30.000Z'),
+      }),
+      deploymentAdapter: {
+        validate: async () => undefined,
+        upload: async () => ({ deploymentId: `deployment-${++deploymentNumber}` }),
+        activate: async (input) => ({
+          deploymentId: input.deploymentId,
+          url: 'https://deploy-facts-wiki.pages.dev',
+        }),
+      },
+    });
+
+    await expect(application.getPublishCenter()).resolves.toMatchObject({
+      baseline: 'first-publish',
+    });
+    await application.publishSite();
+    await expect(readFile(join(vault, 'notes', 'release.md'), 'utf8')).resolves.toContain(
+      'deployment_id: deployment-1',
+    );
+    await expect(application.getPublishCenter()).resolves.toMatchObject({
+      baseline: 'available',
+      summary: { changes: 0 },
+    });
+    await application.setPublishCenterInclusion('notes/release.md', false, {
+      confirmTakedown: true,
+    });
+    const beforeTakedown = await application.getPublishCenter();
+
+    expect(beforeTakedown.baseline).toBe('available');
+    expect(beforeTakedown.articles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourcePath: 'notes/release.md',
+        change: 'takedown',
+        onlineUrl: '/notes/release/',
+      }),
+    ]));
+    await application.publishSite();
+    const sourceAfterTakedown = await readFile(join(vault, 'notes', 'release.md'), 'utf8');
+    expect(sourceAfterTakedown).toContain('first_published_at: 2026-08-01T10:20:30+08:00');
+    expect(sourceAfterTakedown).not.toContain('url: /notes/release/');
+    expect(sourceAfterTakedown).not.toContain('source_digest:');
+    expect(sourceAfterTakedown).not.toContain('last_published_at:');
+    expect(sourceAfterTakedown).not.toContain('deployment_id:');
+    await expect(application.getPublishCenter()).resolves.toMatchObject({
+      baseline: 'available',
+      summary: { changes: 0 },
+    });
+    await application.shutdown();
+  });
+
+  it('hydrates a pending recovery after restart, then unlocks publication after remote verification', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    const stateDirectory = await mkdtemp(join(tmpdir(), 'pages-publish-state-'));
+    vaults.push(vault, stateDirectory);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Recovery Wiki\n  home_layout: sections\ncontent_roots:\n  - path: notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: recovery-wiki\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'release.md'),
+      '---\npublication:\n  visibility: public\n---\n# Recoverable release\n',
+      'utf8',
+    );
+    const store = new FileSystemDeploymentStateStore(stateDirectory);
+    let allowLocalFacts = false;
+    let deploymentNumber = 0;
+    const createApplication = (): PagesPublishApplication => new PagesPublishApplication(vault, undefined, {
+      deploymentFacts: new DeploymentFactsCoordinator({
+        vaultRoot: vault,
+        store,
+        writeFacts: async (input) => {
+          if (!allowLocalFacts) throw new Error('simulated local interruption');
+          await input.defaultWrite();
+        },
+      }),
+      deploymentAdapter: {
+        validate: async () => undefined,
+        upload: async () => ({ deploymentId: `deployment-${++deploymentNumber}` }),
+        activate: async (input) => ({
+          deploymentId: input.deploymentId,
+          url: 'https://recovery-wiki.pages.dev',
+        }),
+      },
+    });
+    const first = createApplication();
+
+    await expect(first.publishSite()).rejects.toThrow('local publishing facts need repair');
+    await first.shutdown();
+    const restarted = createApplication();
+    await expect(restarted.hydratePublicationFacts()).rejects.toThrow('local publishing facts need repair');
+    expect(restarted.getPublicationStatus()).toMatchObject({ state: 'reconciliation-required' });
+
+    allowLocalFacts = true;
+    await restarted.recoverPublicationFacts({
+      inspect: async (deploymentId) => ({
+        deploymentId,
+        url: 'https://recovery-wiki.pages.dev',
+        status: 'success',
+      }),
+    });
+    expect(restarted.getPublicationStatus()).toEqual({ state: 'idle' });
+    await expect(restarted.publishSite()).resolves.toMatchObject({ deploymentId: 'deployment-2' });
+    await restarted.shutdown();
   });
 
   it('requires explicit confirmation before a publish-center checkbox schedules an online article for takedown', async () => {

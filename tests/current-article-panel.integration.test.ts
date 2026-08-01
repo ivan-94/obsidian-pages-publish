@@ -54,6 +54,25 @@ describe('current article panel state', () => {
     });
   });
 
+  it('does not mistake a retained historical first-publication date for an online deployment', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await writeFile(
+      join(vault, 'notes', 'offline.md'),
+      '---\npublication:\n  visibility: private\n  deployment:\n    first_published_at: 2026-08-01T10:20:30+08:00\n---\n# Offline\n',
+      'utf8',
+    );
+
+    await expect(resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'notes/offline.md',
+    })).resolves.toMatchObject({
+      status: 'article',
+      publicationState: 'private',
+      metadata: {
+        deployment: { firstPublishedAt: '2026-08-01T10:20:30+08:00' },
+      },
+    });
+  });
+
   it('projects no-active, non-Markdown, out-of-scope, config-error, and missing-pinned states', async () => {
     const vault = await createConfiguredVault(vaults);
     await mkdir(join(vault, 'private'), { recursive: true });
