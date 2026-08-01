@@ -59,7 +59,7 @@
 - [ ] S09 — Node/发布引擎与预览生命周期
 - [ ] S10 — Cloudflare OAuth、Token 与 Keychain
 - [ ] S11 — 首次建站、项目绑定与域名
-- [ ] S12 — 发布中心、变化审阅与不可变快照
+- [x] S12 — 发布中心、变化审阅与不可变快照
 - [ ] S13 — Cloudflare 完整构建与原子部署
 - [ ] S14 — 部署事实、下线与失败协调恢复
 - [ ] S15 — 设置维护、日志与脱敏诊断
@@ -502,30 +502,30 @@ flowchart LR
 
 #### Acceptance criteria
 
-- [ ] 发布中心展示站点身份、变化摘要、四个 Tab、文章表格、审阅抽屉和固定发布条。
-- [ ] 变化相对最近成功部署分类为新增、更新、URL/可见性变化、待下线、无变化或未知。
-- [ ] Checkbox 明确表示下一版成员；取消线上文章要求下线确认。
-- [ ] Blocker 禁用发布，Warning 允许继续；每项问题可定位到源行。
-- [ ] 最近部署清单缺失时仍可完整构建，但显示状态未知和完整输出规模。
-- [ ] 预览/发布必须等待最新扫描完成或主动重扫；过时扫描结果不能生成可提交快照。
-- [ ] 确认发布形成不可变快照；之后的 Vault 编辑保留为下一次变化。
-- [ ] 当前文章预览、整站预览和发布准备复用同一解析/路由/渲染链路。
+- [x] 发布中心展示站点身份、变化摘要、四个 Tab、文章表格、审阅抽屉和固定发布条。
+- [x] 变化相对最近成功部署分类为新增、更新、URL/可见性变化、待下线、无变化或未知。
+- [x] Checkbox 明确表示下一版成员；取消线上文章要求下线确认。
+- [x] Blocker 禁用发布，Warning 允许继续；每项问题可定位到源行。
+- [x] 最近部署清单缺失时仍可完整构建，但显示状态未知和完整输出规模。
+- [x] 预览/发布必须等待最新扫描完成或主动重扫；过时扫描结果不能生成可提交快照。
+- [x] 确认发布形成不可变快照；之后的 Vault 编辑保留为下一次变化。
+- [x] 当前文章预览、整站预览和发布准备复用同一解析/路由/渲染链路。
 
 #### TDD & review gate
 
-- [ ] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
-- [ ] TDD：先以“一项本地更新显示在发布中心并形成快照”为 tracer test。
-- [ ] TDD：逐个增加待下线、Blocker、Warning、未知状态和发布中编辑行为。
-- [ ] TDD：运行扫描/差异/快照集成、UI 状态投影、类型检查和上游回归。
-- [ ] Review：独立 subagent 只读审查 Checkbox 语义、变化基线、快照一致性和 UI 对事实/意图的区分。
-- [ ] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
+- [x] TDD：为上方每条 Acceptance criterion 按顺序记录独立 RED → GREEN；当前 GREEN 后才开始下一条，最后在全绿状态重构。
+- [x] TDD：先以“一项本地更新显示在发布中心并形成快照”为 tracer test。
+- [x] TDD：逐个增加待下线、Blocker、Warning、未知状态和发布中编辑行为。
+- [x] TDD：运行扫描/差异/快照集成、UI 状态投影、类型检查和上游回归。
+- [x] Review：独立 subagent 只读审查 Checkbox 语义、变化基线、快照一致性和 UI 对事实/意图的区分。
+- [x] Review：修复全部 P0/P1，记录 P2 处置并重跑验证。
 
 #### Slice Notes
 
-- [ ] 记录分支/提交或 PR：
-- [ ] 记录 RED/GREEN/回归命令：
-- [ ] 记录 reviewer task/thread ID 与结论：
-- [ ] 记录大 Vault/状态未知风险：
+- [x] 记录分支/提交或 PR：`codex/s12-publishing`；`e6dd813 feat: add publish center and immutable snapshots`，不创建远端 PR。
+- [x] 记录 RED/GREEN/回归命令：以“本地更新进入发布中心并生成快照”起步，RED 为缺少发布中心投影/快照 API 的应用集成测试；依次加入基线差异、未知输出、Blocker/Warning、下线确认、扫描竞态、发布中 Vault/资源编辑与不可变资产回归。GREEN 后执行 `npm test`（22 files / 256 tests）、`npm run typecheck`、`npm run lint`、`npm run build`、`git diff --check`，全部通过。
+- [x] 记录 reviewer task/thread ID 与结论：独立 reviewer `/root/review_s12` 多轮只读审查；已按 RED → GREEN 修复资产摘要遗漏、基线缺失的错误事实投影、快照可变字节、历史文章可编辑、问题定位和表格键盘可访问性。最终 `0 P0 / 0 P1 / 0 P2`。
+- [x] 记录大 Vault/状态未知风险：扫描在生成快照前重跑并比较包含已选资源内容的 digest；部署清单缺失时只显示 `unknown`，不伪造增删事实。完整远端 manifest、构建/部署阶段由 S13/S14 接入；大 Vault 的扫描/构建基准由 S17 确认。
 
 ### S13 — Cloudflare 完整构建与原子部署
 
@@ -787,6 +787,8 @@ flowchart LR
 - `/Users/ivan/workspace/ai/obsidian-pages-plugin/tests/`：S01 公开行为、并发/清理和平台边界；S02 配置/扫描/冲突/故障/生命周期；S03 Frontmatter、发布意图、面板状态、竞态/路径安全和单篇预览公开行为；S04 路由规划、Unicode/路径安全、栏目/重定向冲突、全局面板/预览、canonical 编辑、URL 迁移与协调回滚回归测试；S05 链接/嵌入可见性矩阵、隐私负向搜索、Markdown 语义、循环与深链/扇出/字符预算回归测试；S06 图片/附件矩阵、恶意格式/注入/路径/TOCTOU/预算、宿主解码取消、外链定位与 SSRF/超时回归测试；S07 页面/首页布局/排序、Markdown 词汇、安全 Mermaid、Obsidian 注释隐私边界、响应式 CSS、可访问 outline 与 404 HTTP 语义回归测试；S08 最终搜索/图谱/sitemap/canonical/noindex 输出、feature 开关、private/unlisted 负向泄漏、XML MIME 与静态文件路由冲突回归测试
 - [`src/cloudflare/connection.ts`](./src/cloudflare/connection.ts)：S10 OAuth S256 PKCE/state 事务、Pages capability 适配边界、Keychain/非敏感 binding、账号选择、串行变更、补偿恢复、过期状态与脱敏错误。
 - [`tests/cloudflare-connection.test.ts`](./tests/cloudflare-connection.test.ts)：S10 OAuth 回放、最小权限、账号选择/错配、过期、并发、Keychain/binding 回滚、恢复状态和敏感错误负向回归。
+- [`src/publication/publish-center.ts`](./src/publication/publish-center.ts)、[`src/application.ts`](./src/application.ts)、[`src/core/preview.ts`](./src/core/preview.ts)、[`src/content/site-scanner.ts`](./src/content/site-scanner.ts) 与 [`src/plugin/view.ts`](./src/plugin/view.ts)：S12 发布中心状态、同源预览、扫描一致性和 Obsidian UI 投影。
+- [`tests/publish-center.test.ts`](./tests/publish-center.test.ts)、[`tests/application.integration.test.ts`](./tests/application.integration.test.ts) 与 [`tests/content-scan.integration.test.ts`](./tests/content-scan.integration.test.ts)：S12 差异、未知基线、下线确认、快照隔离、扫描资产 digest 和应用集成回归。
 
 ### Key decisions
 
@@ -797,6 +799,7 @@ flowchart LR
 - reviewer 不修改代码；实现者处理 finding，P0/P1 必须清零，P2 必须有明确处置。
 - S17 不是泛化的水平“收尾”，而是用干净环境完成安装到首次生产发布的具体端到端旅程。
 - S10 将 OAuth scope、API Token capability 与凭据存储边界分离：OAuth 强制本地生成 S256 PKCE/state；Token capability 由 Cloudflare adapter 映射；凭据仅在 Keychain，binding 只保存状态、方式与已选账号。
+- S12 在拿到完整部署 manifest 时投影准确变化；缺失 manifest 时保持 `unknown` 而非虚构差异。确认发布将 HTML、文件列表和资源编码为冻结值，后续消费者按需得到新字节副本，Vault 的后续编辑只属于下一版。
 
 ### Verification evidence
 
@@ -813,12 +816,14 @@ flowchart LR
 - S07 自动实现、TDD、浏览器明暗/响应式检查与独立 subagent 五轮 review 已完成；18 files / 215 tests 和全部工程门禁通过，最终审查为 `0 P0 / 0 P1 / 0 P2`。Slice 仅等待用户对三张默认站点截图给出 HITL 视觉结论。
 - S08 自动实现、逐行为 TDD 与独立 subagent 多轮 review 已完成；public-only 搜索/图谱、public canonical/sitemap、unlisted noindex、private 负向产物、搜索/图谱开关、JSON XSS 边界、XML MIME 和 sitemap 物化冲突均已验证。最终为 19 files / 223 tests，工程门禁与生产依赖 audit 均通过，review 结论 `0 P0 / 0 P1 / 0 P2`。
 - S10 自动实现、逐行为 TDD 与独立 subagent 多轮安全 review 已完成；OAuth S256 PKCE 与一次性 state、generic Pages capabilities、Keychain-only 凭据、账号选择、双记录补偿/串行化、跨重启账号错配预检和过期/脱敏边界均已验证。最终为 21 files / 245 tests，工程门禁通过，review 结论 `0 P0 / 0 P1 / 0 P2`；真实 Cloudflare 授权仍待 HITL。
+- S12 自动实现、逐行为 TDD 与独立 subagent 多轮 review 已完成；发布中心四 Tab、成员选择/下线确认、可定位问题、未知基线、扫描稳定性及不可变发布快照均已验证。最终 `npm test` 为 22 files / 256 tests，且 typecheck、lint、build 与 diff-check 均通过；review 结论 `0 P0 / 0 P1 / 0 P2`。
 
 ### Open questions / risks
 
 - S07 的默认主题已生成桌面、窄屏明暗截图并完成自动指标检查；仍需用户给出 HITL 视觉验收结论，未确认前不勾选 Slice。
 - S08 的静态全文索引随 public 正文线性增长，当前没有分片或压缩策略；由 S17 在干净 Vault 端到端旅程中验证性能门槛。
 - S10 自动化服务边界已完成，但真实 Cloudflare OAuth Client、隔离测试账号和测试域名尚未提供；在无真实账户回调、撤销与重授权证据前，S10 保持 HITL 未完成。S11/S13 也使用同一非生产资源。
+- S12 不持有远端完整部署 manifest；因此对只有线上事实而本地扫描无法确认的条目保持未知。S13/S14 必须接入并持久化经过确认的成功部署 manifest，才能可靠展示远端待下线与精确变化。
 - 当前 npm registry 镜像对 `npm audit` 返回 `NOT_IMPLEMENTED`；全量构建和测试不受影响，但在 registry 或 lockfile 环境变化后需要重跑生产依赖审计。
 - S17 需要依据实现后的依赖与基准固化最低 Obsidian/Node 版本和性能门槛。
 - 全依赖 audit 当前命中 dev-only `brace-expansion` 链的 high advisory 且无可用修复；生产依赖 audit 为 0，在 S09 Node/发布引擎与供应链门禁中继续跟踪。
