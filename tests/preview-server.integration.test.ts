@@ -113,4 +113,16 @@ describe('local preview server', () => {
     expect(response.headers.get('content-type')).toBe('application/xml; charset=utf-8');
     expect(await response.text()).toBe(sitemap);
   });
+
+  it('reports its running session and clears it after a safe stop', async () => {
+    const server = new LocalPreviewServer();
+    servers.push(server);
+
+    expect(server.getStatus()).toEqual({ state: 'stopped' });
+    const session = await server.start({ '/index.html': '<h1>Preview</h1>' });
+
+    expect(server.getStatus()).toEqual({ state: 'running', url: session.url });
+    await server.stop();
+    expect(server.getStatus()).toEqual({ state: 'stopped' });
+  });
 });

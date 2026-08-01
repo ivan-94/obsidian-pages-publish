@@ -90,9 +90,14 @@ describe('Pages Publish application', () => {
     const session = await application.openPreview();
 
     expect(openedUrls).toEqual([session.url]);
+    expect(application.getPreviewStatus()).toEqual({
+      state: 'running',
+      url: session.url,
+    });
     const article = await fetch(`${session.url}notes/hello/`);
     expect(await article.text()).toContain('<h1>Hello Pages</h1>');
     await application.shutdown();
+    expect(application.getPreviewStatus()).toEqual({ state: 'stopped' });
   });
 
   it('extracts external link candidates and checks them only through the manual application action', async () => {

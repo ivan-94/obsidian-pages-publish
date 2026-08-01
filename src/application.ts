@@ -29,7 +29,11 @@ import {
   prepareLocalPreviewFromDirectory,
   type LocalPreview,
 } from './core/preview';
-import { LocalPreviewServer, type PreviewSession } from './preview/server';
+import {
+  LocalPreviewServer,
+  type PreviewServerStatus,
+  type PreviewSession,
+} from './preview/server';
 import {
   commitArticleIntentEditToDirectory,
   prepareArticleIntentEditFromDirectory,
@@ -98,6 +102,10 @@ export class PagesPublishApplication {
     const session = await this.previewServer.start(preview.files, preview.assets);
     this.openExternal(session.url);
     return session;
+  }
+
+  getPreviewStatus(): PreviewServerStatus {
+    return this.previewServer.getStatus();
   }
 
   async openArticlePreview(

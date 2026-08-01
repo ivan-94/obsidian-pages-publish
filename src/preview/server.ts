@@ -6,9 +6,20 @@ export interface PreviewSession {
   url: string;
 }
 
+export type PreviewServerStatus =
+  | { state: 'stopped' }
+  | { state: 'running'; url: string };
+
 export class LocalPreviewServer {
   private server: Server | undefined;
   private startPromise: Promise<PreviewSession> | undefined;
+  private sessionUrl: string | undefined;
+
+  getStatus(): PreviewServerStatus {
+    return this.sessionUrl
+      ? { state: 'running', url: this.sessionUrl }
+      : { state: 'stopped' };
+  }
 
   async start(
     files: Readonly<Record<string, string>>,
@@ -93,12 +104,15 @@ export class LocalPreviewServer {
 
     this.server = server;
     const address = server.address() as AddressInfo;
-    return { url: `http://127.0.0.1:${address.port}/` };
+    const url = `http://127.0.0.1:${address.port}/`;
+    this.sessionUrl = url;
+    return { url };
   }
 
   private async closeCurrentServer(): Promise<void> {
     const server = this.server;
     this.server = undefined;
+    this.sessionUrl = undefined;
     if (!server) {
       return;
     }
