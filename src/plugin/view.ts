@@ -8,12 +8,17 @@ import {
   type WorkspaceLeaf,
 } from 'obsidian';
 import type { PagesPublishApplication } from '../application';
-import type { SiteConfigV1 } from '../config/site-config';
 import type { ScanIssue } from '../content/site-scanner';
 import type {
   PublishCenterArticle,
   PublishCenterState,
 } from '../publication/publish-center';
+import type { SetupDraft } from '../setup/site-setup';
+import type {
+  SetupAccount,
+  SetupProject,
+  SetupReview,
+} from '../setup/site-setup';
 
 export const PAGES_PUBLISH_VIEW_TYPE = 'pages-publish-center';
 
@@ -22,6 +27,11 @@ type PublishCenterTab = 'changes' | 'all' | 'unpublished' | 'issues';
 export class PagesPublishView extends ItemView {
   private activeTab: PublishCenterTab = 'changes';
   private selectedSourcePath: string | undefined;
+  private setupStep = 0;
+  private setupDraft: SetupDraft | undefined;
+  private setupAccounts: SetupAccount[] | undefined;
+  private setupProjects: SetupProject[] | undefined;
+  private setupReview: SetupReview | undefined;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -54,7 +64,7 @@ export class PagesPublishView extends ItemView {
 
     const target = await this.application.getLaunchTarget();
     if (target === 'setup') {
-      this.renderLocalSetup(container);
+      await this.renderSetupWizard(container);
       return;
     }
 
@@ -289,43 +299,74 @@ export class PagesPublishView extends ItemView {
     });
   }
 
-  private renderLocalSetup(container: HTMLElement): void {
-    const vaultName = this.app.vault.getName();
-    const draft: SiteConfigV1 = {
-      version: 1,
-      site: { name: vaultName, homeLayout: 'sections' },
-      contentRoots: [{ path: 'notes', publicRoot: '/notes' }],
-      assets: { exclude: [] },
-      features: { search: true, graph: true },
-      cloudflare: { projectName: projectNameFrom(vaultName) },
-    };
-
+  private async renderSetupWizard(container: HTMLElement): Promise<void> {
+    let connection;
+    try {
+      connection = await this.application.getInitialSetupConnection();
+    } catch {
+      connection = { state: 'unavailable' as const };
+    }
+    const connectedAccount = 'account' in connection ? connection.account : undefined;
+    const draft = this.setupDraft ??= this.newSetupDraft(connectedAccount);
+    if (!draft.cloudflare.account.id && connectedAccount) {
+      draft.cloudflare.account = connectedAccount;
+    }
+    const setupAvailable = this.application.isInitialSetupAvailable()
+      && connection.state === 'connected'
+      && Boolean(draft.cloudflare.account.id);
     container.createDiv({ cls: 'pages-publish-view__type', text: '首次设置' });
-    container.createEl('h2', { text: '创建本地发布配置' });
+    container.createEl('h2', { text: '创建你的发布站点' });
     container.createEl('p', {
-      text: '此步骤只写入 .publish/site.yml 并扫描候选，不会连接 Cloudflare、发布文章或修改 Frontmatter。',
+      text: '草稿只保留在此向导中。只有最后确认才会写入 .publish/site.yml 或修改 Cloudflare 项目；不会发布文章或修改 Frontmatter。',
     });
+    const progress = container.createDiv({ cls: 'pages-publish-view__setup-progress' });
+    for (const [index, label] of [
+      '环境准备',
+      '1 站点信息',
+      '2 内容范围',
+      '3 Cloudflare',
+      '4 确认',
+    ].entries()) {
+      progress.createSpan({
+        cls: index === this.setupStep ? 'is-active' : index < this.setupStep ? 'is-complete' : '',
+        text: label,
+      });
+    }
 
-    new Setting(container).setName('站点名称').addText((text) =>
-      text.setValue(draft.site.name).onChange((value) => {
-        draft.site.name = value;
-      }),
-    );
-    new Setting(container).setName('站点简介').addTextArea((text) =>
-      text.onChange((value) => {
-        draft.site.description = value || undefined;
-      }),
-    );
-    const scopeWarning = container.createEl('p', {
-      cls: 'pages-publish-view__warning',
-    });
-    new Setting(container)
-      .setName('内容目录')
-      .setDesc('Vault 相对目录；只有目录内的 Markdown 会成为候选。')
-      .addText((text) =>
-        text.setValue('notes').onChange((value) => {
-          const root = draft.contentRoots[0];
-          if (root) root.path = value;
+    if (this.setupStep === 0) {
+      container.createEl('h3', { text: '准备本地发布环境' });
+      container.createEl('p', {
+        text: setupAvailable
+          ? '环境与 Cloudflare 适配器已就绪。继续填写站点计划。'
+          : '环境与 Cloudflare 连接尚未就绪，因此不会启用最终创建操作。你仍可查看和编辑本地草稿。',
+      });
+      if (!setupAvailable) {
+        container.createEl('p', {
+          cls: 'pages-publish-view__warning',
+          text: '需要完成受管理运行时和已连接 cloudflare 账号的接线后，才能创建或绑定远端项目。',
+        });
+      }
+    } else if (this.setupStep === 1) {
+      container.createEl('h3', { text: '站点信息' });
+      new Setting(container).setName('站点名称').setDesc('必填；支持中文，不决定域名。').addText((text) =>
+        text.setValue(draft.config.site.name).onChange((value) => {
+          draft.config.site.name = value;
+        }),
+      );
+      new Setting(container).setName('站点简介').setDesc('可选，最多 160 个字符。').addTextArea((text) =>
+        text.setValue(draft.config.site.description ?? '').onChange((value) => {
+          draft.config.site.description = value || undefined;
+        }),
+      );
+    } else if (this.setupStep === 2) {
+      container.createEl('h3', { text: '内容范围' });
+      const root = draft.config.contentRoots[0];
+      if (!root) throw new Error('Setup draft must have one content root.');
+      const scopeWarning = container.createEl('p', { cls: 'pages-publish-view__warning' });
+      new Setting(container).setName('内容目录').setDesc('只有其中的 Markdown 会成为候选。').addText((text) =>
+        text.setValue(root.path).onChange((value) => {
+          root.path = value;
+          this.setupReview = undefined;
           scopeWarning.setText(
             value.trim() === '.'
               ? '警告：选择 Vault 根会把整个 Vault 的 Markdown 纳入候选范围。'
@@ -333,37 +374,216 @@ export class PagesPublishView extends ItemView {
           );
         }),
       );
-    new Setting(container)
-      .setName('公开路径')
-      .setDesc('必须以 / 开始。')
-      .addText((text) =>
-        text.setValue('/notes').onChange((value) => {
-          const root = draft.contentRoots[0];
-          if (root) root.publicRoot = value;
+      new Setting(container).setName('公开路径').setDesc('必须以 / 开始。').addText((text) =>
+        text.setValue(root.publicRoot).onChange((value) => {
+          root.publicRoot = value;
+          this.setupReview = undefined;
         }),
       );
-    new Setting(container)
-      .setName('Cloudflare 项目标识')
-      .setDesc('仅保存非密钥计划；不会创建或绑定远端项目。')
-      .addText((text) =>
+      container.createEl('p', {
+        text: '继续前会以此草稿进行本地扫描；扫描不会写入 site.yml。',
+      });
+      if (this.setupReview) {
+        container.createEl('p', {
+          cls: 'pages-publish-view__summary',
+          text: `草稿扫描：找到 ${this.setupReview.candidateCount} 篇候选，其中 ${this.setupReview.eligibleCount} 篇当前无 Blocker。`,
+        });
+      }
+    } else if (this.setupStep === 3) {
+      container.createEl('h3', { text: 'Cloudflare' });
+      container.createEl('p', {
+        text: setupAvailable
+          ? `将使用已连接账号：${draft.cloudflare.account.name}。`
+          : '尚未连接 Cloudflare。OAuth 或高级 API Token 连接成功后，这里会显示账号和可用 Pages 项目。',
+      });
+      if (connection.state === 'expired') {
+        container.createEl('p', {
+          cls: 'pages-publish-view__warning',
+          text: 'Cloudflare 授权已过期；重新授权后才能创建或绑定项目。',
+        });
+      }
+      if (setupAvailable) {
+        await this.renderSetupAccounts(container, draft);
+        await this.renderSetupProjects(container, draft);
+      }
+      new Setting(container).setName('Pages 项目标识').setDesc('创建或绑定计划；最终确认前不调用远端。').addText((text) =>
         text.setValue(draft.cloudflare.projectName).onChange((value) => {
           draft.cloudflare.projectName = value;
+          draft.config.cloudflare.projectName = value;
+          this.setupProjects = undefined;
         }),
       );
+      const projectActions = container.createDiv({ cls: 'pages-publish-view__setup-options' });
+      new ButtonComponent(projectActions)
+        .setButtonText(draft.cloudflare.action === 'create' ? '● 创建新项目' : '○ 创建新项目')
+        .onClick(async () => {
+          draft.cloudflare.action = 'create';
+          await this.render();
+        });
+      new ButtonComponent(projectActions)
+        .setButtonText(draft.cloudflare.action === 'bind' ? '● 绑定已有项目' : '○ 绑定已有项目')
+        .onClick(async () => {
+          draft.cloudflare.action = 'bind';
+          await this.render();
+        });
+      container.createEl('p', { text: `默认域名：${draft.cloudflare.projectName}.pages.dev` });
+      const domainActions = container.createDiv({ cls: 'pages-publish-view__setup-options' });
+      new ButtonComponent(domainActions)
+        .setButtonText(draft.cloudflare.domain.kind === 'pages-dev' ? '● 使用 pages.dev' : '○ 使用 pages.dev')
+        .onClick(async () => {
+          draft.cloudflare.domain = { kind: 'pages-dev' };
+          await this.render();
+        });
+      new ButtonComponent(domainActions)
+        .setButtonText(draft.cloudflare.domain.kind === 'custom' ? '● 连接自定义域名' : '○ 连接自定义域名')
+        .onClick(async () => {
+          draft.cloudflare.domain = { kind: 'custom', hostname: '' };
+          await this.render();
+        });
+      if (draft.cloudflare.domain.kind === 'custom') {
+        const customDomain = draft.cloudflare.domain;
+        new Setting(container).setName('自定义域名').setDesc('最终确认后请求绑定；可显示待验证、有效或失败。').addText((text) =>
+          text.setValue(customDomain.hostname).onChange((value) => {
+            customDomain.hostname = value;
+          }),
+        );
+      }
+    } else {
+      container.createEl('h3', { text: '确认创建站点' });
+      const summary = container.createEl('ul', { cls: 'pages-publish-view__setup-summary' });
+      summary.createEl('li', { text: `站点：${draft.config.site.name || '未命名站点'}` });
+      summary.createEl('li', {
+        text: `内容范围：${draft.config.contentRoots.map((root) => `${root.path} → ${root.publicRoot}`).join('；')}`,
+      });
+      summary.createEl('li', {
+        text: `Cloudflare：${draft.cloudflare.action === 'create' ? '创建' : '绑定'}项目 ${draft.cloudflare.projectName}`,
+      });
+      container.createEl('p', { text: '将执行：验证草稿、创建或验证 pages 项目、写入正式配置、扫描候选。' });
+      container.createEl('p', { text: '不会执行：发布文章、修改文章 frontmatter。' });
+    }
 
     const actions = container.createDiv({ cls: 'pages-publish-view__actions' });
     new ButtonComponent(actions)
-      .setButtonText('创建本地配置并扫描')
+      .setButtonText('返回')
+      .setDisabled(this.setupStep === 0)
+      .onClick(async () => {
+        this.setupStep = Math.max(0, this.setupStep - 1);
+        await this.render();
+      });
+    if (this.setupStep < 4) {
+      new ButtonComponent(actions)
+        .setButtonText('继续')
+        .setCta()
+        .onClick(async () => {
+          if (this.setupStep === 2 && setupAvailable) {
+            try {
+              this.setupReview = await this.application.reviewInitialSetup(draft);
+            } catch (error) {
+              new Notice(`无法扫描设置草稿：${errorMessage(error)}`);
+              return;
+            }
+          }
+          this.setupStep += 1;
+          await this.render();
+        });
+      return;
+    }
+    new ButtonComponent(actions)
+      .setButtonText(setupAvailable ? '创建站点并开始扫描' : '创建站点（需要完成连接）')
       .setCta()
+      .setDisabled(!setupAvailable || !draft.cloudflare.account.id)
       .onClick(async () => {
         try {
-          await this.application.createInitialSiteConfig(draft);
-          new Notice('本地配置已创建并完成扫描。没有发布任何文章。');
+          const review = await this.application.reviewInitialSetup(draft);
+          const result = await this.application.confirmInitialSetup(draft);
+          const domain = 'url' in result.domain
+            ? result.domain.url
+            : result.domain.status === 'pending'
+              ? '自定义域名正在等待验证。'
+              : '自定义域名已生效。';
+          new Notice(`站点已创建；找到 ${result.scan.candidateCount} 篇候选，其中 ${review.eligibleCount} 篇可加入首次发布。${domain} 没有发布任何文章。`);
           await this.render();
         } catch (error) {
-          new Notice(`无法创建本地配置：${errorMessage(error)}`);
+          new Notice(`无法创建站点：${errorMessage(error)}`);
         }
       });
+  }
+
+  private async renderSetupAccounts(
+    container: HTMLElement,
+    draft: SetupDraft,
+  ): Promise<void> {
+    try {
+      this.setupAccounts ??= await this.application.listInitialSetupAccounts();
+    } catch (error) {
+      container.createEl('p', {
+        cls: 'pages-publish-view__warning',
+        text: `无法读取可用账号：${errorMessage(error)}`,
+      });
+      return;
+    }
+    const accountActions = container.createDiv({ cls: 'pages-publish-view__setup-options' });
+    for (const account of this.setupAccounts) {
+      new ButtonComponent(accountActions)
+        .setButtonText(account.id === draft.cloudflare.account.id ? `● ${account.name}` : `○ ${account.name}`)
+        .onClick(async () => {
+          draft.cloudflare.account = account;
+          this.setupProjects = undefined;
+          await this.render();
+        });
+    }
+  }
+
+  private async renderSetupProjects(
+    container: HTMLElement,
+    draft: SetupDraft,
+  ): Promise<void> {
+    try {
+      this.setupProjects ??= await this.application.listInitialSetupProjects(
+        draft.cloudflare.account,
+      );
+    } catch (error) {
+      container.createEl('p', {
+        cls: 'pages-publish-view__warning',
+        text: `无法读取已有项目：${errorMessage(error)}`,
+      });
+      return;
+    }
+    if (this.setupProjects.length === 0) return;
+    const projectActions = container.createDiv({ cls: 'pages-publish-view__setup-options' });
+    projectActions.createSpan({ text: '可绑定项目：' });
+    for (const project of this.setupProjects) {
+      new ButtonComponent(projectActions)
+        .setButtonText(`${project.compatible ? '' : '不兼容 · '}${project.name}`)
+        .setDisabled(!project.compatible)
+        .onClick(async () => {
+          draft.cloudflare.action = 'bind';
+          draft.cloudflare.projectName = project.name;
+          draft.config.cloudflare.projectName = project.name;
+          await this.render();
+        });
+    }
+  }
+
+  private newSetupDraft(account?: SetupAccount): SetupDraft {
+    const vaultName = this.app.vault.getName();
+    const projectName = projectNameFrom(vaultName);
+    return {
+      config: {
+        version: 1,
+        site: { name: vaultName, homeLayout: 'sections' },
+        contentRoots: [{ path: 'notes', publicRoot: '/notes' }],
+        assets: { exclude: [] },
+        features: { search: true, graph: true },
+        cloudflare: { projectName },
+      },
+      cloudflare: {
+        account: account ?? { id: '', name: '尚未连接' },
+        action: 'create',
+        projectName,
+        domain: { kind: 'pages-dev' },
+      },
+    };
   }
 }
 

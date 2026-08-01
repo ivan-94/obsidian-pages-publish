@@ -2,7 +2,11 @@ import { createHash } from 'crypto';
 import type { Dirent } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { extname, join, relative, sep } from 'path';
-import { loadSiteConfigFromDirectory } from '../config/site-config';
+import {
+  loadSiteConfigFromDirectory,
+  validateSiteConfigForDirectory,
+  type SiteConfigV1,
+} from '../config/site-config';
 import {
   ArticleMetadataValidationError,
   readArticleSnapshotFromSource,
@@ -60,6 +64,8 @@ export async function scanSiteFromDirectory(
   vaultRoot: string,
   options: {
     signal?: AbortSignal;
+    /** Scans an in-memory setup draft without making it the Vault's config. */
+    config?: SiteConfigV1;
     fileSystem?: Partial<ScanFileSystemBoundary>;
     localAssetFileSystem?: Partial<LocalAssetFileSystemBoundary>;
     localAssetWebpDecoder?: WebpDecoderBoundary;
@@ -72,7 +78,9 @@ export async function scanSiteFromDirectory(
     ...options.fileSystem,
   };
   throwIfAborted(options.signal);
-  const loaded = await loadSiteConfigFromDirectory(vaultRoot);
+  const loaded = options.config
+    ? await loadDraftConfig(vaultRoot, options.config)
+    : await loadSiteConfigFromDirectory(vaultRoot);
   throwIfAborted(options.signal);
   if (loaded.status === 'future-version') {
     const issues: ScanIssue[] = [
@@ -286,6 +294,24 @@ export async function scanSiteFromDirectory(
     issues,
     externalLinks: assetPlan.externalLinks,
     routePlan,
+  };
+}
+
+async function loadDraftConfig(
+  vaultRoot: string,
+  draft: SiteConfigV1,
+): Promise<{
+  status: 'editable';
+  config: SiteConfigV1;
+  revision: string;
+  source: string;
+}> {
+  const config = await validateSiteConfigForDirectory(vaultRoot, draft);
+  return {
+    status: 'editable',
+    config,
+    revision: createHash('sha256').update(JSON.stringify(config)).digest('hex'),
+    source: '',
   };
 }
 

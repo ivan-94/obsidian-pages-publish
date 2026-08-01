@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PagesPublishApplication } from '../src/application';
 import type { SiteScanResult } from '../src/content/site-scanner';
 import type { SiteConfigV1 } from '../src/config/site-config';
+import {
+  SiteSetupService,
+  type SetupDraft,
+} from '../src/setup/site-setup';
 
 describe('Pages Publish application', () => {
   const vaults: string[] = [];
@@ -44,6 +48,145 @@ describe('Pages Publish application', () => {
     );
 
     await expect(application.getLaunchTarget()).resolves.toBe('publish-center');
+  });
+
+  it('exposes final setup confirmation through the application and then enters publish center', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    const setup = new SiteSetupService(vault, {
+      projects: {
+        findProject: async () => undefined,
+        createProject: async () => ({
+          id: 'project-1',
+          name: 'setup-wiki',
+          accountId: 'account-1',
+          pagesDevUrl: 'https://setup-wiki.pages.dev',
+          compatible: true,
+        }),
+        verifyProject: async (project) => project,
+        ensureCustomDomain: async () => ({ status: 'pending' as const }),
+      },
+      scan: async () => ({ candidateCount: 0, eligibleCount: 0 }),
+    });
+    const application = new PagesPublishApplication(vault, undefined, { setup });
+    const draft: SetupDraft = {
+      config: {
+        version: 1,
+        site: { name: 'Setup wiki', homeLayout: 'sections', timezone: 'Asia/Shanghai' },
+        contentRoots: [{ path: 'notes', publicRoot: '/notes' }],
+        assets: { exclude: [] },
+        features: { search: true, graph: true },
+        cloudflare: { projectName: 'setup-wiki' },
+      },
+      cloudflare: {
+        account: { id: 'account-1', name: 'Personal' },
+        action: 'create',
+        projectName: 'setup-wiki',
+        domain: { kind: 'pages-dev' },
+      },
+    };
+
+    await expect(application.reviewInitialSetup(draft)).resolves.toMatchObject({
+      candidateCount: 0,
+      cloudflare: { projectName: 'setup-wiki' },
+    });
+    await expect(application.confirmInitialSetup(draft)).resolves.toMatchObject({
+      stage: 'ready',
+      project: { id: 'project-1' },
+    });
+    await expect(application.getLaunchTarget()).resolves.toBe('publish-center');
+    await application.shutdown();
+  });
+
+  it('does not turn a completed setup into failure when a redundant coordinator refresh fails', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    const setup = new SiteSetupService(vault, {
+      projects: {
+        findProject: async () => undefined,
+        createProject: async () => ({
+          id: 'project-1',
+          name: 'setup-wiki',
+          accountId: 'account-1',
+          pagesDevUrl: 'https://setup-wiki.pages.dev',
+          compatible: true,
+        }),
+        verifyProject: async (project) => project,
+        ensureCustomDomain: async () => ({ status: 'pending' as const }),
+      },
+      scan: async () => ({ candidateCount: 0, eligibleCount: 0 }),
+    });
+    const application = new PagesPublishApplication(vault, undefined, {
+      setup,
+      scan: async () => {
+        throw new Error('late refresh failed');
+      },
+    });
+    const draft: SetupDraft = {
+      config: {
+        version: 1,
+        site: { name: 'Setup wiki', homeLayout: 'sections', timezone: 'Asia/Shanghai' },
+        contentRoots: [{ path: 'notes', publicRoot: '/notes' }],
+        assets: { exclude: [] },
+        features: { search: true, graph: true },
+        cloudflare: { projectName: 'setup-wiki' },
+      },
+      cloudflare: {
+        account: { id: 'account-1', name: 'Personal' },
+        action: 'create',
+        projectName: 'setup-wiki',
+        domain: { kind: 'pages-dev' },
+      },
+    };
+
+    await expect(application.confirmInitialSetup(draft)).resolves.toMatchObject({
+      stage: 'ready',
+    });
+    await expect(application.getLaunchTarget()).resolves.toBe('publish-center');
+    await application.shutdown();
+  });
+
+  it('projects a connected nonsecret Cloudflare account and existing projects for the setup wizard', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const setup = new SiteSetupService(vault, {
+      projects: {
+        findProject: async () => undefined,
+        listProjects: async () => [{
+          id: 'project-existing',
+          name: 'existing-wiki',
+          accountId: 'account-1',
+          pagesDevUrl: 'https://existing-wiki.pages.dev',
+          compatible: true,
+        }],
+        createProject: async () => {
+          throw new Error('not expected');
+        },
+        verifyProject: async (project) => project,
+        ensureCustomDomain: async () => ({ status: 'pending' as const }),
+      },
+      scan: async () => ({ candidateCount: 0, eligibleCount: 0 }),
+    });
+    const application = new PagesPublishApplication(vault, undefined, {
+      setup,
+      setupConnection: {
+        refreshStatus: async () => ({
+          state: 'connected' as const,
+          account: { id: 'account-1', name: 'Personal' },
+        }),
+        listAvailableAccounts: async () => [{ id: 'account-1', name: 'Personal' }],
+      },
+    });
+
+    await expect(application.getInitialSetupConnection()).resolves.toEqual({
+      state: 'connected',
+      account: { id: 'account-1', name: 'Personal' },
+    });
+    await expect(application.listInitialSetupProjects({ id: 'account-1', name: 'Personal' }))
+      .resolves.toEqual([expect.objectContaining({ name: 'existing-wiki' })]);
+    await application.shutdown();
   });
 
   it('opens a real local preview through the external browser boundary', async () => {

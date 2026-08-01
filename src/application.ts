@@ -63,6 +63,14 @@ import {
   type RouteIssue,
   type SiteRoutePlan,
 } from './routing/route-planner';
+import {
+  SiteSetupService,
+  type SetupAccount,
+  type SetupDraft,
+  type SetupProject,
+  type SetupResult,
+  type SetupReview,
+} from './setup/site-setup';
 
 export type LaunchTarget = 'setup' | 'publish-center';
 
@@ -74,10 +82,35 @@ export class PublishingBlockedError extends Error {
   }
 }
 
+export class InitialSetupUnavailableError extends Error {
+  readonly name = 'InitialSetupUnavailableError';
+
+  constructor() {
+    super('Cloudflare setup is unavailable until a connected account and Pages adapter are ready.');
+  }
+}
+
+export interface InitialSetupConnectionBoundary {
+  refreshStatus(): Promise<{
+    state: 'disconnected' | 'connected' | 'expired';
+    account?: SetupAccount;
+  }>;
+  listAvailableAccounts(): Promise<SetupAccount[]>;
+}
+
+export type InitialSetupConnection =
+  | { state: 'unavailable' }
+  | {
+    state: 'disconnected' | 'connected' | 'expired';
+    account?: SetupAccount;
+  };
+
 export class PagesPublishApplication {
   private readonly previewServer = new LocalPreviewServer();
   private readonly scanCoordinator: ContentScanCoordinator<SiteScanResult>;
   private readonly currentArticleListeners = new Set<() => void>();
+  private readonly setup: SiteSetupService | undefined;
+  private readonly setupConnection: InitialSetupConnectionBoundary | undefined;
   private preparedPublishSnapshot: PublicationSnapshot | undefined;
 
   constructor(
@@ -87,8 +120,12 @@ export class PagesPublishApplication {
       scan?: (request: ScanRequest) => Promise<SiteScanResult>;
       scanDebounceMs?: number;
       scanTimers?: ScanTimerBoundary;
+      setup?: SiteSetupService;
+      setupConnection?: InitialSetupConnectionBoundary;
     } = {},
   ) {
+    this.setup = options.setup;
+    this.setupConnection = options.setupConnection;
     this.scanCoordinator = new ContentScanCoordinator(
       options.scan ??
         (async ({ signal }) =>
@@ -238,6 +275,32 @@ export class PagesPublishApplication {
     });
     const scan = await this.requestScan('config-save');
     return { saved, scan };
+  }
+
+  reviewInitialSetup(draft: SetupDraft): Promise<SetupReview> {
+    return this.requireSetup().review(draft);
+  }
+
+  isInitialSetupAvailable(): boolean {
+    return this.setup !== undefined && this.setupConnection !== undefined;
+  }
+
+  async getInitialSetupConnection(): Promise<InitialSetupConnection> {
+    if (!this.setup || !this.setupConnection) return { state: 'unavailable' };
+    return this.setupConnection.refreshStatus();
+  }
+
+  async listInitialSetupAccounts(): Promise<SetupAccount[]> {
+    if (!this.setupConnection) throw new InitialSetupUnavailableError();
+    return this.setupConnection.listAvailableAccounts();
+  }
+
+  listInitialSetupProjects(account: SetupAccount): Promise<SetupProject[]> {
+    return this.requireSetup().listProjects(account);
+  }
+
+  async confirmInitialSetup(draft: SetupDraft): Promise<SetupResult> {
+    return this.requireSetup().confirm(draft);
   }
 
   getCurrentArticlePanel(
@@ -393,6 +456,11 @@ export class PagesPublishApplication {
     this.preparedPublishSnapshot = undefined;
     this.scanCoordinator.dispose();
     await this.previewServer.stop();
+  }
+
+  private requireSetup(): SiteSetupService {
+    if (!this.setup) throw new InitialSetupUnavailableError();
+    return this.setup;
   }
 }
 
