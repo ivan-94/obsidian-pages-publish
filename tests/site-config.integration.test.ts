@@ -623,6 +623,39 @@ describe('site config repository', () => {
     });
   });
 
+  it('preserves a valid raw repair source that omits timezone and contains comments', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-config-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    const source = [
+      '# Keep this operator note.',
+      'version: 1',
+      'site:',
+      '  name: Repaired Wiki',
+      '  home_layout: sections',
+      'content_roots:',
+      '  - path: notes',
+      '    public_root: /notes',
+      'features:',
+      '  search: true',
+      '  graph: true',
+      'cloudflare:',
+      '  project_name: repaired-wiki',
+      '',
+    ].join('\n');
+    await writeFile(join(vault, '.publish', 'site.yml'), source, 'utf8');
+    const loaded = await loadSiteConfigFromDirectory(vault);
+    if (loaded.status !== 'editable') throw new Error('Expected editable fixture.');
+
+    const saved = await saveSiteConfigToDirectory(vault, loaded.config, {
+      expectedRevision: loaded.revision,
+      sourceOverride: source,
+    });
+
+    expect(saved.source).toBe(source);
+    await expect(readFile(join(vault, '.publish', 'site.yml'), 'utf8')).resolves.toBe(source);
+  });
+
   it('keeps the old config and the caller draft when atomic replacement fails', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-config-'));
     vaults.push(vault);

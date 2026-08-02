@@ -83,7 +83,11 @@ installRawHtmlSafetyRule(markdown);
 
 export async function prepareLocalPreviewFromDirectory(
   vaultRoot: string,
-  options: { webpDecoder?: WebpDecoderBoundary } = {},
+  options: {
+    webpDecoder?: WebpDecoderBoundary;
+    /** Production publication omits local-only review affordances. */
+    renderMode?: 'local' | 'published';
+  } = {},
 ): Promise<LocalPreview> {
   const loadedConfig = await loadSiteConfigFromDirectory(vaultRoot);
   if (loadedConfig.status !== 'editable') {
@@ -92,6 +96,7 @@ export async function prepareLocalPreviewFromDirectory(
     );
   }
   const config = loadedConfig.config;
+  const renderMode = options.renderMode ?? 'local';
   const canonicalOrigin = siteCanonicalOrigin(config);
   const { snapshots, inputs } = await loadDirectoryRouteSources(
     vaultRoot,
@@ -153,7 +158,7 @@ export async function prepareLocalPreviewFromDirectory(
         config.site.name,
         title,
         content,
-        renderRouteSummary(article),
+        renderMode === 'local' ? renderRouteSummary(article) : '',
         {
           canonicalUrl: canonicalUrl(canonicalOrigin, article.url),
           ...(visibility === 'unlisted'
@@ -161,6 +166,7 @@ export async function prepareLocalPreviewFromDirectory(
             : {}),
           description,
           features: config.features,
+          renderMode,
         },
       ),
       searchText: renderSafeArticleText(
@@ -224,20 +230,23 @@ export async function prepareLocalPreviewFromDirectory(
       {
         canonicalUrl: canonicalUrl(canonicalOrigin, '/'),
         features: config.features,
+        renderMode,
       },
     ),
-    '/404/index.html': renderNotFound(config.site.name, config.features),
+    '/404/index.html': renderNotFound(config.site.name, config.features, renderMode),
     '/privacy/index.html': renderPrivacy(
       config.site.name,
       config.features,
       canonicalUrl(canonicalOrigin, '/privacy/'),
+      renderMode,
     ),
     '/sitemap.xml': discovery.sitemapXml,
   };
   if (config.features.search) {
     files['/search/index.html'] = renderSearch(config.site.name, discovery.pages, {
-      canonicalUrl: canonicalUrl(canonicalOrigin, '/search/'),
-      features: config.features,
+        canonicalUrl: canonicalUrl(canonicalOrigin, '/search/'),
+        features: config.features,
+        renderMode,
     });
   }
   if (config.features.graph) {
@@ -248,6 +257,7 @@ export async function prepareLocalPreviewFromDirectory(
       {
         canonicalUrl: canonicalUrl(canonicalOrigin, '/graph/'),
         features: config.features,
+        renderMode,
       },
     );
   }
@@ -297,7 +307,7 @@ export async function prepareLocalPreviewFromDirectory(
               routePlan,
               assetPlan,
             ),
-          )}${renderRouteSummary(sectionArticle)}`
+          )}${renderMode === 'local' ? renderRouteSummary(sectionArticle) : ''}`
         : undefined,
       {
         canonicalUrl: canonicalUrl(canonicalOrigin, section.url),
@@ -306,6 +316,7 @@ export async function prepareLocalPreviewFromDirectory(
           : {}),
         description,
         features: config.features,
+        renderMode,
       },
     );
   }
@@ -314,7 +325,7 @@ export async function prepareLocalPreviewFromDirectory(
       config.site.name,
       redirect.from,
       redirect.to,
-      config.features,
+      { features: config.features, renderMode },
     );
   }
 
@@ -600,7 +611,7 @@ export async function prepareArticlePreviewFromDirectory(
       loadedConfig.config.site.name,
       redirect.from,
       redirect.to,
-      loadedConfig.config.features,
+      { features: loadedConfig.config.features },
     );
   }
   return preview;
@@ -781,6 +792,7 @@ interface RenderDocumentOptions {
   robots?: 'noindex, nofollow';
   description?: string;
   features?: { search: boolean; graph: boolean };
+  renderMode?: 'local' | 'published';
 }
 
 function renderDocument(
@@ -808,7 +820,9 @@ function renderDocument(
     '</head>',
     '<body>',
     '<a class="skip-link" href="#content">跳到正文</a>',
-    '<aside data-pages-preview="local" role="status">本地预览 · 尚未发布</aside>',
+    options.renderMode === 'published'
+      ? ''
+      : '<aside data-pages-preview="local" role="status">本地预览 · 尚未发布</aside>',
     `<header class="site-header"><a href="/">${escapeHtml(siteName)}</a>${renderNavigation(
       options.features,
     )}</header>`,
@@ -828,13 +842,14 @@ function renderNavigation(features: RenderDocumentOptions['features']): string {
 function renderNotFound(
   siteName: string,
   features: RenderDocumentOptions['features'],
+  renderMode: RenderDocumentOptions['renderMode'],
 ): string {
   return renderDocument(
     siteName,
     '页面未找到',
     '<h1>页面未找到</h1><p>这个地址没有对应的公开内容。</p><p><a href="/">返回首页</a></p>',
     '',
-    { robots: 'noindex, nofollow', features },
+    { robots: 'noindex, nofollow', features, renderMode },
   );
 }
 
@@ -842,13 +857,14 @@ function renderPrivacy(
   siteName: string,
   features: RenderDocumentOptions['features'],
   canonical: string,
+  renderMode: RenderDocumentOptions['renderMode'],
 ): string {
   return renderDocument(
     siteName,
     '隐私说明',
     '<h1>隐私说明</h1><p>本站默认不启用评论或访问统计，也不会由发布插件代理外部资源。</p>',
     '',
-    { canonicalUrl: canonical, features },
+    { canonicalUrl: canonical, features, renderMode },
   );
 }
 
@@ -981,14 +997,14 @@ function renderRedirect(
   siteName: string,
   from: string,
   to: string,
-  features: RenderDocumentOptions['features'],
+  options: RenderDocumentOptions,
 ): string {
   return renderDocument(
     siteName,
     '永久重定向',
     `<p><code>${escapeHtml(from)}</code> → <a href="${escapeHtml(to)}">${escapeHtml(to)}</a></p>`,
     '',
-    { robots: 'noindex, nofollow', features },
+    { ...options, robots: 'noindex, nofollow' },
   );
 }
 

@@ -8,6 +8,7 @@ export default defineConfig(
     'main.js',
     'coverage',
     'release',
+    'hats/**/test-vault/**',
     'esbuild.config.mjs',
     'versions.json',
     'package-lock.json',
@@ -29,9 +30,34 @@ export default defineConfig(
   },
   ...obsidianmd.configs.recommended,
   {
+    rules: {
+      'obsidianmd/ui/sentence-case': ['warn', {
+        brands: [
+          'Cloudflare',
+          'Frontmatter',
+          'Keychain',
+          'macOS',
+          'Markdown',
+          'Mermaid',
+          'Node.js',
+          'OAuth',
+          'Obsidian',
+          'Pages',
+          'Pages Publish',
+          'Vault',
+        ],
+        acronyms: ['API', 'OAuth', 'PATH', 'URL'],
+        enforceCamelCaseLower: true,
+      }],
+    },
+  },
+  {
     files: ['tests/**/*.ts'],
     rules: {
       'no-restricted-globals': 'off',
+      // Loopback listener tests execute under Vitest's Node environment, where
+      // a small `window` timer shim is required to exercise renderer code.
+      'obsidianmd/no-global-this': 'off',
     },
   },
 );

@@ -1,13 +1,18 @@
 export type GlobalUiRoute = 'setup' | 'publish-center';
 
 export type GlobalPublicationState =
-  | { state: 'idle' | 'succeeded' | 'unavailable' | 'reconciliation-required' }
+  | { state: 'idle' | 'succeeded' | 'unavailable' }
+  | {
+    state: 'reconciliation-required';
+    reconciliation: 'activation-confirmed' | 'upload-uncertain';
+  }
   | { state: 'running'; stage: 'prepare' | 'build' | 'upload' | 'activate' }
   | { state: 'failed'; stage: 'prepare' | 'build' | 'upload' | 'activate' };
 
 export interface GlobalUiStateInput {
   configured: boolean;
   environment?: 'preparing' | 'failed';
+  connection?: 'connected' | 'disconnected' | 'expired' | 'unavailable';
   scan?: 'idle' | 'scanning';
   blockers?: number;
   pending?: number | 'unknown';
@@ -43,6 +48,12 @@ export function projectGlobalUiState(input: GlobalUiStateInput): GlobalUiProject
     };
   }
   if (publication?.state === 'reconciliation-required') {
+    if (publication.reconciliation === 'upload-uncertain') {
+      return {
+        ribbon: { route: 'publish-center', tooltip: '上传结果未确认，请核验 cloudflare' },
+        statusBar: { route: 'publish-center', text: 'Pages：上传结果未确认' },
+      };
+    }
     return {
       ribbon: { route: 'publish-center', tooltip: '线上已成功，本地状态待协调' },
       statusBar: { route: 'publish-center', text: 'Pages：本地状态待协调' },
@@ -62,6 +73,18 @@ export function projectGlobalUiState(input: GlobalUiStateInput): GlobalUiProject
   }
   if (!input.configured) {
     return { ribbon: { route: 'setup', tooltip: '创建发布站点' } };
+  }
+  if (input.connection === 'expired') {
+    return {
+      ribbon: { route: 'publish-center', tooltip: 'Cloudflare 授权已失效' },
+      statusBar: { route: 'publish-center', text: 'Pages：Cloudflare 需要重新授权' },
+    };
+  }
+  if (input.connection === 'disconnected') {
+    return {
+      ribbon: { route: 'publish-center', tooltip: 'Cloudflare 尚未连接' },
+      statusBar: { route: 'publish-center', text: 'Pages：Cloudflare 尚未连接' },
+    };
   }
   if (input.scan === 'scanning') {
     return {

@@ -2,6 +2,10 @@ import type { DataAdapter } from 'obsidian';
 import {
   MaintenanceRetentionCoordinator,
   PagesPublishMaintenanceService,
+  type BoundedDiagnosticLog,
+  type MaintenanceEnvironmentBoundary,
+  type MaintenanceConnectionBoundary,
+  type MaintenanceLogsBoundary,
   type DiagnosticSnapshot,
   type RetentionTarget,
 } from './maintenance-service';
@@ -15,6 +19,12 @@ export function createLocalMaintenanceService(input: {
   pluginVersion: string;
   platform: string;
   adapter: DataAdapter;
+  connection?: MaintenanceConnectionBoundary;
+  environment?: MaintenanceEnvironmentBoundary;
+  /** Shared in-memory entries are schema-validated before any display/export. */
+  diagnosticLog?: BoundedDiagnosticLog;
+  /** The Obsidian host decides how to present the safe, local log. */
+  logs?: MaintenanceLogsBoundary;
 }): PagesPublishMaintenanceService {
   const retention = new MaintenanceRetentionCoordinator({
     policy: {
@@ -33,7 +43,7 @@ export function createLocalMaintenanceService(input: {
       receipts: createAdapterRetentionTarget(
         input.adapter,
         childPath(input.directory, 'receipts'),
-        'deployment-recovery.json',
+        ['deployment-recovery.json', 'activation-pending.json'],
       ),
     },
   });
@@ -45,11 +55,14 @@ export function createLocalMaintenanceService(input: {
         await input.adapter.mkdir(cache);
       },
     },
+    ...(input.environment === undefined ? {} : { environment: input.environment }),
+    ...(input.connection === undefined ? {} : { connection: input.connection }),
+    ...(input.logs === undefined ? {} : { logs: input.logs }),
     diagnostics: {
       collect: async (): Promise<DiagnosticSnapshot> => ({
         pluginVersion: input.pluginVersion,
         platform: input.platform,
-        logs: [],
+        logs: input.diagnosticLog?.entries() ?? [],
       }),
       write: async (source: string): Promise<string> => {
         const directory = childPath(input.directory, 'diagnostics');
@@ -85,7 +98,7 @@ function childPath(directory: string, filename: string): string {
 function createAdapterRetentionTarget(
   adapter: DataAdapter,
   directory: string,
-  inProgressFilename?: string,
+  inProgressFilenames?: readonly string[],
   directoriesAreArtifacts = false,
 ): RetentionTarget {
   return {
@@ -108,7 +121,7 @@ function createAdapterRetentionTarget(
           id: path,
           createdAt: new Date(stats.mtime).toISOString(),
           bytes: stats.size,
-          ...(inProgressFilename !== undefined && path.endsWith(`/${inProgressFilename}`)
+          ...(inProgressFilenames?.some((filename) => path.endsWith(`/${filename}`))
             ? { inProgress: true }
             : {}),
         };

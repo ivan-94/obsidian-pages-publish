@@ -2,10 +2,36 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveCurrentArticlePanelFromDirectory } from '../src/publication/current-article-panel';
+import {
+  deriveArticlePublicationState,
+  resolveCurrentArticlePanelFromDirectory,
+} from '../src/publication/current-article-panel';
 
 describe('current article panel state', () => {
   const vaults: string[] = [];
+
+  it('distinguishes synchronized, updated, URL, visibility, blocker, and failed states', () => {
+    const synced = {
+      visibility: 'public' as const,
+      onlineUrl: '/notes/article/',
+      pendingUrl: '/notes/article/',
+      currentSourceDigest: 'same',
+      deployedSourceDigest: 'same',
+      deployedVisibility: 'public' as const,
+      hasBlocker: false,
+    };
+    expect(deriveArticlePublicationState(synced)).toBe('synced');
+    expect(deriveArticlePublicationState({ ...synced, currentSourceDigest: 'new' }))
+      .toBe('updated');
+    expect(deriveArticlePublicationState({ ...synced, pendingUrl: '/notes/new/' }))
+      .toBe('url-changed');
+    expect(deriveArticlePublicationState({ ...synced, visibility: 'unlisted' }))
+      .toBe('visibility-changed');
+    expect(deriveArticlePublicationState({ ...synced, hasBlocker: true }))
+      .toBe('blocked');
+    expect(deriveArticlePublicationState({ ...synced, deployedSourceDigest: undefined }))
+      .toBe('unknown');
+  });
 
   afterEach(async () => {
     await Promise.all(
@@ -120,6 +146,30 @@ describe('current article panel state', () => {
     ).resolves.toMatchObject({
       status: 'config-error',
       sourcePath: 'notes/active.md',
+    });
+  });
+
+  it('keeps an online article visible after it moves outside the configured content roots', async () => {
+    const vault = await createConfiguredVault(vaults);
+    await mkdir(join(vault, 'guide'), { recursive: true });
+    await writeFile(join(vault, 'guide', 'online.md'), [
+      '---',
+      'publication:',
+      '  visibility: public',
+      '  deployment:',
+      '    url: https://panel-test.pages.dev/notes/online/',
+      '---',
+      '# Online',
+      '',
+    ].join('\n'), 'utf8');
+
+    await expect(resolveCurrentArticlePanelFromDirectory(vault, {
+      activePath: 'guide/online.md',
+    })).resolves.toEqual({
+      status: 'out-of-scope-online',
+      selection: 'active',
+      sourcePath: 'guide/online.md',
+      onlineUrl: 'https://panel-test.pages.dev/notes/online/',
     });
   });
 
@@ -325,6 +375,7 @@ describe('current article panel state', () => {
 
     expect(state).toMatchObject({
       status: 'article',
+      dependencies: { images: 0, notes: 1, externalLinks: 0 },
       contentIssues: [
         {
           severity: 'warning',
@@ -352,6 +403,7 @@ describe('current article panel state', () => {
 
     expect(state.status).toBe('article');
     if (state.status !== 'article') return;
+    expect(state.dependencies).toEqual({ images: 1, notes: 0, externalLinks: 0 });
     expect(state.contentIssues).toContainEqual(
       expect.objectContaining({
         severity: 'blocker',

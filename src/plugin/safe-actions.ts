@@ -28,3 +28,29 @@ export function pagesPublishAction(id: string): PagesPublishActionDefinition {
   if (!action) throw new Error(`Unknown Pages Publish action: ${id}`);
   return action;
 }
+
+type ArticleMenuActionState = { enabled: true } | { enabled: false; reason: string };
+
+export function articleMenuAvailability(input: {
+  article: boolean;
+  environmentReady: boolean;
+  onlineUrl?: string;
+}): {
+  visibility: ArticleMenuActionState;
+  preview: ArticleMenuActionState;
+  online: ArticleMenuActionState;
+} {
+  return {
+    visibility: input.article
+      ? { enabled: true }
+      : { enabled: false, reason: '不在已配置的内容范围内' },
+    preview: !input.environmentReady
+      ? { enabled: false, reason: '本地发布环境尚未就绪' }
+      : input.article
+        ? { enabled: true }
+        : { enabled: false, reason: '不在已配置的内容范围内' },
+    online: input.onlineUrl
+      ? { enabled: true }
+      : { enabled: false, reason: '尚无线上页面' },
+  };
+}

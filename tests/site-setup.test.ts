@@ -98,6 +98,60 @@ describe('site setup service', () => {
     expect(createProject).toHaveBeenCalledTimes(1);
   });
 
+  it('resumes only the final scan when the confirmed configuration was already written', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    const scan = vi
+      .fn<() => Promise<{ candidateCount: number; eligibleCount: number }>>()
+      .mockResolvedValueOnce({ candidateCount: 1, eligibleCount: 1 })
+      .mockRejectedValueOnce(new Error('scan temporarily unavailable'))
+      .mockResolvedValueOnce({ candidateCount: 1, eligibleCount: 1 });
+    const projectBoundary = recordingProjects();
+    const createProject = vi.fn((input: { accountId: string; projectName: string }) =>
+      projectBoundary.createProject(input),
+    );
+    const service = new SiteSetupService(vault, {
+      projects: { ...projectBoundary, createProject },
+      scan,
+    });
+
+    await expect(service.confirm(newSiteDraft())).rejects.toThrow('scan temporarily unavailable');
+    await expect(service.confirm(newSiteDraft())).resolves.toMatchObject({
+      stage: 'ready',
+      scan: { candidateCount: 1, eligibleCount: 1 },
+    });
+    expect(createProject).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledTimes(3);
+  });
+
+  it('refuses to resume the final scan after the formal configuration changes', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    const scan = vi
+      .fn<() => Promise<{ candidateCount: number; eligibleCount: number }>>()
+      .mockResolvedValueOnce({ candidateCount: 1, eligibleCount: 1 })
+      .mockRejectedValueOnce(new Error('scan temporarily unavailable'));
+    const service = new SiteSetupService(vault, {
+      projects: recordingProjects(),
+      scan,
+    });
+
+    await expect(service.confirm(newSiteDraft())).rejects.toThrow('scan temporarily unavailable');
+    const configPath = join(vault, '.publish', 'site.yml');
+    await writeFile(
+      configPath,
+      (await readFile(configPath, 'utf8')).replace('name: My Wiki', 'name: Changed elsewhere'),
+      'utf8',
+    );
+
+    await expect(service.confirm(newSiteDraft())).rejects.toMatchObject({
+      code: 'setup-config-changed',
+    });
+    expect(scan).toHaveBeenCalledTimes(2);
+  });
+
   it('does not mark setup ready or write formal configuration when custom-domain binding fails', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
     vaults.push(vault);
@@ -154,6 +208,21 @@ describe('site setup service', () => {
     expect(createProject).toHaveBeenCalledTimes(1);
   });
 
+  it('reports truthful confirmation stages in the order they execute', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    const stages: string[] = [];
+    const service = new SiteSetupService(vault, {
+      projects: recordingProjects(),
+      scan: async () => ({ candidateCount: 0, eligibleCount: 0 }),
+    });
+
+    await service.confirm(newSiteDraft(), (stage) => stages.push(stage));
+
+    expect(stages).toEqual(['validate', 'project', 'domain', 'config', 'scan']);
+  });
+
   it('rejects a different plan while another final confirmation is in progress', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
     vaults.push(vault);
@@ -205,6 +274,26 @@ describe('site setup service', () => {
     });
   });
 
+  it('reports candidate counts for each configured content root', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await mkdir(join(vault, 'guide'), { recursive: true });
+    await writeFile(join(vault, 'notes', 'one.md'), '# One\n', 'utf8');
+    await writeFile(join(vault, 'guide', 'two.md'), '# Two\n', 'utf8');
+    await writeFile(join(vault, 'guide', 'three.md'), '# Three\n', 'utf8');
+    const draft = newSiteDraft();
+    draft.config.contentRoots.push({ path: 'guide', publicRoot: '/guide' });
+    const service = new SiteSetupService(vault, { projects: recordingProjects() });
+
+    await expect(service.review(draft)).resolves.toMatchObject({
+      roots: [
+        { path: 'notes', candidateCount: 1 },
+        { path: 'guide', candidateCount: 2 },
+      ],
+    });
+  });
+
   it('rejects a non-canonical pages.dev URL returned by the adapter', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
     vaults.push(vault);
@@ -247,6 +336,46 @@ describe('site setup service', () => {
     await expect(service.listProjects({ id: 'account-1', name: 'Personal' })).resolves.toEqual([
       expect.objectContaining({ name: 'existing-wiki' }),
     ]);
+    expect(createProject).not.toHaveBeenCalled();
+  });
+
+  it('verifies an existing project and connects its custom domain without creating a project', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
+    vaults.push(vault);
+    const project = {
+      id: 'project-existing',
+      name: 'existing-wiki',
+      accountId: 'account-1',
+      pagesDevUrl: 'https://existing-wiki.pages.dev',
+      compatible: true,
+    };
+    const createProject = vi.fn();
+    const ensureCustomDomain = vi.fn(async (_input: {
+      project: SetupProject;
+      hostname: string;
+    }) => ({ status: 'pending' as const }));
+    const service = new SiteSetupService(vault, {
+      projects: {
+        ...recordingProjects(),
+        findProject: async () => project,
+        createProject,
+        ensureCustomDomain,
+      },
+    });
+
+    await expect(service.verifyConfiguredProject(
+      { id: 'account-1', name: 'Personal' },
+      'existing-wiki',
+    )).resolves.toMatchObject(project);
+    await expect(service.connectConfiguredCustomDomain(
+      { id: 'account-1', name: 'Personal' },
+      'existing-wiki',
+      'docs.example.com',
+    )).resolves.toEqual({ status: 'pending' });
+    expect(ensureCustomDomain.mock.calls[0]?.[0]).toMatchObject({
+      project,
+      hostname: 'docs.example.com',
+    });
     expect(createProject).not.toHaveBeenCalled();
   });
 });

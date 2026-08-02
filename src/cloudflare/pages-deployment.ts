@@ -1,6 +1,9 @@
 import { blake3 } from '@noble/hashes/blake3.js';
 import type { PreviewAsset } from '../content/local-assets';
-import type { CloudflarePagesDeploymentBoundary } from '../publication/publish-orchestrator';
+import type {
+  CloudflarePagesDeploymentBoundary,
+  PublicationActivationTarget,
+} from '../publication/publish-orchestrator';
 
 export interface CloudflarePagesHttpBoundary {
   request(input: {
@@ -21,6 +24,7 @@ export class CloudflarePagesDeploymentError extends Error {
       | 'deployment-failed'
       | 'deployment-timeout'
       | 'file-count-exceeded'
+      | 'permission-denied'
       | 'remote-response-invalid',
     message: string,
   ) {
@@ -56,6 +60,7 @@ export class CloudflarePagesHttpDeploymentAdapter
       http: CloudflarePagesHttpBoundary;
       wait?: (delayMs: number) => Promise<void>;
       maxActivationPolls?: number;
+      activationTarget?: PublicationActivationTarget;
     },
   ) {}
 
@@ -67,11 +72,17 @@ export class CloudflarePagesHttpDeploymentAdapter
     );
   }
 
+  getActivationTarget(): PublicationActivationTarget | undefined {
+    return this.dependencies.activationTarget === undefined
+      ? undefined
+      : { ...this.dependencies.activationTarget };
+  }
+
   async upload(input: {
     scanDigest: string;
     files: Readonly<Record<string, string>>;
     assets: Readonly<Record<string, PreviewAsset>>;
-  }): Promise<{ deploymentId: string }> {
+  }): Promise<{ deploymentId: string; activationTarget?: PublicationActivationTarget }> {
     const credential = await this.dependencies.credential();
     const assets = collectUploadAssets(input);
     const uploadToken = await this.authenticatedRequest<{ jwt?: unknown }>(
@@ -143,7 +154,12 @@ export class CloudflarePagesHttpDeploymentAdapter
         'Cloudflare did not return a deployment identifier.',
       );
     }
-    return { deploymentId: deployment.id };
+    return {
+      deploymentId: deployment.id,
+      ...(this.dependencies.activationTarget === undefined
+        ? {}
+        : { activationTarget: { ...this.dependencies.activationTarget } }),
+    };
   }
 
   async activate(input: {
@@ -184,16 +200,26 @@ export class CloudflarePagesHttpDeploymentAdapter
     );
   }
 
-  private authenticatedRequest<T>(
+  private async authenticatedRequest<T>(
     path: string,
     credential: string,
     options: { method?: 'GET' | 'POST'; body?: string | FormData } = {},
   ): Promise<T> {
-    return this.dependencies.http.request({
-      path,
-      ...options,
-      headers: { Authorization: `Bearer ${credential}` },
-    }) as Promise<T>;
+    try {
+      return await this.dependencies.http.request({
+        path,
+        ...options,
+        headers: { Authorization: `Bearer ${credential}` },
+      }) as T;
+    } catch (error) {
+      if (options.method === 'POST' && (error as { status?: unknown }).status === 403) {
+        throw new CloudflarePagesDeploymentError(
+          'permission-denied',
+          'Cloudflare requires Pages Write permission to upload this site. Update the API token and reconnect.',
+        );
+      }
+      throw error;
+    }
   }
 }
 

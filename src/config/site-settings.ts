@@ -30,6 +30,11 @@ export interface SiteUrlChange {
   pendingUrl: string;
 }
 
+export interface SiteTakedownImpact {
+  sourcePath: string;
+  onlineUrl: string;
+}
+
 export interface SiteConfigEditorState {
   status: 'clean' | 'dirty' | 'conflict';
   canSave: boolean;
@@ -349,6 +354,28 @@ export class SiteSettingsService<TScan = SiteScanResult> {
       throw new RoutePlanningError(proposedBlockers);
     }
     return changes;
+  }
+
+  async previewTakedowns(draft: SiteConfigV1): Promise<SiteTakedownImpact[]> {
+    const current = await loadSiteConfigFromDirectory(this.vaultRoot);
+    if (current.status !== 'editable') {
+      throw new Error(`Site config version ${current.version} is read-only.`);
+    }
+    if (JSON.stringify(current.config.contentRoots) === JSON.stringify(draft.contentRoots)) {
+      return [];
+    }
+    await validateSiteConfigForDirectory(this.vaultRoot, draft);
+    const currentSources = await loadDirectoryRouteSources(this.vaultRoot, current.config);
+    const proposedSources = await loadDirectoryRouteSources(this.vaultRoot, draft);
+    const proposedPaths = new Set(proposedSources.inputs.map((input) => input.sourcePath));
+    return currentSources.inputs
+      .flatMap((input): SiteTakedownImpact[] => {
+        const onlineUrl = normalizeOnlineUrl(input.onlineUrl);
+        return onlineUrl && !proposedPaths.has(input.sourcePath)
+          ? [{ sourcePath: input.sourcePath, onlineUrl }]
+          : [];
+      })
+      .sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
   }
 }
 

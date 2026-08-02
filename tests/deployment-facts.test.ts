@@ -365,6 +365,97 @@ describe('deployment facts coordinator', () => {
     });
   });
 
+  it('persists the original Pages target before activation and reconciles a later success without rereading current configuration', async () => {
+    const { vault, stateDirectory } = await createVault();
+    await writeArticle(vault, 'notes/one.md', 'public');
+    await writeArticle(vault, 'notes/two.md', 'unlisted');
+    const store = new FileSystemDeploymentStateStore(stateDirectory);
+    const interrupted = new DeploymentFactsCoordinator({
+      vaultRoot: vault,
+      store,
+      now: () => new Date('2026-08-01T02:20:30.000Z'),
+    });
+
+    await interrupted.recordPendingActivation({
+      deploymentId: 'deployment-unknown',
+      target: {
+        provider: 'cloudflare-pages',
+        accountId: 'original-account',
+        projectName: 'original-project',
+      },
+      snapshot: { ...snapshot(), scanDigest: 'scan-unknown' },
+    });
+    await expect(interrupted.assertReadyForPublication()).rejects.toBeInstanceOf(
+      PublicationReconciliationRequiredError,
+    );
+
+    const resumed = new DeploymentFactsCoordinator({
+      vaultRoot: vault,
+      store,
+      now: () => new Date('2026-08-01T02:20:30.000Z'),
+    });
+    const inspectPending = vi.fn(async () => ({
+      deploymentId: 'deployment-unknown',
+      url: 'https://deployment-unknown.original-project.pages.dev',
+      status: 'success',
+    }));
+
+    await expect(resumed.recover({
+      inspect: async () => {
+        throw new Error('current configuration must not be used');
+      },
+      inspectPending,
+    })).resolves.toMatchObject({ deploymentId: 'deployment-unknown' });
+    expect(inspectPending).toHaveBeenCalledWith({
+      deploymentId: 'deployment-unknown',
+      target: {
+        provider: 'cloudflare-pages',
+        accountId: 'original-account',
+        projectName: 'original-project',
+      },
+    });
+    await expect(store.readPendingActivation()).resolves.toBeUndefined();
+    await expect(store.readLatestManifest()).resolves.toMatchObject({
+      deploymentId: 'deployment-unknown',
+      scanDigest: 'scan-unknown',
+    });
+  });
+
+  it('blocks publication and automated recovery for an upload-uncertain receipt without a deployment identity', async () => {
+    const { vault, stateDirectory } = await createVault();
+    const store = new FileSystemDeploymentStateStore(stateDirectory);
+    const coordinator = new DeploymentFactsCoordinator({ vaultRoot: vault, store });
+
+    await coordinator.recordPendingActivation({
+      target: {
+        provider: 'cloudflare-pages',
+        accountId: 'original-account',
+        projectName: 'original-project',
+      },
+      snapshot: snapshot(),
+    });
+
+    await expect(coordinator.assertReadyForPublication()).rejects.toBeInstanceOf(
+      PublicationReconciliationRequiredError,
+    );
+    const inspectPending = vi.fn(async () => ({
+      deploymentId: 'not-reached',
+      url: 'https://not-reached.pages.dev',
+      status: 'success',
+    }));
+    await expect(coordinator.recover({
+      inspect: async () => {
+        throw new Error('not used');
+      },
+      inspectPending,
+    })).rejects.toBeInstanceOf(PublicationReconciliationRequiredError);
+    expect(inspectPending).not.toHaveBeenCalled();
+
+    await coordinator.acknowledgeUploadUncertainActivation();
+    await expect(store.readPendingActivation()).resolves.toBeUndefined();
+    await expect(coordinator.assertReadyForPublication()).resolves.toBeUndefined();
+  });
+
   it('keeps the receipt and refuses recovery when the remote verifier returns a different deployment', async () => {
     const { vault, stateDirectory } = await createVault();
     await writeArticle(vault, 'notes/one.md', 'public');

@@ -8,6 +8,14 @@ Source: https://github.com/ivan/pages-publish
 */`;
 
 const production = process.argv[2] === 'production';
+try {
+  process.loadEnvFile('.env');
+} catch (error) {
+  if (error && typeof error === 'object' && 'code' in error && error.code !== 'ENOENT') {
+    throw error;
+  }
+}
+const cloudflareOAuthClientId = process.env.PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID ?? '';
 
 const context = await esbuild.context({
   banner: { js: banner },
@@ -27,13 +35,22 @@ const context = await esbuild.context({
     '@lezer/common',
     '@lezer/highlight',
     '@lezer/lr',
-    ...builtinModules,
+    // Source modules use the explicit `node:` specifier so Electron resolves
+    // its host-provided Node runtime instead of esbuild treating them as web
+    // dependencies. Keep the bare spellings for third-party transitive code.
+    ...new Set(builtinModules.flatMap((moduleName) => [
+      moduleName,
+      ...(moduleName.startsWith('node:') ? [] : [`node:${moduleName}`]),
+    ])),
   ],
   format: 'cjs',
   target: 'es2021',
   logLevel: 'info',
   sourcemap: production ? false : 'inline',
   treeShaking: true,
+  define: {
+    __PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID__: JSON.stringify(cloudflareOAuthClientId),
+  },
   outfile: 'main.js',
   minify: production,
 });

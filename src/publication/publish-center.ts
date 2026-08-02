@@ -20,6 +20,7 @@ export interface PublishCenterArticleInput {
   visibility?: PublishVisibility;
   sourceDigest: string;
   availability?: 'ready' | 'unavailable' | 'historical';
+  lastPublishedAt?: string;
 }
 
 export interface DeploymentBaselineArticle {
@@ -49,6 +50,8 @@ export interface PublishCenterArticle {
 
 export interface PublishCenterState {
   siteName: string;
+  siteUrl?: string;
+  lastPublishedAt?: string;
   baseline: 'first-publish' | 'available' | 'unknown';
   canPublish: boolean;
   scanDigest: string;
@@ -111,6 +114,7 @@ export interface PublicationSnapshotArticle {
 
 export function createPublishCenterState(input: {
   siteName: string;
+  siteUrl?: string;
   scan: SiteScanResult;
   articles: readonly PublishCenterArticleInput[];
   baseline: PublishBaseline;
@@ -143,6 +147,8 @@ export function createPublishCenterState(input: {
   const warnings = input.scan.issues.filter((issue) => issue.severity === 'warning');
   return {
     siteName: input.siteName,
+    ...(input.siteUrl === undefined ? {} : { siteUrl: input.siteUrl }),
+    ...latestPublicationTime(input.articles),
     baseline: baselineLabel(input.baseline),
     canPublish: blockers.length === 0,
     scanDigest: input.scan.digest,
@@ -166,6 +172,16 @@ export function createPublishCenterState(input: {
       warnings: warnings.length,
     },
   };
+}
+
+function latestPublicationTime(
+  articles: readonly PublishCenterArticleInput[],
+): { lastPublishedAt?: string } {
+  const values = articles
+    .map((article) => article.lastPublishedAt)
+    .filter((value): value is string => value !== undefined)
+    .sort((left, right) => right.localeCompare(left));
+  return values[0] === undefined ? {} : { lastPublishedAt: values[0] };
 }
 
 export function createPublicationSnapshot(

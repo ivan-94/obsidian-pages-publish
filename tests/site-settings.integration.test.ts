@@ -305,6 +305,54 @@ describe('site settings service', () => {
     });
   });
 
+  it('previews deployed pages that become takedowns when a content root is removed', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-settings-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await mkdir(join(vault, 'guide'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), [
+      'version: 1',
+      'site:',
+      '  name: Removal Wiki',
+      '  home_layout: sections',
+      'content_roots:',
+      '  - path: notes',
+      '    public_root: /notes',
+      '  - path: guide',
+      '    public_root: /guide',
+      'assets:',
+      '  exclude: []',
+      'features:',
+      '  search: true',
+      '  graph: true',
+      'cloudflare:',
+      '  project_name: removal-wiki',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(join(vault, 'notes', 'keep.md'), '# Keep\n', 'utf8');
+    await writeFile(join(vault, 'guide', 'online.md'), [
+      '---',
+      'publication:',
+      '  visibility: public',
+      '  deployment:',
+      '    url: /guide/online/',
+      '---',
+      '# Online',
+      '',
+    ].join('\n'), 'utf8');
+    const loaded = await loadSiteConfigFromDirectory(vault);
+    if (loaded.status !== 'editable') throw new Error('Expected editable fixture.');
+    const draft = structuredClone(loaded.config);
+    draft.contentRoots.splice(1, 1);
+    const service = new SiteSettingsService(vault);
+
+    await expect(service.previewTakedowns(draft)).resolves.toEqual([{
+      sourcePath: 'guide/online.md',
+      onlineUrl: '/guide/online/',
+    }]);
+  });
+
   it('rolls back every article when a multi-article URL migration fails midway', async () => {
     const fixture = await createMovingRootFixture(vaults);
     let commitCount = 0;

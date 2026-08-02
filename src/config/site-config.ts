@@ -126,6 +126,25 @@ export async function loadSiteConfigFromDirectory(
   vaultRoot: string,
 ): Promise<LoadedSiteConfig> {
   const { source, revision } = await readSiteConfigSourceFromDirectory(vaultRoot);
+  return loadSiteConfigSource(vaultRoot, source, revision);
+}
+
+export async function validateSiteConfigSourceForDirectory(
+  vaultRoot: string,
+  source: string,
+): Promise<SiteConfigV1> {
+  const loaded = await loadSiteConfigSource(vaultRoot, source, digest(source));
+  if (loaded.status === 'future-version') {
+    throw new SiteConfigValidationError([{ code: 'future-version-readonly', path: 'version', message: `Site config version ${loaded.version} is newer than this plugin supports.` }]);
+  }
+  return loaded.config;
+}
+
+async function loadSiteConfigSource(
+  vaultRoot: string,
+  source: string,
+  revision: string,
+): Promise<LoadedSiteConfig> {
   const raw = parseSiteConfigYaml(source);
   if (
     typeof raw.version === 'number' &&
@@ -169,6 +188,7 @@ export async function saveSiteConfigToDirectory(
     afterVerify?: () => Promise<(() => Promise<void>) | void>;
     removeFile?: (path: string) => Promise<void>;
     replaceFile?: (temporaryPath: string, targetPath: string) => Promise<void>;
+    sourceOverride?: string;
   },
 ): Promise<EditableSiteConfig> {
   const targetPath = join(vaultRoot, '.publish', 'site.yml');
@@ -208,11 +228,16 @@ export async function saveSiteConfigToDirectory(
     }
   }
 
-  const config = await validateSiteConfigForDirectory(vaultRoot, input, {
-    systemTimezone: options.systemTimezone,
-  });
-  const raw = toRawConfig(config);
-  const source = stringifyYaml(raw);
+  // A repair editor supplies the exact raw source that it has already
+  // validated. Keep that source authoritative so comments, formatting, and
+  // optional fields that deliberately use their schema default (notably an
+  // omitted timezone) are not changed during recovery.
+  const config = options.sourceOverride === undefined
+    ? await validateSiteConfigForDirectory(vaultRoot, input, {
+      systemTimezone: options.systemTimezone,
+    })
+    : await validateSiteConfigSourceForDirectory(vaultRoot, options.sourceOverride);
+  const source = options.sourceOverride ?? stringifyYaml(toRawConfig(config));
   await mkdir(join(vaultRoot, '.publish'), { recursive: true });
   await assertSafeConfigPath(vaultRoot, false);
   const temporaryPath = `${targetPath}.tmp-${randomUUID()}`;

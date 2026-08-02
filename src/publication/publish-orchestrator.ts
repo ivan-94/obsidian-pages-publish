@@ -9,14 +9,26 @@ export type PublicationStage = 'prepare' | 'build' | 'upload' | 'activate';
 export interface CloudflarePagesDeploymentBoundary {
   /** Verifies the credential, selected account, and Pages project before publishing. */
   validate(): Promise<void>;
+  /** Available after validation, before the first potentially remote-mutating upload request. */
+  getActivationTarget?(): PublicationActivationTarget | undefined;
   upload(input: {
     scanDigest: string;
     files: Readonly<Record<string, string>>;
     assets: Readonly<Record<string, PreviewAsset>>;
-  }): Promise<{ deploymentId: string }>;
+  }): Promise<{
+    deploymentId: string;
+    /** Durable identity for reconciling an activation whose final poll is interrupted. */
+    activationTarget?: PublicationActivationTarget;
+  }>;
   activate(input: {
     deploymentId: string;
   }): Promise<{ deploymentId: string; url: string }>;
+}
+
+export interface PublicationActivationTarget {
+  provider: 'cloudflare-pages';
+  accountId: string;
+  projectName: string;
 }
 
 export interface PublicationDeployment {
@@ -34,6 +46,15 @@ export interface PublicationFactsBoundary {
     deployment: PublicationDeployment,
     snapshot: PublicationSnapshot,
   ): Promise<unknown>;
+  /** Persisted before an uploaded deployment is polled for activation. */
+  recordPendingActivation?(input: {
+    /** Omitted before the deployment-create response can be safely known. */
+    deploymentId?: string;
+    target: PublicationActivationTarget;
+    snapshot: PublicationSnapshot;
+  }): Promise<void>;
+  /** Clears the pending record only after local facts are durably reconciled. */
+  clearPendingActivation?(deploymentId: string): Promise<void>;
 }
 
 export type PublicationRunStatus =
@@ -52,6 +73,8 @@ export type PublicationRunStatus =
   | {
     state: 'reconciliation-required';
     deployment?: PublicationDeployment;
+    reconciliation: 'activation-confirmed' | 'upload-uncertain';
+    target?: PublicationActivationTarget;
     message: string;
   };
 
@@ -69,9 +92,19 @@ class PublicationOrchestrationError extends Error {
 
 class PublicationReconciliationPendingError extends Error {
   readonly name = 'PublicationReconciliationPendingError';
+  readonly reconciliation: 'activation-confirmed' | 'upload-uncertain';
+  readonly target: PublicationActivationTarget | undefined;
 
-  constructor() {
-    super('The site is online, but local publishing facts need repair before another publish can start.');
+  constructor(input: {
+    reconciliation?: 'activation-confirmed' | 'upload-uncertain';
+    target?: PublicationActivationTarget;
+  } = {}) {
+    const reconciliation = input.reconciliation ?? 'activation-confirmed';
+    super(reconciliation === 'upload-uncertain'
+      ? 'A Cloudflare upload outcome could not be confirmed. Verify the saved Pages target before another publish can start.'
+      : 'The site is online, but local publishing facts need repair before another publish can start.');
+    this.reconciliation = reconciliation;
+    this.target = input.target === undefined ? undefined : { ...input.target };
   }
 }
 
@@ -121,9 +154,14 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
     if (!this.dependencies.facts) return;
     try {
       await this.dependencies.facts.assertReadyForPublication();
-    } catch {
-      const pending = new PublicationReconciliationPendingError();
-      this.setStatus({ state: 'reconciliation-required', message: pending.message });
+    } catch (error) {
+      const pending = reconciliationPendingError(error);
+      this.setStatus({
+        state: 'reconciliation-required',
+        reconciliation: pending.reconciliation,
+        ...(pending.target === undefined ? {} : { target: pending.target }),
+        message: pending.message,
+      });
       throw pending;
     }
     if (this.status.state === 'reconciliation-required') {
@@ -133,7 +171,10 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
 
   publish(): Promise<PublicationDeployment> {
     if (this.status.state === 'reconciliation-required') {
-      return Promise.reject(new PublicationReconciliationPendingError());
+      return Promise.reject(new PublicationReconciliationPendingError({
+        reconciliation: this.status.reconciliation,
+        ...(this.status.target === undefined ? {} : { target: this.status.target }),
+      }));
     }
     if (this.activePublish) return this.activePublish;
     const publish = this.publishExclusive();
@@ -151,9 +192,14 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
       if (this.dependencies.facts) {
         try {
           await this.dependencies.facts.assertReadyForPublication();
-        } catch {
-          const pending = new PublicationReconciliationPendingError();
-          this.setStatus({ state: 'reconciliation-required', message: pending.message });
+        } catch (error) {
+          const pending = reconciliationPendingError(error);
+          this.setStatus({
+            state: 'reconciliation-required',
+            reconciliation: pending.reconciliation,
+            ...(pending.target === undefined ? {} : { target: pending.target }),
+            message: pending.message,
+          });
           throw pending;
         }
       }
@@ -166,6 +212,13 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
 
       stage = 'upload';
       this.setStatus({ state: 'running', stage });
+      const activationTarget = this.dependencies.adapter.getActivationTarget?.();
+      if (activationTarget && this.dependencies.facts?.recordPendingActivation) {
+        await this.dependencies.facts.recordPendingActivation({
+          target: activationTarget,
+          snapshot: built,
+        });
+      }
       const staged = await this.dependencies.adapter.upload({
         scanDigest: built.scanDigest,
         files: { ...built.files },
@@ -174,6 +227,14 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
 
       stage = 'activate';
       this.setStatus({ state: 'running', stage });
+      const stagedTarget = staged.activationTarget ?? activationTarget;
+      if (stagedTarget && this.dependencies.facts?.recordPendingActivation) {
+        await this.dependencies.facts.recordPendingActivation({
+          deploymentId: staged.deploymentId,
+          target: stagedTarget,
+          snapshot: built,
+        });
+      }
       const active = await this.dependencies.adapter.activate({
         deploymentId: staged.deploymentId,
       });
@@ -192,10 +253,14 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
       this.lastDeployment = deployment;
       try {
         await this.dependencies.facts?.reconcile(deployment, built);
+        if (stagedTarget && this.dependencies.facts?.clearPendingActivation) {
+          await this.dependencies.facts.clearPendingActivation(staged.deploymentId);
+        }
       } catch {
         const pending = new PublicationReconciliationPendingError();
         this.setStatus({
           state: 'reconciliation-required',
+          reconciliation: 'activation-confirmed',
           deployment,
           message: pending.message,
         });
@@ -207,7 +272,7 @@ export class PublicationOrchestrator<TPreparation = PublicationSnapshot> {
       if (error instanceof PublicationReconciliationPendingError) throw error;
       const failure = error instanceof PublicationOrchestrationError
         ? error
-        : new PublicationOrchestrationError(stage, safeFailureMessage(stage));
+        : new PublicationOrchestrationError(stage, safeFailureMessage(stage, error));
       this.setStatus({ state: 'failed', stage, message: failure.message });
       throw failure;
     }
@@ -232,6 +297,7 @@ function copyStatus(status: PublicationRunStatus): PublicationRunStatus {
   if (status.state === 'reconciliation-required') {
     return {
       ...status,
+      ...(status.target === undefined ? {} : { target: { ...status.target } }),
       ...(status.deployment === undefined
         ? {}
         : {
@@ -245,7 +311,36 @@ function copyStatus(status: PublicationRunStatus): PublicationRunStatus {
   return { ...status };
 }
 
-function safeFailureMessage(stage: PublicationStage): string {
+function reconciliationPendingError(error: unknown): PublicationReconciliationPendingError {
+  if (
+    isUploadUncertainRecovery(error) &&
+    isPublicationActivationTarget((error as { target?: unknown }).target)
+  ) {
+    return new PublicationReconciliationPendingError({
+      reconciliation: 'upload-uncertain',
+      target: (error as { target: PublicationActivationTarget }).target,
+    });
+  }
+  return new PublicationReconciliationPendingError();
+}
+
+function isUploadUncertainRecovery(error: unknown): boolean {
+  return error instanceof Error &&
+    error.name === 'PublicationReconciliationRequiredError' &&
+    (error as { deploymentId?: unknown }).deploymentId === undefined;
+}
+
+function isPublicationActivationTarget(value: unknown): value is PublicationActivationTarget {
+  return typeof value === 'object' && value !== null &&
+    (value as { provider?: unknown }).provider === 'cloudflare-pages' &&
+    typeof (value as { accountId?: unknown }).accountId === 'string' &&
+    typeof (value as { projectName?: unknown }).projectName === 'string';
+}
+
+function safeFailureMessage(stage: PublicationStage, error: unknown): string {
+  if (stage === 'upload' && (error as { code?: unknown }).code === 'permission-denied') {
+    return 'Cloudflare requires Pages Write permission to upload this site. Update the API token and reconnect.';
+  }
   switch (stage) {
     case 'prepare':
       return 'Publication preparation failed. Resolve the reported configuration, authorization, or content problem and retry.';

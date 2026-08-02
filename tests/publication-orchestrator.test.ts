@@ -3,6 +3,7 @@ import {
   PublicationOrchestrator,
   type CloudflarePagesDeploymentBoundary,
 } from '../src/publication/publish-orchestrator';
+import { PublicationReconciliationRequiredError } from '../src/publication/deployment-facts';
 import type { PublicationSnapshot } from '../src/publication/publish-center';
 
 function snapshot(scanDigest = 'scan-1'): PublicationSnapshot {
@@ -100,6 +101,80 @@ describe('publication orchestrator', () => {
     });
   });
 
+  it('durably records the target before the remote deployment POST and leaves it recoverable on an interrupted poll', async () => {
+    const events: string[] = [];
+    const orchestrator = new PublicationOrchestrator({
+      prepare: async () => snapshot(),
+      build: async (input) => input,
+      adapter: {
+        validate: async () => undefined,
+        getActivationTarget: () => ({
+          provider: 'cloudflare-pages' as const,
+          accountId: 'account-original',
+          projectName: 'project-original',
+        }),
+        upload: async () => {
+          events.push('upload');
+          return { deploymentId: 'staged-1' };
+        },
+        activate: async () => {
+          events.push('activate');
+          throw new Error('poll interrupted');
+        },
+      },
+      facts: {
+        assertReadyForPublication: async () => undefined,
+        reconcile: async () => undefined,
+        recordPendingActivation: async (input) => {
+          events.push(`pending:${input.deploymentId ?? 'unknown'}:${input.target.accountId}:${input.target.projectName}:${input.snapshot.scanDigest}`);
+        },
+        clearPendingActivation: async () => {
+          events.push('clear');
+        },
+      },
+    });
+
+    await expect(orchestrator.publish()).rejects.toThrow(
+      'Cloudflare activation failed. The current site remains active. Retry after checking the deployment.',
+    );
+    expect(events).toEqual([
+      'pending:unknown:account-original:project-original:scan-1',
+      'upload',
+      'pending:staged-1:account-original:project-original:scan-1',
+      'activate',
+    ]);
+  });
+
+  it('does not send a deployment request when its pre-upload recovery receipt cannot be persisted', async () => {
+    const upload = vi.fn(async () => ({ deploymentId: 'not-reached' }));
+    const orchestrator = new PublicationOrchestrator({
+      prepare: async () => snapshot(),
+      build: async (input) => input,
+      adapter: {
+        validate: async () => undefined,
+        getActivationTarget: () => ({
+          provider: 'cloudflare-pages',
+          accountId: 'account-1',
+          projectName: 'project-1',
+        }),
+        upload,
+        activate: async () => ({ deploymentId: 'not-reached', url: 'https://not-reached.pages.dev' }),
+      },
+      facts: {
+        assertReadyForPublication: async () => undefined,
+        reconcile: async () => undefined,
+        recordPendingActivation: async () => {
+          throw new Error('state storage unavailable');
+        },
+      },
+    });
+
+    await expect(orchestrator.publish()).rejects.toThrow(
+      'Cloudflare upload failed. The current site remains active. Retry after checking the connection.',
+    );
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   it('checks the connected Pages target before it creates a fresh publish snapshot', async () => {
     const stages: string[] = [];
     const adapter: CloudflarePagesDeploymentBoundary = {
@@ -156,6 +231,26 @@ describe('publication orchestrator', () => {
       message: 'Cloudflare upload failed. The current site remains active. Retry after checking the connection.',
     });
     expect(JSON.stringify(orchestrator.getStatus())).not.toContain('top-secret-token');
+  });
+
+  it('gives a clear safe next step when the user-approved upload lacks Pages Write permission', async () => {
+    const orchestrator = new PublicationOrchestrator({
+      prepare: async () => snapshot(),
+      build: async (input) => input,
+      adapter: {
+        validate: async () => undefined,
+        upload: async () => {
+          throw Object.assign(new Error('forbidden'), { code: 'permission-denied' });
+        },
+        activate: async () => {
+          throw new Error('not reached');
+        },
+      },
+    });
+
+    await expect(orchestrator.publish()).rejects.toThrow(
+      'Cloudflare requires Pages Write permission to upload this site. Update the API token and reconnect.',
+    );
   });
 
   it('stores an immutable deployment receipt independent from a builder-owned snapshot object', async () => {
@@ -315,6 +410,7 @@ describe('publication orchestrator', () => {
     );
     expect(orchestrator.getStatus()).toEqual({
       state: 'reconciliation-required',
+      reconciliation: 'activation-confirmed',
       deployment: {
         deploymentId: 'staged-1',
         url: 'https://release.pages.dev',
@@ -356,7 +452,45 @@ describe('publication orchestrator', () => {
     expect(validate).not.toHaveBeenCalled();
     expect(orchestrator.getStatus()).toEqual({
       state: 'reconciliation-required',
+      reconciliation: 'activation-confirmed',
       message: 'The site is online, but local publishing facts need repair before another publish can start.',
+    });
+  });
+
+  it('marks an upload-uncertain recovery as unknown rather than claiming the site is online', async () => {
+    const pending = new PublicationReconciliationRequiredError(undefined, {
+      provider: 'cloudflare-pages',
+      accountId: 'account-original',
+      projectName: 'project-original',
+    });
+    const orchestrator = new PublicationOrchestrator({
+      prepare: async () => snapshot(),
+      build: async (input) => input,
+      adapter: {
+        validate: async () => undefined,
+        upload: async () => ({ deploymentId: 'not-reached' }),
+        activate: async () => ({ deploymentId: 'not-reached', url: 'https://not-reached.pages.dev' }),
+      },
+      facts: {
+        assertReadyForPublication: async () => {
+          throw pending;
+        },
+        reconcile: async () => undefined,
+      },
+    });
+
+    await expect(orchestrator.refreshPublicationFacts()).rejects.toThrow(
+      'A Cloudflare upload outcome could not be confirmed.',
+    );
+    expect(orchestrator.getStatus()).toEqual({
+      state: 'reconciliation-required',
+      reconciliation: 'upload-uncertain',
+      target: {
+        provider: 'cloudflare-pages',
+        accountId: 'account-original',
+        projectName: 'project-original',
+      },
+      message: 'A Cloudflare upload outcome could not be confirmed. Verify the saved Pages target before another publish can start.',
     });
   });
 

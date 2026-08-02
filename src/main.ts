@@ -1,18 +1,56 @@
-import { FileSystemAdapter, Notice, Plugin, TFile } from 'obsidian';
+import {
+  FileSystemAdapter,
+  Notice,
+  Plugin,
+  TFile,
+  requestUrl,
+  type MenuItem,
+} from 'obsidian';
+import { join } from 'node:path';
 import { PagesPublishApplication } from './application';
+import { CloudflareConnectionService } from './cloudflare/connection';
+import {
+  CloudflarePagesDeploymentInspector,
+  CloudflarePagesProjectApi,
+  CloudflareV4Api,
+  CloudflareV4HttpClient,
+  ObsidianRequestUrlTransport,
+  createVaultCloudflarePagesDomainStatusInspector,
+  createVaultCloudflarePagesDeploymentAdapter,
+} from './cloudflare/obsidian-host';
 import { watchSiteConfigChanges } from './config/site-config-watcher';
+import {
+  DeploymentFactsCoordinator,
+  FileSystemDeploymentStateStore,
+} from './publication/deployment-facts';
 import { activatePagesPublish, type PagesPublishActivation } from './plugin/lifecycle';
+import { PluginConnectionBindingStore } from './plugin/cloudflare-binding-store';
+import { ObsidianSecretStorageKeychain } from './plugin/obsidian-secret-keychain';
+import {
+  PAGES_PUBLISH_LOG_VIEW_TYPE,
+  openLatestMaintenanceLog,
+} from './plugin/maintenance-log-host';
+import { PagesPublishMaintenanceLogView } from './plugin/maintenance-log-view';
+import { PAGES_PUBLISH_CONFIG_REPAIR_VIEW_TYPE, PagesPublishSiteConfigRepairView } from './plugin/site-config-repair-view';
+import { localPluginStateDirectory } from './plugin/local-state-directory';
 import { ObsidianPagesPublishHost } from './plugin/obsidian-host';
 import { isSupportedPlatform } from './plugin/platform';
-import { pagesPublishAction } from './plugin/safe-actions';
+import { articleMenuAvailability, pagesPublishAction } from './plugin/safe-actions';
 import { openPluginSettingsInHost } from './plugin/settings-navigation';
 import { PagesPublishSettingTab } from './plugin/settings-tab';
 import { createLocalMaintenanceService } from './maintenance/local-maintenance';
+import { BoundedDiagnosticLog } from './maintenance/maintenance-service';
 import {
   CURRENT_ARTICLE_VIEW_TYPE,
   CurrentArticleView,
 } from './plugin/current-article-view';
 import { PAGES_PUBLISH_VIEW_TYPE, PagesPublishView } from './plugin/view';
+import { SiteSetupService } from './setup/site-setup';
+import { BundledPublicationEnvironment } from './plugin/bundled-environment';
+import { CloudflareDesktopOAuth } from './cloudflare/oauth-host';
+import { cloudflareOAuthBuildConfig } from './cloudflare/oauth-build-config';
+import { CloudflareOAuthLoopbackServer } from './cloudflare/oauth-loopback';
+import { completeCloudflareOAuthCallback } from './cloudflare/oauth-callback-handler';
 
 export default class PagesPublishPlugin extends Plugin {
   private activation: PagesPublishActivation | undefined;
@@ -25,9 +63,91 @@ export default class PagesPublishPlugin extends Plugin {
     }
 
     const adapter = this.app.vault.adapter as FileSystemAdapter;
+    const vaultRoot = adapter.getBasePath();
     const maintenanceDirectory = `${this.manifest.dir ?? `.obsidian/plugins/${this.manifest.id}`}/maintenance`;
-    const application = new PagesPublishApplication(
-      adapter.getBasePath(),
+    const diagnosticLog = new BoundedDiagnosticLog();
+    const cloudflareHttp = new CloudflareV4HttpClient(
+      new ObsidianRequestUrlTransport({ requestUrl }),
+    );
+    const oauthConfig = cloudflareOAuthBuildConfig();
+    const cloudflareOAuth = oauthConfig === undefined
+      ? {
+        available: false,
+        begin: async () => {
+          throw new Error('Cloudflare OAuth client metadata is not configured in this build.');
+        },
+        exchange: async () => {
+          throw new Error('Cloudflare OAuth client metadata is not configured in this build.');
+        },
+      }
+      : new CloudflareDesktopOAuth({
+        ...oauthConfig,
+        request: async (input) => {
+          const response = await requestUrl({
+            url: input.url,
+            method: input.method,
+            headers: input.headers,
+            body: input.body,
+            throw: false,
+          });
+          return { status: response.status, json: response.json as unknown };
+        },
+      });
+    const cloudflareConnection = new CloudflareConnectionService({
+      oauth: cloudflareOAuth,
+      api: new CloudflareV4Api(cloudflareHttp),
+      keychain: new ObsidianSecretStorageKeychain(this.app.secretStorage),
+      bindings: new PluginConnectionBindingStore({
+        load: async (): Promise<unknown> => {
+          const data: unknown = await this.loadData();
+          return data;
+        },
+        save: async (data) => this.saveData(data),
+      }),
+    });
+    const publicationEnvironment = new BundledPublicationEnvironment({
+      runtimeVersion: process.versions.node,
+      engineVersion: this.manifest.version,
+    });
+    const cloudflareProjects = new CloudflarePagesProjectApi(
+      cloudflareHttp,
+      async () => (await cloudflareConnection.getPublishingConnection()).credential,
+    );
+    const deploymentFacts = new DeploymentFactsCoordinator({
+      vaultRoot,
+      store: new FileSystemDeploymentStateStore(
+        join(localPluginStateDirectory(vaultRoot), 'receipts'),
+      ),
+    });
+    let application!: PagesPublishApplication;
+    const oauthCallback = oauthConfig === undefined
+      ? undefined
+      : new CloudflareOAuthLoopbackServer({
+        redirectUri: oauthConfig.redirectUri,
+        callback: async (callback) => {
+          await completeCloudflareOAuthCallback({
+            callback,
+            application,
+            notify: (message) => new Notice(message),
+            openPublishCenter: () => this.openPublishCenter(),
+          });
+        },
+        onCancellation: async ({ state, reason }) => {
+          const cancelled = await application.cancelInitialSetupOAuth(state);
+          if (cancelled) {
+            new Notice(reason === 'invalid_scope'
+              ? 'Cloudflare OAuth client 缺少所需权限（memberships.read、page.read、page.write）。请更新 client scopes 后重试。'
+              : 'Cloudflare 授权已取消，请重新开始授权。');
+          }
+          return cancelled;
+        },
+        onTimeout: async () => {
+          await application.abandonInitialSetupOAuth();
+          new Notice('Cloudflare 授权已超时，请重新开始授权。');
+        },
+      });
+    application = new PagesPublishApplication(
+      vaultRoot,
       (url) => {
         window.open(url, '_blank', 'noopener,noreferrer');
       },
@@ -36,18 +156,54 @@ export default class PagesPublishPlugin extends Plugin {
           set: (callback, delayMs) => window.setTimeout(callback, delayMs),
           clear: (handle) => window.clearTimeout(handle as number),
         },
+        setup: new SiteSetupService(vaultRoot, { projects: cloudflareProjects }),
+        setupConnection: cloudflareConnection,
+        oauthCallback,
+        setupEnvironment: publicationEnvironment,
+        deploymentAdapter: createVaultCloudflarePagesDeploymentAdapter({
+          vaultRoot,
+          connection: cloudflareConnection,
+          http: cloudflareHttp,
+        }),
+        deploymentFacts,
+        customDomainStatus: createVaultCloudflarePagesDomainStatusInspector({
+          vaultRoot,
+          connection: cloudflareConnection,
+          projectsForCredential: (credential) => new CloudflarePagesProjectApi(
+            cloudflareHttp,
+            async () => credential,
+          ),
+        }),
         maintenance: createLocalMaintenanceService({
           directory: maintenanceDirectory,
           pluginVersion: this.manifest.version,
           platform: process.platform,
           adapter: this.app.vault.adapter,
+          environment: publicationEnvironment,
+          connection: cloudflareConnection,
+          diagnosticLog,
+          logs: {
+            open: async () => openLatestMaintenanceLog({
+              workspace: this.app.workspace,
+            }),
+          },
         }),
+        diagnosticLog,
       },
     );
-    // The application currently has no host-provided Pages adapter until its
-    // connection boundary is configured. Calling this now keeps startup
-    // recovery wired for that boundary without exposing an unhandled promise.
-    void application.hydratePublicationFacts().catch(() => undefined);
+    this.register(() => {
+      void oauthCallback?.stop().catch(() => undefined);
+    });
+    const recoveryInspector = new CloudflarePagesDeploymentInspector({
+      vaultRoot,
+      connection: cloudflareConnection,
+      http: cloudflareHttp,
+    });
+    // A missing receipt makes this a local read only. If a remote recovery
+    // cannot complete, refresh records the guarded reconciliation state.
+    void application.recoverPublicationFacts(recoveryInspector).catch(() => {
+      void application.hydratePublicationFacts().catch(() => undefined);
+    });
     const settingTab = new PagesPublishSettingTab(
       this,
       adapter.getBasePath(),
@@ -79,6 +235,14 @@ export default class PagesPublishPlugin extends Plugin {
     this.registerView(
       PAGES_PUBLISH_VIEW_TYPE,
       (leaf) => new PagesPublishView(leaf, application),
+    );
+    this.registerView(
+      PAGES_PUBLISH_LOG_VIEW_TYPE,
+      (leaf) => new PagesPublishMaintenanceLogView(leaf, () => diagnosticLog.entries()),
+    );
+    this.registerView(
+      PAGES_PUBLISH_CONFIG_REPAIR_VIEW_TYPE,
+      (leaf) => new PagesPublishSiteConfigRepairView(leaf, vaultRoot),
     );
     this.registerView(
       CURRENT_ARTICLE_VIEW_TYPE,
@@ -149,7 +313,7 @@ export default class PagesPublishPlugin extends Plugin {
         // Obsidian's public MenuItem API has no submenu primitive. A labelled
         // section preserves the Pages Publish grouping without relying on DOM
         // internals that would make the menu brittle across desktop releases.
-        menu.addItem((item) => item.setTitle('Pages publish').setIsLabel(true));
+        menu.addItem((item) => item.setTitle('Pages Publish').setIsLabel(true));
         menu.addItem((item) =>
           item
             .setTitle(pagesPublishAction('open-article-panel').name)
@@ -158,30 +322,78 @@ export default class PagesPublishPlugin extends Plugin {
               void this.openArticlePanelFor(file.path);
             }),
         );
+        let visibilityItem: MenuItem | undefined;
+        let previewItem: MenuItem | undefined;
+        let onlineItem: MenuItem | undefined;
         menu.addItem((item) =>
-          item
-            .setTitle(pagesPublishAction('change-visibility').name)
+          (visibilityItem = item)
+            .setTitle('更改可见性…（正在检查）')
             .setIcon('eye')
+            .setDisabled(true)
             .onClick(() => {
               void this.openArticlePanelFor(file.path);
             }),
         );
         menu.addItem((item) =>
-          item
-            .setTitle(pagesPublishAction('preview-article').name)
+          (previewItem = item)
+            .setTitle('预览文章（正在检查）')
             .setIcon('monitor-play')
+            .setDisabled(true)
             .onClick(() => {
               void this.previewArticle(application, file.path);
             }),
         );
         menu.addItem((item) =>
-          item
-            .setTitle(pagesPublishAction('open-online-page').name)
+          (onlineItem = item)
+            .setTitle('打开线上页面（正在检查）')
             .setIcon('external-link')
+            .setDisabled(true)
             .onClick(() => {
               void this.openArticleOnlinePage(application, file.path);
             }),
         );
+        void application.getCurrentArticlePanel({ pinnedPath: file.path }).then((state) => {
+          const article = state.status === 'article' ? state : undefined;
+          const onlineUrl = article?.route.onlineUrl
+            ?? (state.status === 'out-of-scope-online' ? state.onlineUrl : undefined);
+          const availability = articleMenuAvailability({
+            article: article !== undefined,
+            environmentReady: application.getInitialSetupEnvironment().stage === 'ready',
+            onlineUrl,
+          });
+          setMenuAvailability(
+            visibilityItem,
+            pagesPublishAction('change-visibility').name,
+            availability.visibility,
+          );
+          setMenuAvailability(
+            previewItem,
+            pagesPublishAction('preview-article').name,
+            availability.preview,
+          );
+          setMenuAvailability(
+            onlineItem,
+            pagesPublishAction('open-online-page').name,
+            availability.online,
+          );
+        }).catch(() => {
+          const unavailable = { enabled: false as const, reason: '无法读取当前文章状态' };
+          setMenuAvailability(
+            visibilityItem,
+            pagesPublishAction('change-visibility').name,
+            unavailable,
+          );
+          setMenuAvailability(
+            previewItem,
+            pagesPublishAction('preview-article').name,
+            unavailable,
+          );
+          setMenuAvailability(
+            onlineItem,
+            pagesPublishAction('open-online-page').name,
+            unavailable,
+          );
+        });
       }),
     );
     this.activation = activatePagesPublish(
@@ -217,11 +429,14 @@ export default class PagesPublishPlugin extends Plugin {
   }
 
   private async openPublishCenter(): Promise<void> {
-    const leaf = this.app.workspace.getLeaf('tab');
-    await leaf.setViewState({
-      type: PAGES_PUBLISH_VIEW_TYPE,
-      active: true,
-    });
+    const existing = this.app.workspace.getLeavesOfType(PAGES_PUBLISH_VIEW_TYPE)[0];
+    const leaf = existing ?? this.app.workspace.getLeaf('tab');
+    if (!existing) {
+      await leaf.setViewState({
+        type: PAGES_PUBLISH_VIEW_TYPE,
+        active: true,
+      });
+    }
     await this.app.workspace.revealLeaf(leaf);
   }
 
@@ -256,12 +471,7 @@ export default class PagesPublishPlugin extends Plugin {
     sourcePath: string,
   ): Promise<void> {
     try {
-      const state = await application.getCurrentArticlePanel({ activePath: sourcePath });
-      if (state.status !== 'article' || !state.metadata.deployment?.url) {
-        new Notice('此文章尚无可打开的线上页面。');
-        return;
-      }
-      window.open(state.metadata.deployment.url, '_blank', 'noopener,noreferrer');
+      await application.openArticleOnlinePage(sourcePath);
     } catch (error) {
       new Notice(`无法读取当前文章的线上页面：${errorMessage(error)}`);
     }
@@ -276,4 +486,14 @@ export default class PagesPublishPlugin extends Plugin {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '发生未知错误。';
+}
+
+function setMenuAvailability(
+  item: MenuItem | undefined,
+  label: string,
+  state: { enabled: true } | { enabled: false; reason: string },
+): void {
+  item
+    ?.setDisabled(!state.enabled)
+    .setTitle(state.enabled ? label : `${label}（${state.reason}）`);
 }

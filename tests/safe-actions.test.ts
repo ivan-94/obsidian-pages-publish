@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  articleMenuAvailability,
   PAGES_PUBLISH_COMMANDS,
   PAGES_PUBLISH_FILE_ACTIONS,
 } from '../src/plugin/safe-actions';
@@ -27,5 +28,31 @@ describe('safe global and Markdown actions', () => {
       { id: 'preview-article', name: '预览文章' },
       { id: 'open-online-page', name: '打开线上页面' },
     ]);
+  });
+
+  it('disables unavailable file actions with a user-facing reason', () => {
+    expect(articleMenuAvailability({
+      article: false,
+      environmentReady: false,
+      onlineUrl: undefined,
+    })).toEqual({
+      visibility: { enabled: false, reason: '不在已配置的内容范围内' },
+      preview: { enabled: false, reason: '本地发布环境尚未就绪' },
+      online: { enabled: false, reason: '尚无线上页面' },
+    });
+    expect(articleMenuAvailability({
+      article: true,
+      environmentReady: true,
+      onlineUrl: 'https://example.com/article/',
+    })).toEqual({
+      visibility: { enabled: true },
+      preview: { enabled: true },
+      online: { enabled: true },
+    });
+    expect(articleMenuAvailability({
+      article: false,
+      environmentReady: true,
+      onlineUrl: 'https://example.com/out-of-scope/',
+    }).online).toEqual({ enabled: true });
   });
 });

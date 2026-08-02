@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { join } from 'path';
 import {
+  loadSiteConfigFromDirectory,
   saveSiteConfigToDirectory,
   validateSiteConfigForDirectory,
   type SiteConfigV1,
@@ -36,6 +37,11 @@ export interface CloudflarePagesProjectBoundary {
     project: SetupProject;
     hostname: string;
   }): Promise<SetupCustomDomainResult>;
+  /** Read-only status refresh for a previously configured custom domain. */
+  inspectCustomDomain?(input: {
+    project: SetupProject;
+    hostname: string;
+  }): Promise<SetupCustomDomainResult>;
 }
 
 export interface SetupDraft {
@@ -52,6 +58,8 @@ export interface SetupContentSummary {
   candidateCount: number;
   eligibleCount: number;
   issues?: SiteScanResult['issues'];
+  examples?: Array<{ sourcePath: string; url: string }>;
+  roots?: Array<{ path: string; candidateCount: number }>;
 }
 
 export interface SetupReview {
@@ -65,6 +73,8 @@ export interface SetupReview {
   candidateCount: number;
   eligibleCount: number;
   issues: SiteScanResult['issues'];
+  examples: Array<{ sourcePath: string; url: string }>;
+  roots?: Array<{ path: string; candidateCount: number }>;
 }
 
 export interface SetupResult {
@@ -73,6 +83,8 @@ export interface SetupResult {
   domain: SetupCustomDomainResult | { status: 'active'; url: string };
   scan: SetupContentSummary;
 }
+
+export type SetupProgressStage = 'validate' | 'project' | 'domain' | 'config' | 'scan';
 
 export class SiteSetupError extends Error {
   readonly name = 'SiteSetupError';
@@ -86,6 +98,7 @@ export class SiteSetupError extends Error {
       | 'invalid-pages-domain'
       | 'custom-domain-failed'
       | 'different-plan-in-progress'
+      | 'setup-config-changed'
       | 'project-list-unavailable',
     message: string,
   ) {
@@ -103,6 +116,14 @@ export class SiteSetupService {
   private readonly saveConfig: (config: SiteConfigV1) => Promise<void>;
   private confirmation:
     | { planDigest: string; result: Promise<SetupResult> }
+    | undefined;
+  private resumableConfirmation:
+    | {
+      planDigest: string;
+      config: SiteConfigV1;
+      project: SetupResult['project'];
+      domain: SetupResult['domain'];
+    }
     | undefined;
 
   constructor(
@@ -126,6 +147,15 @@ export class SiteSetupService {
           (candidate) => !blockerPaths.has(candidate.sourcePath),
         ).length,
         issues: result.issues,
+        examples: (result.routePlan?.articles ?? [])
+          .slice(0, 3)
+          .map((article) => ({ sourcePath: article.sourcePath, url: article.url })),
+        roots: config.contentRoots.map((root) => ({
+          path: root.path,
+          candidateCount: result.candidates.filter((candidate) =>
+            isSourceInsideRoot(candidate.sourcePath, root.path),
+          ).length,
+        })),
       };
     });
     this.saveConfig = dependencies.saveConfig ?? (async (config) => {
@@ -144,6 +174,8 @@ export class SiteSetupService {
       candidateCount: scan.candidateCount,
       eligibleCount: scan.eligibleCount,
       issues: scan.issues ?? [],
+      examples: scan.examples ?? [],
+      ...(scan.roots === undefined ? {} : { roots: scan.roots }),
     };
   }
 
@@ -158,7 +190,53 @@ export class SiteSetupService {
     return projects.filter((project) => project.accountId === account.id);
   }
 
-  confirm(draft: SetupDraft): Promise<SetupResult> {
+  async verifyConfiguredProject(
+    account: SetupAccount,
+    projectName: string,
+  ): Promise<SetupProject> {
+    const project = await this.dependencies.projects.findProject({
+      accountId: account.id,
+      projectName,
+    });
+    if (!project) {
+      throw new SiteSetupError(
+        'existing-project-not-found',
+        'The selected Pages project was not found in this Cloudflare account.',
+      );
+    }
+    const verified = await this.dependencies.projects.verifyProject(project);
+    this.assertProjectMatches(verified, {
+      account,
+      action: 'bind',
+      projectName,
+      domain: { kind: 'pages-dev' },
+    });
+    return verified;
+  }
+
+  async connectConfiguredCustomDomain(
+    account: SetupAccount,
+    projectName: string,
+    hostname: string,
+  ): Promise<SetupCustomDomainResult> {
+    const project = await this.verifyConfiguredProject(account, projectName);
+    const result = await this.dependencies.projects.ensureCustomDomain({
+      project,
+      hostname,
+    });
+    if (result.status === 'failed') {
+      throw new SiteSetupError(
+        'custom-domain-failed',
+        result.message ?? 'Cloudflare could not bind the custom domain.',
+      );
+    }
+    return result;
+  }
+
+  confirm(
+    draft: SetupDraft,
+    onProgress: (stage: SetupProgressStage) => void = () => undefined,
+  ): Promise<SetupResult> {
     const frozenDraft = structuredClone(draft);
     const planDigest = createHash('sha256')
       .update(JSON.stringify(frozenDraft))
@@ -170,7 +248,7 @@ export class SiteSetupService {
         'Another site setup plan is already being created. Wait for it to finish before changing the plan.',
       ));
     }
-    const confirmation = this.confirmExclusive(frozenDraft);
+    const confirmation = this.confirmExclusive(frozenDraft, planDigest, onProgress);
     this.confirmation = { planDigest, result: confirmation };
     void confirmation.finally(() => {
       if (this.confirmation?.result === confirmation) this.confirmation = undefined;
@@ -178,14 +256,65 @@ export class SiteSetupService {
     return confirmation;
   }
 
-  private async confirmExclusive(draft: SetupDraft): Promise<SetupResult> {
+  private async confirmExclusive(
+    draft: SetupDraft,
+    planDigest: string,
+    onProgress: (stage: SetupProgressStage) => void,
+  ): Promise<SetupResult> {
+    if (this.resumableConfirmation) {
+      if (this.resumableConfirmation.planDigest !== planDigest) {
+        throw new SiteSetupError(
+          'different-plan-in-progress',
+          'The confirmed site configuration is waiting for its final scan. Retry that plan before changing it.',
+        );
+      }
+      const resumed = this.resumableConfirmation;
+      await this.assertResumableConfig(resumed.config);
+      for (const stage of ['validate', 'project', 'domain', 'config', 'scan'] as const) {
+        onProgress(stage);
+      }
+      const scan = await this.scan(resumed.config);
+      this.resumableConfirmation = undefined;
+      return { stage: 'ready', project: resumed.project, domain: resumed.domain, scan };
+    }
     await this.assertUnconfigured();
+    onProgress('validate');
     const review = await this.review(draft);
+    onProgress('project');
     const project = await this.ensureProject(review.cloudflare);
+    onProgress('domain');
     const domain = await this.ensureDomain(project, review.cloudflare.domain);
+    onProgress('config');
     await this.saveConfig(review.config);
+    this.resumableConfirmation = {
+      planDigest,
+      config: review.config,
+      project,
+      domain,
+    };
+    onProgress('scan');
     const scan = await this.scan(review.config);
+    this.resumableConfirmation = undefined;
     return { stage: 'ready', project, domain, scan };
+  }
+
+  private async assertResumableConfig(expected: SiteConfigV1): Promise<void> {
+    try {
+      const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+      if (
+        loaded.status === 'editable'
+        && JSON.stringify(loaded.config) === JSON.stringify(expected)
+      ) {
+        return;
+      }
+    } catch {
+      // Missing, unreadable, or invalid formal configuration cannot resume.
+    }
+    this.resumableConfirmation = undefined;
+    throw new SiteSetupError(
+      'setup-config-changed',
+      'The saved site configuration changed after setup. Open settings or the configuration file to repair it before scanning.',
+    );
   }
 
   private async validateDraft(draft: SetupDraft): Promise<SiteConfigV1> {
@@ -302,4 +431,9 @@ export class SiteSetupService {
     }
     return result;
   }
+}
+
+function isSourceInsideRoot(sourcePath: string, rootPath: string): boolean {
+  const normalized = rootPath.replace(/^\.\//, '').replace(/\/$/, '');
+  return normalized === '' || normalized === '.' || sourcePath.startsWith(`${normalized}/`);
 }

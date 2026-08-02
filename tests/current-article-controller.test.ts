@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  articleContentIssueLabel,
   articleIntentEditorFields,
   LatestCurrentArticleProjection,
 } from '../src/plugin/current-article-controller';
@@ -46,5 +47,14 @@ describe('latest current article projection', () => {
       'order',
       'redirects',
     ]);
+  });
+
+  it('does not downgrade a blocking article issue to a warning label', () => {
+    expect(articleContentIssueLabel({ severity: 'blocker', dormant: false }))
+      .toBe('阻塞');
+    expect(articleContentIssueLabel({ severity: 'warning', dormant: false }))
+      .toBe('警告');
+    expect(articleContentIssueLabel({ severity: 'warning', dormant: true }))
+      .toBe('休眠警告');
   });
 });

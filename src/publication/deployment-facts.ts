@@ -6,7 +6,12 @@ import {
   type PublicationDeploymentFacts,
 } from './article-metadata';
 import type { PublicationSnapshot } from './publish-center';
-import type { PublishBaseline, DeploymentBaselineArticle } from './publish-center';
+import type {
+  PublishBaseline,
+  DeploymentBaselineArticle,
+  PublicationSnapshotArticle,
+} from './publish-center';
+import type { PublicationActivationTarget } from './publish-orchestrator';
 
 export interface DeploymentManifestArticle extends DeploymentBaselineArticle {
   title: string;
@@ -33,12 +38,34 @@ export interface DeploymentRecoveryReceipt {
   takedowns: Array<{ sourcePath: string; firstPublishedAt?: string }>;
 }
 
+/**
+ * Written after remote upload but before activation polling. It contains no
+ * built files or credentials, only the immutable facts required to reconcile
+ * a deployment that may become active while the desktop app is interrupted.
+ */
+export interface PendingActivationReceipt {
+  schemaVersion: 1;
+  target: PublicationActivationTarget;
+  deployment: {
+    /** Undefined means the create request may have reached Cloudflare but no response identity was durable. */
+    deploymentId?: string;
+    scanDigest: string;
+  };
+  snapshot: {
+    articles: PublicationSnapshotArticle[];
+    timeZone?: string;
+  };
+}
+
 export interface DeploymentStateStore {
   readLatestManifest(): Promise<DeploymentManifest | undefined>;
   writeLatestManifest(manifest: DeploymentManifest): Promise<void>;
   readRecoveryReceipt(): Promise<DeploymentRecoveryReceipt | undefined>;
   writeRecoveryReceipt(receipt: DeploymentRecoveryReceipt): Promise<void>;
   clearRecoveryReceipt(): Promise<void>;
+  readPendingActivation?(): Promise<PendingActivationReceipt | undefined>;
+  writePendingActivation?(receipt: PendingActivationReceipt): Promise<void>;
+  clearPendingActivation?(): Promise<void>;
 }
 
 export interface FileSystemDeploymentStateStoreOptions {
@@ -80,6 +107,23 @@ export class FileSystemDeploymentStateStore implements DeploymentStateStore {
   async clearRecoveryReceipt(): Promise<void> {
     try {
       await unlink(join(this.directory, 'deployment-recovery.json'));
+      await this.syncDirectory();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+
+  async readPendingActivation(): Promise<PendingActivationReceipt | undefined> {
+    return this.readRecord('activation-pending.json', parsePendingActivationReceipt);
+  }
+
+  async writePendingActivation(receipt: PendingActivationReceipt): Promise<void> {
+    await this.writeRecord('activation-pending.json', copyPendingActivationReceipt(receipt));
+  }
+
+  async clearPendingActivation(): Promise<void> {
+    try {
+      await unlink(join(this.directory, 'activation-pending.json'));
       await this.syncDirectory();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -134,8 +178,13 @@ export class FileSystemDeploymentStateStore implements DeploymentStateStore {
 export class PublicationReconciliationRequiredError extends Error {
   readonly name = 'PublicationReconciliationRequiredError';
 
-  constructor(readonly deploymentId?: string) {
-    super('The site is online, but local publishing facts need repair before another publish can start.');
+  constructor(
+    readonly deploymentId?: string,
+    readonly target?: PublicationActivationTarget,
+  ) {
+    super(deploymentId === undefined
+      ? 'A Cloudflare upload outcome could not be confirmed. Verify the saved Pages target before another publish can start.'
+      : 'The site is online, but local publishing facts need repair before another publish can start.');
   }
 }
 
@@ -150,6 +199,15 @@ export interface ActivatedDeploymentInspector {
     deploymentId: string;
     url: string;
     /** Cloudflare's reported state; only the terminal `success` state is accepted. */
+    status: string;
+  }>;
+  /** Uses the persisted target rather than the current configuration/account. */
+  inspectPending?(input: {
+    deploymentId: string;
+    target: PublicationActivationTarget;
+  }): Promise<{
+    deploymentId: string;
+    url: string;
     status: string;
   }>;
 }
@@ -180,7 +238,16 @@ export class DeploymentFactsCoordinator {
   }
 
   async assertReadyForPublication(): Promise<void> {
-    const receipt = await this.dependencies.store.readRecoveryReceipt();
+    const [receipt, pending] = await Promise.all([
+      this.dependencies.store.readRecoveryReceipt(),
+      this.readPendingActivation(),
+    ]);
+    if (pending) {
+      throw new PublicationReconciliationRequiredError(
+        pending.deployment.deploymentId,
+        pending.target,
+      );
+    }
     if (receipt) throw new PublicationReconciliationRequiredError(receipt.deployment.deploymentId);
   }
 
@@ -211,7 +278,80 @@ export class DeploymentFactsCoordinator {
     }
   }
 
+  async recordPendingActivation(input: {
+    deploymentId?: string;
+    target: PublicationActivationTarget;
+    snapshot: PublicationSnapshot;
+  }): Promise<void> {
+    const store = this.dependencies.store;
+    if (!store.readPendingActivation || !store.writePendingActivation) return;
+    const existing = await store.readPendingActivation();
+    if (existing) {
+      if (!sameActivationTarget(existing.target, input.target) ||
+        (existing.deployment.deploymentId !== undefined && input.deploymentId !== undefined &&
+          existing.deployment.deploymentId !== input.deploymentId)) {
+        throw new PublicationReconciliationRequiredError(
+          existing.deployment.deploymentId,
+          existing.target,
+        );
+      }
+      if (existing.deployment.deploymentId === input.deploymentId || input.deploymentId === undefined) {
+        return;
+      }
+      await store.writePendingActivation({
+        ...existing,
+        deployment: { ...existing.deployment, deploymentId: input.deploymentId },
+      });
+      return;
+    }
+    await store.writePendingActivation({
+      schemaVersion: 1,
+      target: { ...input.target },
+      deployment: {
+        ...(input.deploymentId === undefined ? {} : { deploymentId: input.deploymentId }),
+        scanDigest: input.snapshot.scanDigest,
+      },
+      snapshot: {
+        articles: input.snapshot.articles.map(copySnapshotArticle),
+        ...(input.snapshot.timeZone === undefined ? {} : { timeZone: input.snapshot.timeZone }),
+      },
+    });
+  }
+
+  async clearPendingActivation(deploymentId: string): Promise<void> {
+    const store = this.dependencies.store;
+    if (!store.readPendingActivation || !store.clearPendingActivation) return;
+    const pending = await store.readPendingActivation();
+    if (!pending) return;
+    if (pending.deployment.deploymentId !== deploymentId) {
+      throw new PublicationReconciliationRequiredError(
+        pending.deployment.deploymentId,
+        pending.target,
+      );
+    }
+    await store.clearPendingActivation();
+  }
+
+  /**
+   * An unknown deployment ID cannot be verified automatically. This is only
+   * called after an explicit user confirmation that the saved Pages target
+   * was checked outside the plugin.
+   */
+  async acknowledgeUploadUncertainActivation(): Promise<void> {
+    const store = this.dependencies.store;
+    if (!store.readPendingActivation || !store.clearPendingActivation) {
+      throw new Error('Local upload recovery state is unavailable.');
+    }
+    const pending = await store.readPendingActivation();
+    if (!pending || pending.deployment.deploymentId !== undefined) {
+      throw new Error('No upload-uncertain recovery requires manual acknowledgement.');
+    }
+    await store.clearPendingActivation();
+  }
+
   async recover(inspector: ActivatedDeploymentInspector): Promise<DeploymentManifest | undefined> {
+    const pending = await this.readPendingActivation();
+    if (pending) return this.recoverPendingActivation(pending, inspector);
     const receipt = await this.dependencies.store.readRecoveryReceipt();
     if (!receipt) return undefined;
     try {
@@ -227,6 +367,57 @@ export class DeploymentFactsCoordinator {
     } catch {
       throw new PublicationReconciliationRequiredError(receipt.deployment.deploymentId);
     }
+  }
+
+  private async recoverPendingActivation(
+    pending: PendingActivationReceipt,
+    inspector: ActivatedDeploymentInspector,
+  ): Promise<DeploymentManifest | undefined> {
+    const deploymentId = pending.deployment.deploymentId;
+    if (deploymentId === undefined || !inspector.inspectPending) {
+      throw new PublicationReconciliationRequiredError(
+        pending.deployment.deploymentId,
+        pending.target,
+      );
+    }
+    try {
+      const remote = await inspector.inspectPending({
+        deploymentId,
+        target: pending.target,
+      });
+      if (remote.deploymentId !== deploymentId) {
+        throw new Error('The pending Cloudflare deployment does not match its receipt.');
+      }
+      if (remote.status !== 'success') {
+        if (remote.status === 'failure' || remote.status === 'canceled') {
+          await this.clearPendingActivation(deploymentId);
+          return undefined;
+        }
+        throw new Error('The Cloudflare deployment has not reached a terminal state.');
+      }
+      const existing = await this.dependencies.store.readRecoveryReceipt();
+      if (existing && existing.deployment.deploymentId !== deploymentId) {
+        throw new PublicationReconciliationRequiredError(existing.deployment.deploymentId);
+      }
+      const manifest = existing
+        ? await this.completeReceipt(existing)
+        : await this.reconcile({
+          deploymentId: remote.deploymentId,
+          url: remote.url,
+          scanDigest: pending.deployment.scanDigest,
+        }, snapshotFromPendingActivation(pending));
+      await this.clearPendingActivation(deploymentId);
+      return manifest;
+    } catch (error) {
+      if (error instanceof PublicationReconciliationRequiredError) throw error;
+      throw new PublicationReconciliationRequiredError(deploymentId, pending.target);
+    }
+  }
+
+  private async readPendingActivation(): Promise<PendingActivationReceipt | undefined> {
+    return this.dependencies.store.readPendingActivation
+      ? this.dependencies.store.readPendingActivation()
+      : undefined;
   }
 
   private async completeReceipt(receipt: DeploymentRecoveryReceipt): Promise<DeploymentManifest> {
@@ -426,6 +617,48 @@ function parseReceipt(value: unknown): DeploymentRecoveryReceipt | undefined {
   };
 }
 
+function parsePendingActivationReceipt(value: unknown): PendingActivationReceipt | undefined {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !isRecord(value.target) ||
+    !isRecord(value.deployment) ||
+    !isRecord(value.snapshot) ||
+    value.target.provider !== 'cloudflare-pages' ||
+    !isString(value.target.accountId) ||
+    !isString(value.target.projectName) ||
+    !isString(value.deployment.scanDigest) ||
+    !Array.isArray(value.snapshot.articles)
+  ) {
+    return undefined;
+  }
+  const articles = value.snapshot.articles.map(parseSnapshotArticle);
+  if (!articles.every((article): article is PublicationSnapshotArticle => article !== undefined)) {
+    return undefined;
+  }
+  if (value.snapshot.timeZone !== undefined && !isString(value.snapshot.timeZone)) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 1,
+    target: {
+      provider: 'cloudflare-pages',
+      accountId: value.target.accountId,
+      projectName: value.target.projectName,
+    },
+    deployment: {
+      ...(isString(value.deployment.deploymentId)
+        ? { deploymentId: value.deployment.deploymentId }
+        : {}),
+      scanDigest: value.deployment.scanDigest,
+    },
+    snapshot: {
+      articles,
+      ...(value.snapshot.timeZone === undefined ? {} : { timeZone: value.snapshot.timeZone }),
+    },
+  };
+}
+
 function parseManifestArticle(value: unknown): DeploymentManifestArticle | undefined {
   if (!isRecord(value) || !isString(value.sourcePath) || !isString(value.title) ||
     !isString(value.url) || !isString(value.sourceDigest) ||
@@ -444,6 +677,34 @@ function parseManifestArticle(value: unknown): DeploymentManifestArticle | undef
   };
 }
 
+function parseSnapshotArticle(value: unknown): PublicationSnapshotArticle | undefined {
+  if (
+    !isRecord(value) ||
+    !isString(value.sourcePath) ||
+    !isString(value.title) ||
+    !isString(value.sourceDigest) ||
+    (value.visibility !== 'public' && value.visibility !== 'unlisted' && value.visibility !== 'private') ||
+    (value.url !== undefined && !isString(value.url)) ||
+    (value.firstPublishedAt !== undefined && !isString(value.firstPublishedAt)) ||
+    (value.lastPublishedAt !== undefined && !isString(value.lastPublishedAt))
+  ) {
+    return undefined;
+  }
+  return {
+    sourcePath: value.sourcePath,
+    title: value.title,
+    ...(value.url === undefined ? {} : { url: value.url }),
+    visibility: value.visibility,
+    sourceDigest: value.sourceDigest,
+    ...(value.firstPublishedAt === undefined
+      ? {}
+      : { firstPublishedAt: value.firstPublishedAt }),
+    ...(value.lastPublishedAt === undefined
+      ? {}
+      : { lastPublishedAt: value.lastPublishedAt }),
+  };
+}
+
 function copyManifest(manifest: DeploymentManifest): DeploymentManifest {
   return {
     ...manifest,
@@ -458,6 +719,56 @@ function copyReceipt(receipt: DeploymentRecoveryReceipt): DeploymentRecoveryRece
     manifest: copyManifest(receipt.manifest),
     takedowns: receipt.takedowns.map((takedown) => ({ ...takedown })),
   };
+}
+
+function copyPendingActivationReceipt(
+  receipt: PendingActivationReceipt,
+): PendingActivationReceipt {
+  return {
+    schemaVersion: 1,
+    target: { ...receipt.target },
+    deployment: { ...receipt.deployment },
+    snapshot: {
+      articles: receipt.snapshot.articles.map(copySnapshotArticle),
+      ...(receipt.snapshot.timeZone === undefined ? {} : { timeZone: receipt.snapshot.timeZone }),
+    },
+  };
+}
+
+function copySnapshotArticle(article: PublicationSnapshotArticle): PublicationSnapshotArticle {
+  return {
+    sourcePath: article.sourcePath,
+    title: article.title,
+    ...(article.url === undefined ? {} : { url: article.url }),
+    visibility: article.visibility,
+    sourceDigest: article.sourceDigest,
+    ...(article.firstPublishedAt === undefined
+      ? {}
+      : { firstPublishedAt: article.firstPublishedAt }),
+    ...(article.lastPublishedAt === undefined
+      ? {}
+      : { lastPublishedAt: article.lastPublishedAt }),
+  };
+}
+
+function snapshotFromPendingActivation(pending: PendingActivationReceipt): PublicationSnapshot {
+  return {
+    scanDigest: pending.deployment.scanDigest,
+    files: {},
+    assets: {},
+    articles: pending.snapshot.articles.map(copySnapshotArticle),
+    ...(pending.snapshot.timeZone === undefined ? {} : { timeZone: pending.snapshot.timeZone }),
+    output: { fileCount: 0, assetCount: 0, assetBytes: 0 },
+  };
+}
+
+function sameActivationTarget(
+  left: PublicationActivationTarget,
+  right: PublicationActivationTarget,
+): boolean {
+  return left.provider === right.provider &&
+    left.accountId === right.accountId &&
+    left.projectName === right.projectName;
 }
 
 function copyBaselineArticle(article: DeploymentManifestArticle): DeploymentBaselineArticle {

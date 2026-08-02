@@ -367,7 +367,7 @@ Cloudflare
 用于创建或绑定 Pages 项目并发布站点。
 
 [使用 Cloudflare 登录]
-将在浏览器中打开授权页面。凭据只保存在系统 Keychain。
+将在浏览器中打开授权页面。凭据保存在 Obsidian SecretStorage（当前 Vault 的本地存储）。
 
 高级方式
 ▸ 使用 API Token
@@ -399,6 +399,7 @@ Pages 项目
 ```
 
 - OAuth 是主路径；API Token 放在高级方式。
+- OAuth 在浏览器中完成，并只接受固定本机回调 `http://127.0.0.1:47931/oauth/callback`；该地址必须与 Cloudflare OAuth Client 的 Redirect URL 完全一致。授权码不显示在 UI、Vault 或日志中；取消或五分钟未完成会清理本机回调与待处理授权。
 - 账号、项目和域名都在最终确认前保持为计划，不提前修改远端。
 - 绑定已有项目时必须验证兼容性与归属。
 - 自定义域名流程说明 DNS/验证状态，但不承诺即时生效。
@@ -969,6 +970,6 @@ Cloudflare 授权已失效，发布已暂停。             [重新授权]
 ### Open questions / risks
 
 - Frontmatter `publication` 的首版 schema、默认值与迁移边界已在 [`PRODUCT-SPEC.md`](./PRODUCT-SPEC.md) 的 FR-7 固化。
-- Cloudflare OAuth、Pages 项目绑定和自定义域名能力需要以实现期 API 验证为准。
+- Cloudflare OAuth 使用 Authorization Code + S256 PKCE 与固定本机 HTTP 回调；真实 Client ID、隔离账号与撤销/重授权流程仍需 HAT 验证。
 - ASCII 原型没有验证真实 Obsidian 容器高度、侧栏最小宽度与主题 CSS 差异；实现后应进行视觉保真循环。
 - 首次发布时“合格候选的批量初始选择”需要通过真实大 Vault 数据验证默认策略是否足够安全。

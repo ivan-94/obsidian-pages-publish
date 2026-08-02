@@ -2,39 +2,72 @@ import {
   ButtonComponent,
   ItemView,
   MarkdownView,
+  Menu,
   Modal,
   Notice,
   Setting,
+  type ViewStateResult,
   type WorkspaceLeaf,
 } from 'obsidian';
-import type { PagesPublishApplication } from '../application';
+import type {
+  InitialSetupConnection,
+  PagesPublishApplication,
+} from '../application';
 import type { PublicationServiceStatus } from '../application';
 import type { ScanIssue } from '../content/site-scanner';
 import type {
   PublishCenterArticle,
   PublishCenterState,
 } from '../publication/publish-center';
+import type { CurrentArticlePanelArticle } from '../publication/current-article-panel';
+import { openPluginSettingsInHost } from './settings-navigation';
+import { openSiteConfigForRepair } from './site-config-repair-view';
 import type { SetupDraft } from '../setup/site-setup';
 import type {
   SetupAccount,
   SetupProject,
+  SetupProgressStage,
   SetupReview,
 } from '../setup/site-setup';
 
 export const PAGES_PUBLISH_VIEW_TYPE = 'pages-publish-center';
 
 type PublishCenterTab = 'changes' | 'all' | 'unpublished' | 'issues';
+type PublishCenterFilter = 'all' | 'public' | 'unlisted' | 'private' | 'blocker' | 'warning';
+
+type SetupExecutionState =
+  | { state: 'running'; stage: SetupProgressStage; draft: SetupDraft }
+  | { state: 'success'; candidateCount: number; eligibleCount: number; domain: string }
+  | { state: 'failed'; stage: SetupProgressStage; draft: SetupDraft; message: string };
 
 export class PagesPublishView extends ItemView {
   private activeTab: PublishCenterTab = 'changes';
+  private articleFilter: PublishCenterFilter = 'all';
   private selectedSourcePath: string | undefined;
+  private selectedArticleDetail: CurrentArticlePanelArticle | undefined;
+  private focusReviewOnRender = false;
+  private focusArticleOnRender: string | undefined;
+  private focusTabOnRender: PublishCenterTab | undefined;
+  private focusSearchOnRender = false;
+  private focusFilterOnRender = false;
+  private articleSearchQuery = '';
   private setupStep = 0;
   private setupDraft: SetupDraft | undefined;
   private setupAccounts: SetupAccount[] | undefined;
   private setupProjects: SetupProject[] | undefined;
   private setupReview: SetupReview | undefined;
+  private setupProjectAvailability: { name: string; available: boolean } | undefined;
+  private setupVaultRootConfirmed = false;
+  private setupExecution: SetupExecutionState | undefined;
+  private showEnvironmentDetails = false;
+  private focusSetupHeadingOnRender = false;
   private unsubscribePublicationStatus: (() => void) | undefined;
+  private unsubscribeGlobalUiState: (() => void) | undefined;
   private lastPublishCenter: PublishCenterState | undefined;
+  private lastPublishConnection: InitialSetupConnection = { state: 'unavailable' };
+  private lastLaunchTarget: 'setup' | 'publish-center' | undefined;
+  private activeRender: Promise<void> | undefined;
+  private renderAgain = false;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -55,7 +88,27 @@ export class PagesPublishView extends ItemView {
     return 'cloud-upload';
   }
 
+  getState(): Record<string, unknown> {
+    return { tab: this.activeTab, filter: this.articleFilter };
+  }
+
+  async setState(state: unknown, _result: ViewStateResult): Promise<void> {
+    const tab = recordValue(state)?.tab;
+    if (isPublishCenterTab(tab)) this.activeTab = tab;
+    const filter = recordValue(state)?.filter;
+    if (isPublishCenterFilter(filter)) this.articleFilter = filter;
+  }
+
   async onOpen(): Promise<void> {
+    this.unsubscribeGlobalUiState = this.application.subscribeGlobalUiState?.(() => {
+      // A configured publish-center render starts scans, and scan lifecycle
+      // notifications are delivered through this same subscription. Queuing a
+      // second full render here would make each scan start another scan forever.
+      // Setup notifications remain coalesced because environment/OAuth changes
+      // can materially advance the wizard while it is already rendering.
+      if (this.lastLaunchTarget === 'publish-center' && this.activeRender) return;
+      void this.render();
+    });
     if (this.application.isPublicationAvailable()) {
       this.unsubscribePublicationStatus = this.application.subscribePublicationStatus(() => {
         void this.render();
@@ -65,17 +118,46 @@ export class PagesPublishView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    if (this.setupDraft) this.application.preserveInitialSetupDraft?.(this.setupDraft);
     this.unsubscribePublicationStatus?.();
     this.unsubscribePublicationStatus = undefined;
+    this.unsubscribeGlobalUiState?.();
+    this.unsubscribeGlobalUiState = undefined;
   }
 
-  private async render(): Promise<void> {
+  private render(): Promise<void> {
+    if (this.activeRender) {
+      this.renderAgain = true;
+      return this.activeRender;
+    }
+    const operation = this.renderUntilSettled();
+    this.activeRender = operation;
+    void operation.finally(() => {
+      if (this.activeRender === operation) this.activeRender = undefined;
+    }).catch(() => undefined);
+    return operation;
+  }
+
+  private async renderUntilSettled(): Promise<void> {
+    do {
+      this.renderAgain = false;
+      await this.renderOnce();
+    } while (this.renderAgain);
+  }
+
+  private async renderOnce(): Promise<void> {
     const container = this.contentEl;
     container.empty();
     container.addClass('pages-publish-view');
     container.createDiv({ cls: 'pages-publish-view__eyebrow', text: '发布工具' });
 
+    if (this.setupExecution) {
+      this.renderSetupExecution(container, this.setupExecution);
+      return;
+    }
+
     const target = await this.application.getLaunchTarget();
+    this.lastLaunchTarget = target;
     if (target === 'setup') {
       this.lastPublishCenter = undefined;
       await this.renderSetupWizard(container);
@@ -85,7 +167,7 @@ export class PagesPublishView extends ItemView {
     const publication = this.application.getPublicationStatus();
     if (publication.state === 'running') {
       if (this.lastPublishCenter) {
-        this.renderPublishCenter(container, this.lastPublishCenter);
+        this.renderPublishCenter(container, this.lastPublishCenter, this.lastPublishConnection);
       } else {
         this.renderPublishingWithoutScan(container, publication);
       }
@@ -94,8 +176,15 @@ export class PagesPublishView extends ItemView {
 
     try {
       const center = await this.application.getPublishCenter();
+      let connection: InitialSetupConnection = { state: 'unavailable' };
+      try {
+        connection = await this.application.getInitialSetupConnection();
+      } catch {
+        connection = { state: 'unavailable' };
+      }
       this.lastPublishCenter = center;
-      this.renderPublishCenter(container, center);
+      this.lastPublishConnection = connection;
+      this.renderPublishCenter(container, center, connection);
     } catch (error) {
       container.createEl('h2', { text: '无法读取发布配置' });
       container.createEl('p', {
@@ -114,16 +203,76 @@ export class PagesPublishView extends ItemView {
     this.renderPublicationStatus(container, status);
     container.createEl('p', {
       cls: 'pages-publish-view__summary',
-      text: '任务继续在后台运行。为避免影响当前发布，本次不会重新扫描 vault；完成后会自动刷新结果。',
+      text: '任务继续在后台运行。为避免影响当前发布，本次不会重新扫描 Vault；完成后会自动刷新结果。',
     });
+  }
+
+  private renderCachedPublishCenter(): void {
+    if (!this.lastPublishCenter) return;
+    const container = this.contentEl;
+    container.empty();
+    container.addClass('pages-publish-view');
+    container.createDiv({ cls: 'pages-publish-view__eyebrow', text: '发布工具' });
+    this.renderPublishCenter(container, this.lastPublishCenter, this.lastPublishConnection);
   }
 
   private renderPublishCenter(
     container: HTMLElement,
     center: PublishCenterState,
+    connection: InitialSetupConnection = { state: 'unavailable' },
   ): void {
     container.createDiv({ cls: 'pages-publish-view__type', text: '发布中心' });
     container.createEl('h2', { text: center.siteName });
+    const publishedSiteUrl = center.lastPublishedAt ? center.siteUrl : undefined;
+    const identity = container.createEl('p', { cls: 'pages-publish-view__identity' });
+    identity.createSpan({ text: publishedSiteUrl ?? '尚无已确认成功的线上站点' });
+    identity.createSpan({
+      text: connection.state === 'connected'
+        ? ` · Cloudflare 已连接${connection.account ? `：${connection.account.name}` : ''}`
+        : connection.state === 'expired'
+          ? ' · Cloudflare 授权已失效'
+          : connection.state === 'disconnected'
+            ? ' · Cloudflare 尚未连接'
+            : ' · Cloudflare 状态不可用',
+    });
+    identity.createSpan({
+      text: center.lastPublishedAt
+        ? ` · 上次发布 ${new Date(center.lastPublishedAt).toLocaleString()}`
+        : ' · 从未成功发布',
+    });
+    const headerActions = container.createDiv({ cls: 'pages-publish-view__header-actions' });
+    new ButtonComponent(headerActions)
+      .setButtonText('打开站点')
+      .setDisabled(!publishedSiteUrl)
+      .onClick(async () => {
+        try {
+          await this.application.openPublishedSite();
+        } catch (error) {
+          new Notice(`无法打开线上站点：${errorMessage(error)}`);
+        }
+      });
+    const moreActions = new ButtonComponent(headerActions)
+      .setIcon('ellipsis')
+      .setTooltip('更多操作')
+      .onClick((event) => {
+        const menu = new Menu();
+        menu.addItem((item) => item
+          .setTitle('打开配置文件')
+          .setIcon('file-code-2')
+          .onClick(async () => {
+            await openSiteConfigForRepair({ workspace: this.app.workspace });
+          }));
+        menu.addItem((item) => item
+          .setTitle('打开设置')
+          .setIcon('settings')
+          .onClick(() => {
+            if (!openPluginSettingsInHost(this.app, 'pages-publish')) {
+              new Notice('无法自动打开插件设置；请从 Obsidian 设置中选择 Pages Publish。');
+            }
+          }));
+        menu.showAtMouseEvent(event);
+      });
+    moreActions.buttonEl.setAttribute('aria-label', '更多操作');
     container.createEl('p', {
       cls: 'pages-publish-view__summary',
       text: center.output.status === 'unknown'
@@ -134,9 +283,17 @@ export class PagesPublishView extends ItemView {
     });
 
     const scanBar = container.createDiv({ cls: 'pages-publish-view__scan' });
-    scanBar.createSpan({
-      text: `+${center.summary.added} 新增 · ~${center.summary.updated} 更新 · -${center.summary.takedowns} 待下线 · ${center.summary.blockers} 阻塞 · ${center.summary.warnings} 警告`,
-    });
+    for (const metric of [
+      { text: `+${center.summary.added} 新增`, tab: 'changes' as const },
+      { text: `~${center.summary.updated} 更新`, tab: 'changes' as const },
+      { text: `-${center.summary.takedowns} 待下线`, tab: 'changes' as const },
+      { text: `${center.summary.blockers} 阻塞`, tab: 'issues' as const },
+      { text: `${center.summary.warnings} 警告`, tab: 'issues' as const },
+    ]) {
+      new ButtonComponent(scanBar).setButtonText(metric.text).onClick(() => {
+        this.activateTab(metric.tab);
+      });
+    }
     new ButtonComponent(scanBar).setButtonText('重新扫描').onClick(async () => {
       await this.render();
     });
@@ -146,6 +303,31 @@ export class PagesPublishView extends ItemView {
         cls: 'pages-publish-view__error',
         text: `发布被阻塞：${blocker?.message ?? '修复所有阻塞问题后重试。'}`,
       });
+      new ButtonComponent(container).setButtonText('查看问题').onClick(() => {
+        this.activateTab('issues');
+      });
+    }
+    const connectionBlocksPublishing = connection.state === 'expired'
+      || connection.state === 'disconnected';
+    if (connectionBlocksPublishing) {
+      const warning = container.createEl('p', {
+        cls: 'pages-publish-view__error',
+        text: connection.state === 'expired'
+          ? 'Cloudflare 授权已失效；本地编辑仍可用，重新授权前不会开始发布。'
+          : 'Cloudflare 尚未连接；本地编辑仍可用，连接账号前不会开始发布。',
+      });
+      if (this.application.canConnectInitialSetupOAuth()) {
+        new ButtonComponent(warning)
+          .setButtonText('重新授权')
+          .onClick(async () => {
+            try {
+              await this.application.beginInitialSetupOAuth();
+              new Notice('已在浏览器打开 Cloudflare 授权；完成后将返回 Obsidian。');
+            } catch (error) {
+              new Notice(`无法开始 Cloudflare 授权：${errorMessage(error)}`);
+            }
+          });
+      }
     }
 
     const tabs = container.createDiv({ cls: 'pages-publish-view__tabs' });
@@ -156,26 +338,83 @@ export class PagesPublishView extends ItemView {
       { id: 'issues', text: `问题 ${center.issues.length}` },
     ];
     for (const tab of tabDefinitions) {
-      new ButtonComponent(tabs)
-        .setButtonText(tab.text)
-        .setClass(this.activeTab === tab.id ? 'is-active' : '')
-        .onClick(async () => {
-          this.activeTab = tab.id;
-          await this.render();
-        });
+      const button = new ButtonComponent(tabs).setButtonText(tab.text);
+      if (this.activeTab === tab.id) button.setClass('is-active');
+      button.onClick(() => {
+        this.activateTab(tab.id);
+      });
+      if (this.focusTabOnRender === tab.id) {
+        this.focusTabOnRender = undefined;
+        button.buttonEl.focus();
+      }
     }
+    const search = tabs.createEl('input', {
+      type: 'search',
+      attr: { 'aria-label': '搜索文章或路径', placeholder: '搜索文章或路径' },
+    });
+    search.value = this.articleSearchQuery;
+    if (this.focusSearchOnRender) {
+      this.focusSearchOnRender = false;
+      search.focus();
+    }
+    const filter = tabs.createEl('select', {
+      cls: 'pages-publish-view__filter',
+      attr: { 'aria-label': '筛选文章' },
+    });
+    for (const option of [
+      { value: 'all', label: '筛选：全部' },
+      { value: 'public', label: '公开' },
+      { value: 'unlisted', label: '不列出' },
+      { value: 'private', label: '私密' },
+      { value: 'blocker', label: '有阻塞' },
+      { value: 'warning', label: '有警告' },
+    ] as const) {
+      filter.createEl('option', { attr: { value: option.value }, text: option.label });
+    }
+    filter.value = this.articleFilter;
+    if (this.focusFilterOnRender) {
+      this.focusFilterOnRender = false;
+      filter.focus();
+    }
+    filter.addEventListener('change', () => {
+      if (!isPublishCenterFilter(filter.value)) return;
+      this.articleFilter = filter.value;
+      this.selectedSourcePath = undefined;
+      this.selectedArticleDetail = undefined;
+      this.focusArticleOnRender = undefined;
+      this.focusFilterOnRender = true;
+      this.renderCachedPublishCenter();
+    });
 
-    const table = container.createEl('table', { cls: 'pages-publish-view__articles' });
+    const scopedArticles = center.articles.filter(
+      (article) => this.matchesTab(article) && this.matchesFilter(article),
+    );
+    const selected = scopedArticles.find(
+      (article) => article.sourcePath === this.selectedSourcePath
+        && this.matchesSearch(article),
+    );
+    if (this.selectedSourcePath && !selected) {
+      this.selectedSourcePath = undefined;
+      this.selectedArticleDetail = undefined;
+      this.focusArticleOnRender = undefined;
+    }
+    const workspace = container.createDiv({
+      cls: `pages-publish-view__workspace${selected ? ' has-review' : ''}`,
+    });
+    const list = workspace.createDiv({ cls: 'pages-publish-view__list' });
+    const table = list.createEl('table', { cls: 'pages-publish-view__articles' });
     const header = table.createEl('thead').createEl('tr');
     for (const label of ['上线', '文章 / 路径', '公开方式', '状态变化', '检查']) {
       header.createEl('th', { attr: { scope: 'col' }, text: label });
     }
     const body = table.createEl('tbody');
-    for (const article of center.articles.filter((item) => this.matchesTab(item))) {
+    const searchableRows: Array<{ row: HTMLTableRowElement; text: string }> = [];
+    for (const article of scopedArticles) {
       const row = body.createEl('tr');
+      searchableRows.push({ row, text: `${article.title}\n${article.sourcePath}`.toLocaleLowerCase() });
       row.addEventListener('click', (event) => {
         if (event.target instanceof HTMLInputElement) return;
-        this.selectArticle(article);
+        void this.selectArticle(article);
       });
       const selection = row.createEl('td', { attr: { 'data-label': '下一版包含' } });
       const checkbox = selection.createEl('input', { type: 'checkbox' });
@@ -187,10 +426,14 @@ export class PagesPublishView extends ItemView {
         void this.updateInclusion(article, checkbox.checked);
       });
       const title = row.createEl('td', { attr: { 'data-label': '文章 / 路径' } });
-      new ButtonComponent(title)
+      const reviewButton = new ButtonComponent(title)
         .setButtonText(article.title)
         .setTooltip(`审阅 ${article.title}`)
         .onClick(() => this.selectArticle(article));
+      if (this.focusArticleOnRender === article.sourcePath) {
+        this.focusArticleOnRender = undefined;
+        reviewButton.buttonEl.focus();
+      }
       title.createEl('code', { text: article.sourcePath });
       row.createEl('td', {
         attr: { 'data-label': '公开方式' },
@@ -207,13 +450,32 @@ export class PagesPublishView extends ItemView {
           : `${article.issues.some((issue) => issue.severity === 'blocker') ? '阻塞' : '警告'} ${article.issues.length}`,
       });
     }
+    const applySearch = (): void => {
+      const query = search.value.trim().toLocaleLowerCase();
+      this.articleSearchQuery = query;
+      for (const entry of searchableRows) {
+        entry.row.hidden = query.length > 0 && !entry.text.includes(query);
+      }
+      if (selected && !this.matchesSearch(selected, query)) {
+        this.selectedSourcePath = undefined;
+        this.selectedArticleDetail = undefined;
+        this.focusArticleOnRender = undefined;
+        this.focusSearchOnRender = true;
+        this.renderCachedPublishCenter();
+      }
+    };
+    search.addEventListener('input', applySearch);
+    applySearch();
 
-    const selected = center.articles.find(
-      (article) => article.sourcePath === this.selectedSourcePath,
+    if (selected) this.renderReviewDrawer(
+      workspace,
+      selected,
+      this.selectedArticleDetail?.sourcePath === selected.sourcePath
+        ? this.selectedArticleDetail
+        : undefined,
     );
-    if (selected) this.renderReviewDrawer(container, selected);
     if (this.activeTab === 'issues' && center.issues.length > 0) {
-      const issues = container.createEl('ul', { cls: 'pages-publish-view__issues' });
+      const issues = list.createEl('ul', { cls: 'pages-publish-view__issues' });
       for (const issue of center.issues) {
         const item = issues.createEl('li', {
           cls: `pages-publish-view__issue pages-publish-view__issue--${issue.severity}`,
@@ -242,12 +504,19 @@ export class PagesPublishView extends ItemView {
       .setCta()
       .setDisabled(
         !center.canPublish ||
+          connectionBlocksPublishing ||
           publication.state === 'unavailable' ||
           publication.state === 'running' ||
           publication.state === 'reconciliation-required',
       )
       .onClick(async () => {
         try {
+          const currentConnection = await this.application.getInitialSetupConnection();
+          if (currentConnection.state !== 'connected') {
+            new Notice('Cloudflare 连接已失效；请重新授权或更新 API token 后再发布。');
+            await this.render();
+            return;
+          }
           const deployment = await this.application.publishSite();
           new Notice(`发布成功：${deployment.output.fileCount} 个文件已激活。后续编辑将进入下一次变化。`);
         } catch (error) {
@@ -273,6 +542,44 @@ export class PagesPublishView extends ItemView {
       element.createSpan({
         text: ` 准备${status.stage === 'prepare' ? ' ●' : ' ✓'} → 构建与检查${status.stage === 'build' ? ' ●' : status.stage === 'prepare' ? '' : ' ✓'} → 上传${status.stage === 'upload' ? ' ●' : status.stage === 'activate' ? ' ✓' : ''} → 激活${status.stage === 'activate' ? ' ●' : ''}`,
       });
+      const maintenance = this.application.getMaintenanceStatus();
+      if (!('state' in maintenance) && maintenance.capabilities.openLogs) {
+        new ButtonComponent(element).setButtonText('查看日志').onClick(async () => {
+          try {
+            await this.application.openMaintenanceLogs();
+          } catch (error) {
+            new Notice(`无法打开日志：${errorMessage(error)}`);
+          }
+        });
+      }
+    }
+    if (status.state === 'succeeded') {
+      new ButtonComponent(element).setButtonText('打开站点').onClick(async () => {
+        try {
+          await this.application.openPublishedSite();
+        } catch (error) {
+          new Notice(`无法打开线上站点：${errorMessage(error)}`);
+        }
+      });
+    }
+    if (status.state === 'reconciliation-required' && status.reconciliation === 'upload-uncertain') {
+      const actions = element.createDiv({ cls: 'pages-publish-view__actions' });
+      new ButtonComponent(actions)
+        .setButtonText('我已在 Cloudflare 核验，解除本地阻塞')
+        .setDestructive()
+        .onClick(async () => {
+          const confirmed = await new Promise<boolean>((resolve) => {
+            new UploadUncertainRecoveryModal(this.app, status.target?.projectName, resolve).open();
+          });
+          if (!confirmed) return;
+          try {
+            await this.application.acknowledgeUploadUncertainPublication();
+            new Notice('已解除本地发布锁。请重新扫描并确认 Cloudflare 的最终状态后再发布。');
+          } catch (error) {
+            new Notice(`无法解除本地发布锁：${errorMessage(error)}`);
+          }
+          await this.render();
+        });
     }
   }
 
@@ -283,12 +590,50 @@ export class PagesPublishView extends ItemView {
     return article.issues.length > 0;
   }
 
+  private activateTab(tab: PublishCenterTab): void {
+    this.activeTab = tab;
+    this.focusTabOnRender = tab;
+    this.renderCachedPublishCenter();
+  }
+
+  private matchesFilter(article: PublishCenterArticle): boolean {
+    if (this.articleFilter === 'all') return true;
+    if (this.articleFilter === 'blocker' || this.articleFilter === 'warning') {
+      return article.issues.some((issue) => issue.severity === this.articleFilter);
+    }
+    return article.visibility === this.articleFilter;
+  }
+
+  private matchesSearch(
+    article: PublishCenterArticle,
+    query = this.articleSearchQuery,
+  ): boolean {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (normalizedQuery.length === 0) return true;
+    return `${article.title}\n${article.sourcePath}`.toLocaleLowerCase().includes(normalizedQuery);
+  }
+
   private renderReviewDrawer(
     container: HTMLElement,
     article: PublishCenterArticle,
+    detail?: CurrentArticlePanelArticle,
   ): void {
-    const drawer = container.createDiv({ cls: 'pages-publish-view__review' });
-    drawer.createEl('h3', { text: article.title });
+    const drawer = container.createEl('aside', {
+      cls: 'pages-publish-view__review',
+      attr: { 'aria-label': `审阅 ${article.title}` },
+    });
+    const header = drawer.createDiv({ cls: 'pages-publish-view__review-header' });
+    header.createEl('h3', { text: article.title });
+    const returnButton = new ButtonComponent(header).setButtonText('返回内容列表').onClick(() => {
+      this.focusArticleOnRender = article.sourcePath;
+      this.selectedSourcePath = undefined;
+      this.selectedArticleDetail = undefined;
+      this.renderCachedPublishCenter();
+    });
+    if (this.focusReviewOnRender) {
+      this.focusReviewOnRender = false;
+      returnButton.buttonEl.focus();
+    }
     drawer.createEl('p', { text: article.sourcePath });
     if (article.availability === 'unavailable') {
       drawer.createEl('p', {
@@ -302,7 +647,66 @@ export class PagesPublishView extends ItemView {
         text: '本地源文件已不存在；此行只记录下一次完整发布的待下线事实，不能直接编辑。',
       });
     }
-    drawer.createEl('p', { text: `待发布 URL：${article.url ?? '下一版不包含'}` });
+    drawer.createEl('h4', { text: '发布结果' });
+    new ButtonComponent(drawer)
+      .setButtonText(article.nextIncluded ? '下一版包含此文章' : '加入下一版')
+      .setDisabled(article.availability !== 'ready')
+      .onClick(() => this.updateInclusion(article, !article.nextIncluded));
+    if (detail && article.availability === 'ready') {
+      new Setting(drawer)
+        .setName('公开方式')
+        .addDropdown((dropdown) => dropdown
+          .addOption('public', '公开')
+          .addOption('unlisted', '不列出')
+          .addOption('private', '私密')
+          .setValue(detail.metadata.visibility.value)
+          .onChange(async (value) => {
+            try {
+              const prepared = await this.application.prepareArticleRouteIntentEdit(
+                article.sourcePath,
+                { visibility: value as 'public' | 'unlisted' | 'private' },
+              );
+              const confirmed = prepared.confirmation
+                ? await this.confirmTakedown(article)
+                : true;
+              if (!confirmed) return;
+              await this.application.commitArticleIntentEdit(prepared, {
+                confirmTakedown: prepared.confirmation !== undefined,
+              });
+              new Notice('发布意图已保存；线上内容尚未改变。');
+            } catch (error) {
+              new Notice(`无法更新公开方式：${errorMessage(error)}`);
+            }
+            await this.selectArticle(article);
+          }));
+      let slug = detail.metadata.slug.source === 'publication.slug'
+        ? detail.metadata.slug.value
+        : '';
+      new Setting(drawer)
+        .setName('待发布 URL')
+        .setDesc(article.url ?? '下一版不生成页面')
+        .addText((text) => text
+          .setPlaceholder(detail.metadata.slug.value)
+          .setValue(slug)
+          .onChange((value) => {
+            slug = value;
+          }))
+        .addButton((button) => button.setButtonText('编辑 URL').onClick(async () => {
+          try {
+            const prepared = await this.application.prepareArticleUrlIntentEdit(
+              article.sourcePath,
+              slug.trim() || null,
+            );
+            await this.application.commitArticleIntentEdit(prepared);
+            new Notice('URL 意图已保存；线上内容尚未改变。');
+          } catch (error) {
+            new Notice(`无法更新 URL：${errorMessage(error)}`);
+          }
+          await this.selectArticle(article);
+        }));
+    } else {
+      drawer.createEl('p', { text: `待发布 URL：${article.url ?? '下一版不包含'}` });
+    }
     if (article.onlineUrl) {
       drawer.createEl('p', { text: `当前线上 URL：${article.onlineUrl}` });
     }
@@ -321,6 +725,28 @@ export class PagesPublishView extends ItemView {
           .onClick(() => this.locateIssue(issue));
       }
     }
+    drawer.createEl('h4', { text: '将写入 Frontmatter' });
+    if (!detail) {
+      drawer.createEl('p', { text: '正在读取当前文章的发布意图…' });
+    } else {
+      drawer.createEl('code', {
+        text: `publication.visibility: ${detail.metadata.visibility.value}`,
+      });
+      if (detail.metadata.slug.source === 'publication.slug') {
+        drawer.createEl('code', { text: `publication.slug: ${detail.metadata.slug.value}` });
+      }
+      if (detail.metadata.redirects.value.length > 0) {
+        drawer.createEl('code', {
+          text: `publication.redirects: ${detail.metadata.redirects.value.join(', ')}`,
+        });
+      }
+    }
+    drawer.createEl('h4', { text: '依赖' });
+    drawer.createEl('p', {
+      text: detail
+        ? `图片 ${detail.dependencies.images} · 笔记 ${detail.dependencies.notes} · 外链 ${detail.dependencies.externalLinks}`
+        : '正在读取依赖摘要…',
+    });
   }
 
   private async updateInclusion(
@@ -345,14 +771,32 @@ export class PagesPublishView extends ItemView {
     }
   }
 
-  private selectArticle(article: PublishCenterArticle): void {
+  private async selectArticle(article: PublishCenterArticle): Promise<void> {
     this.selectedSourcePath = article.sourcePath;
-    void this.render();
+    this.selectedArticleDetail = undefined;
+    try {
+      const detail = await this.application.getCurrentArticlePanel({
+        pinnedPath: article.sourcePath,
+      });
+      if (detail.status === 'article' && this.selectedSourcePath === article.sourcePath) {
+        this.selectedArticleDetail = detail;
+      }
+    } catch {
+      this.selectedArticleDetail = undefined;
+    }
+    if (this.selectedSourcePath === article.sourcePath) {
+      this.focusReviewOnRender = true;
+      this.renderCachedPublishCenter();
+    }
   }
 
   private async locateIssue(issue: ScanIssue): Promise<void> {
     const path = issue.location?.path
       ?? (issue.path.endsWith('.md') ? issue.path : '.publish/site.yml');
+    if (path === '.publish/site.yml') {
+      await openSiteConfigForRepair({ workspace: this.app.workspace });
+      return;
+    }
     await this.app.workspace.openLinkText(path, '', false);
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view || !issue.line) return;
@@ -370,20 +814,47 @@ export class PagesPublishView extends ItemView {
   }
 
   private async renderSetupWizard(container: HTMLElement): Promise<void> {
-    let connection;
-    try {
-      connection = await this.application.getInitialSetupConnection();
-    } catch {
-      connection = { state: 'unavailable' as const };
+    let invalidateRenderedScopeReview = (): void => undefined;
+    let updateRenderedSetupContinueState = (): void => undefined;
+    let scopeReviewSummary: HTMLElement | undefined;
+    const setupHeading = (text: string): HTMLElement => {
+      const heading = container.createEl('h3', { attr: { tabindex: '-1' }, text });
+      if (this.focusSetupHeadingOnRender) {
+        this.focusSetupHeadingOnRender = false;
+        heading.focus();
+      }
+      return heading;
+    };
+    let environment = this.application.getInitialSetupEnvironment();
+    if (this.setupStep === 0 && environment.stage === 'idle') {
+      const preparation = this.application.prepareInitialSetupEnvironment();
+      environment = this.application.getInitialSetupEnvironment();
+      void preparation
+        .then(() => this.render(), () => this.render())
+        .catch(() => undefined);
+    }
+    const environmentReady = environment.stage === 'ready';
+    let connection: InitialSetupConnection = { state: 'unavailable' };
+    if (this.setupStep >= 3) {
+      try {
+        connection = await this.application.getInitialSetupConnection();
+      } catch {
+        connection = { state: 'unavailable' };
+      }
     }
     const connectedAccount = 'account' in connection ? connection.account : undefined;
-    const draft = this.setupDraft ??= this.newSetupDraft(connectedAccount);
+    const draft = this.setupDraft ??=
+      this.application.getInitialSetupDraft?.() ?? this.newSetupDraft(connectedAccount);
+    const usesVaultRoot = draft.config.contentRoots.some((root) => root.path.trim() === '.');
     if (!draft.cloudflare.account.id && connectedAccount) {
       draft.cloudflare.account = connectedAccount;
     }
-    const setupAvailable = this.application.isInitialSetupAvailable()
-      && connection.state === 'connected'
-      && Boolean(draft.cloudflare.account.id);
+    const setupConnectionAvailable = this.application.isInitialSetupAvailable()
+      && environmentReady
+      && connection.state === 'connected';
+    const setupAvailable = setupConnectionAvailable
+      && Boolean(draft.cloudflare.account.id)
+      && connectedAccount?.id === draft.cloudflare.account.id;
     container.createDiv({ cls: 'pages-publish-view__type', text: '首次设置' });
     container.createEl('h2', { text: '创建你的发布站点' });
     container.createEl('p', {
@@ -404,67 +875,193 @@ export class PagesPublishView extends ItemView {
     }
 
     if (this.setupStep === 0) {
-      container.createEl('h3', { text: '准备本地发布环境' });
-      container.createEl('p', {
-        text: setupAvailable
-          ? '环境与 Cloudflare 适配器已就绪。继续填写站点计划。'
-          : '环境与 Cloudflare 连接尚未就绪，因此不会启用最终创建操作。你仍可查看和编辑本地草稿。',
+      const environmentRuntime = 'runtime' in environment ? environment.runtime : undefined;
+      const environmentEngine = 'engine' in environment ? environment.engine : undefined;
+      setupHeading('准备本地发布环境');
+      const stages = container.createEl('ul', { cls: 'pages-publish-view__environment-stages' });
+      stages.createEl('li', {
+        text: environmentReady ? '✓ 检查系统与 Vault' : environment.stage === 'checking-system'
+          ? '● 正在检查系统与 Vault'
+          : '○ 检查系统与 Vault',
       });
-      if (!setupAvailable) {
+      stages.createEl('li', {
+        text: environmentRuntime
+          ? `✓ ${environmentRuntime.source === 'obsidian' ? 'Obsidian Node.js' : 'Node.js'} ${environmentRuntime.version}`
+          : environment.stage === 'checking-system'
+            ? '● 查找兼容的 Node.js 运行时'
+            : '○ 查找兼容的 Node.js 运行时',
+      });
+      stages.createEl('li', {
+        text: environmentEngine
+          ? `✓ Pages 发布引擎 ${environmentEngine.version}`
+          : environment.stage === 'verifying-engine' || environment.stage === 'installing'
+            ? '● 正在准备 Pages 发布引擎'
+            : '○ 准备 Pages 发布引擎',
+      });
+      stages.createEl('li', {
+        text: '○ 本地预览服务将在创建站点后按需验证',
+      });
+      container.createEl('p', {
+        text: environmentReady
+          ? '本地发布环境已就绪。继续填写站点计划。'
+          : '本地发布环境尚未就绪；准备完成前不能进入站点设置。',
+      });
+      if (!environmentReady) {
         container.createEl('p', {
           cls: 'pages-publish-view__warning',
-          text: '需要完成受管理运行时和已连接 cloudflare 账号的接线后，才能创建或绑定远端项目。',
+          text: environment.impact ?? '请完成本地环境准备后重试。',
+        });
+      }
+      if (environment.stage === 'failed' && environment.nextAction === 'repair') {
+        new ButtonComponent(container)
+          .setButtonText('重试环境准备')
+          .onClick(async () => {
+            try {
+              await this.application.repairInitialSetupEnvironment();
+            } catch (error) {
+              new Notice(`无法准备本地发布环境：${errorMessage(error)}`);
+            }
+            await this.render();
+          });
+      }
+      new ButtonComponent(container)
+        .setButtonText(this.showEnvironmentDetails ? '隐藏详情' : '查看详情')
+        .onClick(async () => {
+          this.showEnvironmentDetails = !this.showEnvironmentDetails;
+          await this.render();
+        });
+      if (this.showEnvironmentDetails) {
+        container.createEl('p', {
+          cls: 'pages-publish-view__summary',
+          text: '运行时与发布引擎由当前 Obsidian 插件进程使用；不会修改系统 Node.js、npm、PATH 或全局包，也不会显示本机敏感路径。',
         });
       }
     } else if (this.setupStep === 1) {
-      container.createEl('h3', { text: '站点信息' });
+      setupHeading('站点信息');
       new Setting(container).setName('站点名称').setDesc('必填；支持中文，不决定域名。').addText((text) =>
         text.setValue(draft.config.site.name).onChange((value) => {
           draft.config.site.name = value;
+          updateRenderedSetupContinueState();
         }),
       );
+      const descriptionCount = container.createSpan({
+        cls: 'pages-publish-view__character-count',
+        text: `${visibleCharacterCount(draft.config.site.description ?? '')} / 160`,
+      });
       new Setting(container).setName('站点简介').setDesc('可选，最多 160 个字符。').addTextArea((text) =>
         text.setValue(draft.config.site.description ?? '').onChange((value) => {
           draft.config.site.description = value || undefined;
+          descriptionCount.setText(`${visibleCharacterCount(value)} / 160`);
+          updateRenderedSetupContinueState();
         }),
       );
     } else if (this.setupStep === 2) {
-      container.createEl('h3', { text: '内容范围' });
-      const root = draft.config.contentRoots[0];
-      if (!root) throw new Error('Setup draft must have one content root.');
+      setupHeading('内容范围');
       const scopeWarning = container.createEl('p', { cls: 'pages-publish-view__warning' });
-      new Setting(container).setName('内容目录').setDesc('只有其中的 Markdown 会成为候选。').addText((text) =>
-        text.setValue(root.path).onChange((value) => {
-          root.path = value;
+      for (const [index, root] of draft.config.contentRoots.entries()) {
+        const row = container.createDiv({ cls: 'pages-publish-view__setup-content-root' });
+        new Setting(row)
+          .setName(`内容目录 ${index + 1}`)
+          .setDesc('只有其中的 Markdown 会成为候选。')
+          .addText((text) => text.setValue(root.path).onChange((value) => {
+            root.path = value;
+            this.setupReview = undefined;
+            this.setupVaultRootConfirmed = false;
+            invalidateRenderedScopeReview();
+            scopeWarning.setText(
+              draft.config.contentRoots.some((candidate) => candidate.path.trim() === '.')
+                ? '警告：选择 Vault 根会把整个 Vault 的 Markdown 纳入候选范围。'
+                : '',
+            );
+          }));
+        new Setting(row)
+          .setName('公开路径')
+          .setDesc('必须以 / 开始。')
+          .addText((text) => text.setValue(root.publicRoot).onChange((value) => {
+            root.publicRoot = value;
+            this.setupReview = undefined;
+            invalidateRenderedScopeReview();
+          }));
+        if (draft.config.contentRoots.length > 1) {
+          new ButtonComponent(row)
+            .setButtonText(`移除内容目录 ${index + 1}`)
+            .setDestructive()
+            .onClick(async () => {
+              draft.config.contentRoots.splice(index, 1);
+              this.setupReview = undefined;
+              this.setupVaultRootConfirmed = false;
+              await this.render();
+            });
+        }
+        const rootSummary = this.setupReview?.roots?.find(
+          (candidate) => candidate.path === root.path,
+        );
+        row.createSpan({
+          cls: 'pages-publish-view__setup-root-result',
+          text: rootSummary ? `扫描结果：${rootSummary.candidateCount} 篇` : '扫描结果：待扫描',
+        });
+      }
+      new ButtonComponent(container)
+        .setButtonText('添加内容目录')
+        .onClick(async () => {
+          draft.config.contentRoots.push({ path: '', publicRoot: '/' });
           this.setupReview = undefined;
-          scopeWarning.setText(
-            value.trim() === '.'
-              ? '警告：选择 Vault 根会把整个 Vault 的 Markdown 纳入候选范围。'
-              : '',
-          );
-        }),
-      );
-      new Setting(container).setName('公开路径').setDesc('必须以 / 开始。').addText((text) =>
-        text.setValue(root.publicRoot).onChange((value) => {
-          root.publicRoot = value;
-          this.setupReview = undefined;
-        }),
-      );
+          this.setupVaultRootConfirmed = false;
+          await this.render();
+        });
+      if (usesVaultRoot) {
+        container.createEl('p', {
+          cls: 'pages-publish-view__warning',
+          text: this.setupVaultRootConfirmed
+            ? '已确认：整个 Vault 的 Markdown 都会进入候选扫描。'
+            : '选择 Vault 根会扩大可能公开的内容范围；继续前必须明确确认。',
+        });
+        if (!this.setupVaultRootConfirmed) {
+          new ButtonComponent(container)
+            .setButtonText('确认将整个 Vault 纳入候选范围')
+            .onClick(async () => {
+              this.setupVaultRootConfirmed = true;
+              await this.render();
+            });
+        }
+      }
       container.createEl('p', {
         text: '继续前会以此草稿进行本地扫描；扫描不会写入 site.yml。',
       });
+      new ButtonComponent(container)
+        .setButtonText(this.setupReview ? '重新扫描内容范围' : '扫描内容范围')
+        .onClick(async () => {
+          try {
+            this.setupReview = await this.application.reviewInitialSetup(draft);
+          } catch (error) {
+            new Notice(`无法扫描设置草稿：${errorMessage(error)}`);
+            this.setupReview = undefined;
+          }
+          await this.render();
+        });
       if (this.setupReview) {
-        container.createEl('p', {
+        scopeReviewSummary = container.createEl('p', {
           cls: 'pages-publish-view__summary',
           text: `草稿扫描：找到 ${this.setupReview.candidateCount} 篇候选，其中 ${this.setupReview.eligibleCount} 篇当前无 Blocker。`,
         });
+        for (const example of this.setupReview.examples ?? []) {
+          container.createEl('p', {
+            cls: 'pages-publish-view__setup-example',
+            text: `${example.sourcePath} → ${example.url}`,
+          });
+        }
       }
     } else if (this.setupStep === 3) {
-      container.createEl('h3', { text: 'Cloudflare' });
+      const canUseOAuth = this.application.canConnectInitialSetupOAuth();
+      setupHeading('Cloudflare');
       container.createEl('p', {
         text: setupAvailable
           ? `将使用已连接账号：${draft.cloudflare.account.name}。`
-          : '尚未连接 Cloudflare。OAuth 或高级 API Token 连接成功后，这里会显示账号和可用 Pages 项目。',
+          : setupConnectionAvailable && connectedAccount
+            ? `当前连接账号 ${connectedAccount.name} 与草稿账号 ${draft.cloudflare.account.name} 不一致；请选择目标账号后再继续。`
+          : canUseOAuth
+            ? '尚未连接 Cloudflare。请使用 Cloudflare 登录完成授权，然后选择账号和 Pages 项目。'
+            : '尚未连接 Cloudflare。此发行版本未配置 OAuth client；请使用 API token 连接后查看账号和可用 Pages 项目。',
       });
       if (connection.state === 'expired') {
         container.createEl('p', {
@@ -472,8 +1069,31 @@ export class PagesPublishView extends ItemView {
           text: 'Cloudflare 授权已过期；重新授权后才能创建或绑定项目。',
         });
       }
-      if (setupAvailable) {
+      if (canUseOAuth) {
+        new ButtonComponent(container)
+          .setButtonText('使用 Cloudflare 登录')
+          .setCta()
+          .onClick(async () => {
+            try {
+              await this.application.beginInitialSetupOAuth();
+              new Notice('已在浏览器打开 Cloudflare 授权；完成后将返回 Obsidian。');
+            } catch (error) {
+              new Notice(`无法开始 Cloudflare 授权：${errorMessage(error)}`);
+            }
+          });
+        container.createEl('p', {
+          text: '将在浏览器中打开授权页面。凭据保存在 Obsidian 安全存储（当前 Vault 的本地存储）。',
+        });
+        const advanced = container.createEl('details');
+        advanced.createEl('summary', { text: '高级方式 · 使用 API token' });
+        this.renderSetupApiTokenConnection(advanced, draft);
+      } else {
+        this.renderSetupApiTokenConnection(container, draft);
+      }
+      if (setupConnectionAvailable) {
         await this.renderSetupAccounts(container, draft);
+      }
+      if (setupAvailable) {
         await this.renderSetupProjects(container, draft);
       }
       new Setting(container).setName('Pages 项目标识').setDesc('创建或绑定计划；最终确认前不调用远端。').addText((text) =>
@@ -481,22 +1101,61 @@ export class PagesPublishView extends ItemView {
           draft.cloudflare.projectName = value;
           draft.config.cloudflare.projectName = value;
           this.setupProjects = undefined;
+          this.setupProjectAvailability = undefined;
         }),
       );
+      new ButtonComponent(container)
+        .setButtonText('检查可用性')
+        .onClick(async () => {
+          const projectName = draft.cloudflare.projectName.trim();
+          if (projectName.length === 0) {
+            new Notice('请输入 Pages 项目标识。');
+            return;
+          }
+          try {
+            const projects = await this.application.listInitialSetupProjects(
+              draft.cloudflare.account,
+            );
+            this.setupProjects = projects;
+            this.setupProjectAvailability = {
+              name: projectName,
+              available: !projects.some((project) => project.name === projectName),
+            };
+          } catch (error) {
+            new Notice(`无法检查 Pages 项目标识：${errorMessage(error)}`);
+            this.setupProjectAvailability = undefined;
+          }
+          await this.render();
+        });
+      if (this.setupProjectAvailability?.name === draft.cloudflare.projectName.trim()) {
+        container.createEl('p', {
+          cls: this.setupProjectAvailability.available
+            ? 'pages-publish-view__summary'
+            : 'pages-publish-view__warning',
+          text: this.setupProjectAvailability.available
+            ? `${this.setupProjectAvailability.name} 可用。`
+            : `${this.setupProjectAvailability.name} 已存在；请选择绑定已有项目或更换标识。`,
+        });
+      }
       const projectActions = container.createDiv({ cls: 'pages-publish-view__setup-options' });
       new ButtonComponent(projectActions)
         .setButtonText(draft.cloudflare.action === 'create' ? '● 创建新项目' : '○ 创建新项目')
         .onClick(async () => {
           draft.cloudflare.action = 'create';
+          this.setupProjectAvailability = undefined;
           await this.render();
         });
       new ButtonComponent(projectActions)
         .setButtonText(draft.cloudflare.action === 'bind' ? '● 绑定已有项目' : '○ 绑定已有项目')
         .onClick(async () => {
           draft.cloudflare.action = 'bind';
+          this.setupProjectAvailability = undefined;
           await this.render();
         });
-      container.createEl('p', { text: `默认域名：${draft.cloudflare.projectName}.pages.dev` });
+      container.createEl('p', {
+        cls: 'pages-publish-view__setup-example',
+        text: `默认域名：${draft.cloudflare.projectName}.pages.dev`,
+      });
       const domainActions = container.createDiv({ cls: 'pages-publish-view__setup-options' });
       new ButtonComponent(domainActions)
         .setButtonText(draft.cloudflare.domain.kind === 'pages-dev' ? '● 使用 pages.dev' : '○ 使用 pages.dev')
@@ -512,6 +1171,9 @@ export class PagesPublishView extends ItemView {
         });
       if (draft.cloudflare.domain.kind === 'custom') {
         const customDomain = draft.cloudflare.domain;
+        container.createEl('p', {
+          text: '最终确认后会向 Cloudflare 请求连接域名；随后可能需要按提示配置域名解析并等待验证，不承诺立即生效。',
+        });
         new Setting(container).setName('自定义域名').setDesc('最终确认后请求绑定；可显示待验证、有效或失败。').addText((text) =>
           text.setValue(customDomain.hostname).onChange((value) => {
             customDomain.hostname = value;
@@ -519,64 +1181,232 @@ export class PagesPublishView extends ItemView {
         );
       }
     } else {
-      container.createEl('h3', { text: '确认创建站点' });
+      setupHeading('确认创建站点');
       const summary = container.createEl('ul', { cls: 'pages-publish-view__setup-summary' });
-      summary.createEl('li', { text: `站点：${draft.config.site.name || '未命名站点'}` });
-      summary.createEl('li', {
-        text: `内容范围：${draft.config.contentRoots.map((root) => `${root.path} → ${root.publicRoot}`).join('；')}`,
+      const siteSummary = summary.createEl('li', {
+        text: `站点：${draft.config.site.name || '未命名站点'}`,
       });
-      summary.createEl('li', {
-        text: `Cloudflare：${draft.cloudflare.action === 'create' ? '创建' : '绑定'}项目 ${draft.cloudflare.projectName}`,
+      if (draft.config.site.description) {
+        siteSummary.createEl('p', { text: draft.config.site.description });
+      }
+      new ButtonComponent(siteSummary).setButtonText('编辑站点信息').onClick(async () => {
+        this.setupStep = 1;
+        this.focusSetupHeadingOnRender = true;
+        await this.render();
       });
-      container.createEl('p', { text: '将执行：验证草稿、创建或验证 pages 项目、写入正式配置、扫描候选。' });
-      container.createEl('p', { text: '不会执行：发布文章、修改文章 frontmatter。' });
+      const contentSummary = summary.createEl('li', {
+        text: `内容范围：${draft.config.contentRoots.map((root) => {
+          const count = this.setupReview?.roots?.find((item) => item.path === root.path)?.candidateCount;
+          return `${root.path} → ${root.publicRoot}${count === undefined ? '' : ` · ${count} 篇`}`;
+        }).join('；')}`,
+      });
+      new ButtonComponent(contentSummary).setButtonText('编辑内容范围').onClick(async () => {
+        this.setupStep = 2;
+        this.focusSetupHeadingOnRender = true;
+        await this.render();
+      });
+      const cloudflareSummary = summary.createEl('li', {
+        text: `Cloudflare：${draft.cloudflare.account.name} · ${draft.cloudflare.action === 'create' ? '创建' : '绑定'}项目 ${draft.cloudflare.projectName} · ${draft.cloudflare.domain.kind === 'pages-dev' ? `${draft.cloudflare.projectName}.pages.dev` : draft.cloudflare.domain.hostname}`,
+      });
+      new ButtonComponent(cloudflareSummary).setButtonText('编辑 Cloudflare').onClick(async () => {
+        this.setupStep = 3;
+        this.focusSetupHeadingOnRender = true;
+        await this.render();
+      });
+      container.createEl('p', { text: '将执行：验证草稿、创建或验证 Pages 项目、写入正式配置、扫描候选。' });
+      container.createEl('p', { text: '不会执行：发布文章、修改文章 Frontmatter。' });
     }
 
     const actions = container.createDiv({ cls: 'pages-publish-view__actions' });
+    if (this.setupStep > 0) {
+      new ButtonComponent(actions)
+        .setButtonText('退出设置')
+        .onClick(() => {
+          this.application.preserveInitialSetupDraft(draft);
+          this.leaf.detach();
+        });
+    }
     new ButtonComponent(actions)
       .setButtonText('返回')
       .setDisabled(this.setupStep === 0)
       .onClick(async () => {
         this.setupStep = Math.max(0, this.setupStep - 1);
+        this.focusSetupHeadingOnRender = true;
         await this.render();
       });
     if (this.setupStep < 4) {
-      new ButtonComponent(actions)
-        .setButtonText('继续')
+      const canContinueNow = (): boolean => this.setupStep === 0
+        ? environmentReady
+        : this.setupStep === 1
+          ? draft.config.site.name.trim().length > 0
+            && visibleCharacterCount(draft.config.site.description ?? '') <= 160
+          : this.setupStep === 2
+            ? this.setupReview !== undefined && (!usesVaultRoot || this.setupVaultRootConfirmed)
+            : this.setupStep === 3
+              ? setupAvailable
+              : true;
+      const continueButton = new ButtonComponent(actions)
+        .setButtonText(setupContinuationLabel(this.setupStep))
         .setCta()
+        .setDisabled(!canContinueNow())
         .onClick(async () => {
-          if (this.setupStep === 2 && setupAvailable) {
-            try {
-              this.setupReview = await this.application.reviewInitialSetup(draft);
-            } catch (error) {
-              new Notice(`无法扫描设置草稿：${errorMessage(error)}`);
-              return;
-            }
+          if (!canContinueNow()) return;
+          if (this.setupStep === 1 && draft.config.site.name.trim().length === 0) {
+            new Notice('请输入站点名称后再继续。');
+            return;
+          }
+          if (
+            this.setupStep === 1 &&
+            visibleCharacterCount(draft.config.site.description ?? '') > 160
+          ) {
+            new Notice('站点简介不能超过 160 个字符。');
+            return;
+          }
+          if (this.setupStep === 2 && this.setupReview === undefined) {
+            new Notice('内容范围已变化，请重新扫描后再继续。');
+            return;
+          }
+          if (this.setupStep === 2 && usesVaultRoot && !this.setupVaultRootConfirmed) {
+            new Notice('请先确认将整个 Vault 纳入候选范围。');
+            return;
           }
           this.setupStep += 1;
+          this.focusSetupHeadingOnRender = true;
           await this.render();
         });
+      updateRenderedSetupContinueState = () => {
+        continueButton.setDisabled(!canContinueNow());
+      };
+      if (this.setupStep === 2) {
+        invalidateRenderedScopeReview = () => {
+          continueButton.setDisabled(true);
+          scopeReviewSummary?.setText('内容范围已变化，请重新扫描。');
+        };
+      }
       return;
     }
     new ButtonComponent(actions)
       .setButtonText(setupAvailable ? '创建站点并开始扫描' : '创建站点（需要完成连接）')
       .setCta()
       .setDisabled(!setupAvailable || !draft.cloudflare.account.id)
-      .onClick(async () => {
-        try {
-          const review = await this.application.reviewInitialSetup(draft);
-          const result = await this.application.confirmInitialSetup(draft);
-          const domain = 'url' in result.domain
-            ? result.domain.url
-            : result.domain.status === 'pending'
-              ? '自定义域名正在等待验证。'
-              : '自定义域名已生效。';
-          new Notice(`站点已创建；找到 ${result.scan.candidateCount} 篇候选，其中 ${review.eligibleCount} 篇可加入首次发布。${domain} 没有发布任何文章。`);
-          await this.render();
-        } catch (error) {
-          new Notice(`无法创建站点：${errorMessage(error)}`);
-        }
+      .onClick(() => this.executeInitialSetup(structuredClone(draft)));
+  }
+
+  private renderSetupExecution(
+    container: HTMLElement,
+    execution: SetupExecutionState,
+  ): void {
+    container.createDiv({ cls: 'pages-publish-view__type', text: '首次设置' });
+    if (execution.state === 'success') {
+      container.createEl('h2', { text: '站点已创建' });
+      container.createEl('p', {
+        cls: 'pages-publish-view__summary',
+        text: `找到 ${execution.candidateCount} 篇候选，其中 ${execution.eligibleCount} 篇可以加入首次发布。${execution.domain}`,
       });
+      container.createEl('p', { text: '没有文章被发布，也没有修改文章 Frontmatter。' });
+      new ButtonComponent(container).setButtonText('进入发布中心').setCta().onClick(async () => {
+        this.setupExecution = undefined;
+        await this.render();
+      });
+      return;
+    }
+    const stageOrder: SetupProgressStage[] = ['validate', 'project', 'domain', 'config', 'scan'];
+    const labels: Record<SetupProgressStage, string> = {
+      validate: '验证冻结草稿与当前连接',
+      project: '创建或验证 Cloudflare Pages 项目',
+      domain: '配置 pages.dev 或自定义域名计划',
+      config: '原子写入 .publish/site.yml',
+      scan: '扫描内容候选',
+    };
+    const activeIndex = stageOrder.indexOf(execution.stage);
+    container.createEl('h2', {
+      text: execution.state === 'running' ? '正在创建站点' : '站点创建未完成',
+    });
+    const stages = container.createEl('ul', { cls: 'pages-publish-view__environment-stages' });
+    for (const [index, stage] of stageOrder.entries()) {
+      const marker = index < activeIndex
+        ? '✓'
+        : index === activeIndex
+          ? execution.state === 'running' ? '●' : '✕'
+          : '○';
+      stages.createEl('li', { text: `${marker} ${labels[stage]}` });
+    }
+    if (execution.state === 'running') {
+      container.createEl('p', { text: '请保持 Obsidian 运行；重试会复用匹配的远端项目。' });
+      return;
+    }
+    container.createEl('p', {
+      cls: 'pages-publish-view__error',
+      text: execution.message,
+    });
+    const actions = container.createDiv({ cls: 'pages-publish-view__actions' });
+    new ButtonComponent(actions).setButtonText('返回确认').onClick(async () => {
+      this.setupExecution = undefined;
+      this.setupStep = 4;
+      await this.render();
+    });
+    new ButtonComponent(actions).setButtonText('重试已确认计划').setCta().onClick(() =>
+      this.executeInitialSetup(execution.draft),
+    );
+  }
+
+  private async executeInitialSetup(draft: SetupDraft): Promise<void> {
+    const confirmedDraft = structuredClone(draft);
+    let currentStage: SetupProgressStage = 'validate';
+    try {
+      if (!(await this.isSetupPlanConfirmable(confirmedDraft))) {
+        new Notice('本地环境或 Cloudflare 连接已变化；请恢复连接并重新检查确认页。');
+        await this.render();
+        return;
+      }
+      this.setupExecution = { state: 'running', stage: currentStage, draft: confirmedDraft };
+      await this.render();
+      const review = await this.application.reviewInitialSetup(confirmedDraft);
+      if (!(await this.isSetupPlanConfirmable(confirmedDraft))) {
+        this.setupExecution = undefined;
+        new Notice('本地环境或 Cloudflare 连接已变化；请恢复连接并重新检查确认页。');
+        await this.render();
+        return;
+      }
+      const result = await this.application.confirmInitialSetup(confirmedDraft, (stage) => {
+        currentStage = stage;
+        this.setupExecution = { state: 'running', stage, draft: confirmedDraft };
+        void this.render();
+      });
+      this.setupDraft = undefined;
+      const domain = 'url' in result.domain
+        ? `站点地址：${result.domain.url}。`
+        : result.domain.status === 'pending'
+          ? '自定义域名正在等待验证。'
+          : '自定义域名已生效。';
+      this.setupExecution = {
+        state: 'success',
+        candidateCount: result.scan.candidateCount,
+        eligibleCount: review.eligibleCount,
+        domain,
+      };
+      await this.render();
+    } catch (error) {
+      this.setupExecution = {
+        state: 'failed',
+        stage: currentStage,
+        draft: confirmedDraft,
+        message: `无法完成当前步骤：${errorMessage(error)}`,
+      };
+      await this.render();
+    }
+  }
+
+  private async isSetupPlanConfirmable(draft: SetupDraft): Promise<boolean> {
+    const currentEnvironment = this.application.getInitialSetupEnvironment();
+    const currentConnection = await this.application.getInitialSetupConnection();
+    const currentAccount = 'account' in currentConnection
+      ? currentConnection.account
+      : undefined;
+    return currentEnvironment.stage === 'ready'
+      && this.application.isInitialSetupAvailable()
+      && currentConnection.state === 'connected'
+      && currentAccount?.id === draft.cloudflare.account.id;
   }
 
   private async renderSetupAccounts(
@@ -597,11 +1427,70 @@ export class PagesPublishView extends ItemView {
       new ButtonComponent(accountActions)
         .setButtonText(account.id === draft.cloudflare.account.id ? `● ${account.name}` : `○ ${account.name}`)
         .onClick(async () => {
-          draft.cloudflare.account = account;
-          this.setupProjects = undefined;
-          await this.render();
+          try {
+            const selected = this.application.canSelectInitialSetupAccount()
+              ? await this.application.selectInitialSetupAccount(account.id)
+              : { state: 'connected' as const, account };
+            const selectedAccount = 'account' in selected ? selected.account : undefined;
+            draft.cloudflare.account = selectedAccount ?? account;
+            this.setupProjects = undefined;
+            this.setupProjectAvailability = undefined;
+            await this.render();
+          } catch (error) {
+            new Notice(`无法切换 Cloudflare 账号：${errorMessage(error)}`);
+          }
         });
     }
+  }
+
+  private renderSetupApiTokenConnection(
+    container: HTMLElement,
+    draft: SetupDraft,
+  ): void {
+    if (!this.application.canConnectInitialSetupApiToken()) return;
+    let token = '';
+    let tokenInput: HTMLInputElement | undefined;
+    new Setting(container)
+      .setName('Cloudflare API token')
+      .setDesc('高级备用方式；仅在点击“连接”后验证并写入 Obsidian 安全存储。请授予账户读取和 Pages 读取、编辑权限。')
+      .addText((text) => {
+        tokenInput = text.inputEl;
+        text.inputEl.type = 'password';
+        text.setPlaceholder('粘贴 API token').onChange((value) => {
+          token = value;
+        });
+      })
+      .addButton((button) =>
+        button.setButtonText('连接 Cloudflare').setCta().onClick(async () => {
+          if (token.trim().length === 0) {
+            new Notice('请输入 Cloudflare API token。');
+            return;
+          }
+          button.setDisabled(true).setButtonText('连接中…');
+          try {
+            const status = await this.application.connectInitialSetupApiToken(token.trim());
+            const connectedAccount = 'account' in status ? status.account : undefined;
+            if (
+              status.state !== 'connected' ||
+              !connectedAccount
+            ) {
+              throw new Error('Cloudflare 未返回可用于 Pages 发布的账号。');
+            }
+            draft.cloudflare.account = connectedAccount;
+            this.setupAccounts = undefined;
+            this.setupProjects = undefined;
+            this.setupProjectAvailability = undefined;
+            new Notice(`Cloudflare 已连接：${connectedAccount.name}`);
+            await this.render();
+          } catch (error) {
+            new Notice(`无法连接 Cloudflare：${errorMessage(error)}`);
+            button.setDisabled(false).setButtonText('连接 Cloudflare');
+          } finally {
+            token = '';
+            if (tokenInput) tokenInput.value = '';
+          }
+        }),
+      );
   }
 
   private async renderSetupProjects(
@@ -630,6 +1519,7 @@ export class PagesPublishView extends ItemView {
           draft.cloudflare.action = 'bind';
           draft.cloudflare.projectName = project.name;
           draft.config.cloudflare.projectName = project.name;
+          this.setupProjectAvailability = undefined;
           await this.render();
         });
     }
@@ -698,8 +1588,80 @@ class PublishCenterTakedownModal extends Modal {
   }
 }
 
+class UploadUncertainRecoveryModal extends Modal {
+  private settled = false;
+
+  constructor(
+    app: PagesPublishView['app'],
+    private readonly projectName: string | undefined,
+    private readonly resolve: (confirmed: boolean) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.titleEl.setText('确认解除上传结果未知锁');
+    this.contentEl.createEl('p', {
+      text: this.projectName === undefined
+        ? '插件无法确认上次 Cloudflare 上传是否创建或激活。请先在 Cloudflare Pages 核验目标项目的部署记录。'
+        : `插件无法确认上次上传是否影响 Pages 项目“${this.projectName}”。请先在 Cloudflare Pages 核验部署记录。`,
+    });
+    this.contentEl.createEl('p', {
+      text: '只有在你已处理或确认该远端结果后，才能解除本地阻塞；这不会撤销或删除任何 Cloudflare 部署。',
+    });
+    const actions = this.contentEl.createDiv({
+      cls: 'pages-publish-article-panel__modal-actions',
+    });
+    new ButtonComponent(actions).setButtonText('取消').onClick(() => this.finish(false));
+    new ButtonComponent(actions)
+      .setButtonText('已核验，解除阻塞')
+      .setDestructive()
+      .onClick(() => this.finish(true));
+  }
+
+  onClose(): void {
+    if (!this.settled) this.resolve(false);
+    this.contentEl.empty();
+  }
+
+  private finish(confirmed: boolean): void {
+    this.settled = true;
+    this.resolve(confirmed);
+    this.close();
+  }
+}
+
+function setupContinuationLabel(step: number): string {
+  const labels: Record<number, string> = {
+    0: '继续：站点信息',
+    1: '继续：内容范围',
+    2: '继续：Cloudflare',
+    3: '继续：确认',
+  };
+  return labels[step] ?? '继续';
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '未知错误';
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function isPublishCenterTab(value: unknown): value is PublishCenterTab {
+  return value === 'changes' || value === 'all' || value === 'unpublished' || value === 'issues';
+}
+
+function isPublishCenterFilter(value: unknown): value is PublishCenterFilter {
+  return value === 'all'
+    || value === 'public'
+    || value === 'unlisted'
+    || value === 'private'
+    || value === 'blocker'
+    || value === 'warning';
 }
 
 function publishButtonLabel(
@@ -714,7 +1676,7 @@ function publishButtonLabel(
   return '发布站点';
 }
 
-function publicationStatusText(status: Exclude<PublicationServiceStatus, { state: 'idle' | 'unavailable' }>): string {
+export function publicationStatusText(status: Exclude<PublicationServiceStatus, { state: 'idle' | 'unavailable' }>): string {
   if (status.state === 'running') {
     return `发布中：${publicationStageLabel(status.stage)}（第 ${publicationStageNumber(status.stage)}/4 阶段）`;
   }
@@ -722,9 +1684,12 @@ function publicationStatusText(status: Exclude<PublicationServiceStatus, { state
     return `发布成功：${status.deployment.output.fileCount} 个文件已激活。`;
   }
   if (status.state === 'reconciliation-required') {
+    if (status.reconciliation === 'upload-uncertain') {
+      return `上传结果未确认：请先在 Cloudflare Pages 核验${status.target === undefined ? '已保存的目标项目' : `项目 ${status.target.projectName}`}，再解除本地阻塞。${status.message}`;
+    }
     return `线上发布成功，但本地事实待协调：${status.message}`;
   }
-  return `发布失败：${status.message}`;
+  return `发布失败：${status.message} 新版本未激活，现有线上站点保持不变。`;
 }
 
 function publicationStageLabel(stage: 'prepare' | 'build' | 'upload' | 'activate'): string {
@@ -769,4 +1734,8 @@ function projectNameFrom(value: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 58);
   return normalized || 'pages-publish-site';
+}
+
+function visibleCharacterCount(value: string): number {
+  return Array.from(value).length;
 }

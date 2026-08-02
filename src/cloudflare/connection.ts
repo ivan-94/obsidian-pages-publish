@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 export const CLOUD_FLARE_PAGES_SCOPES = [
-  'account:read',
-  'pages:read',
-  'pages:write',
+  'memberships.read',
+  'page.read',
+  'page.write',
 ] as const;
 
 /**
@@ -30,15 +30,18 @@ export interface CloudflareConnectionStatus {
 }
 
 export interface CloudflareOAuthBoundary {
+  readonly available?: boolean;
   begin(input: {
     scopes: readonly string[];
     state: string;
     codeChallenge: string;
     codeChallengeMethod: 'S256';
+    redirectUri?: string;
   }): Promise<{ authorizationUrl: string }>;
   exchange(input: {
     code: string;
     codeVerifier: string;
+    redirectUri?: string;
   }): Promise<{ accessToken: string }>;
 }
 
@@ -70,6 +73,12 @@ export interface CloudflareConnectionDependencies {
   api: CloudflareApiBoundary;
   keychain: CloudflareKeychainBoundary;
   bindings: CloudflareBindingStore;
+}
+
+/** Credential hand-off restricted to concrete Pages host boundaries. */
+export interface CloudflarePublishingConnection {
+  account: CloudflareAccount;
+  credential: string;
 }
 
 type CloudflareConnectionErrorCode =
@@ -110,11 +119,13 @@ export class CloudflareCredentialExpiredError extends Error {
 interface OAuthTransaction {
   state: string;
   codeVerifier: string;
+  redirectUri?: string;
 }
 
 interface StoredConnection {
   binding: CloudflareConnectionStatus;
   credential: string;
+  authorizedAccounts: CloudflareAccount[];
 }
 
 export class CloudflareConnectionService {
@@ -124,9 +135,13 @@ export class CloudflareConnectionService {
 
   constructor(private readonly dependencies: CloudflareConnectionDependencies) {}
 
-  async beginOAuth(): Promise<{ url: string }> {
+  isOAuthAvailable(): boolean {
+    return this.dependencies.oauth.available !== false;
+  }
+
+  async beginOAuth(input: { redirectUri?: string } = {}): Promise<{ url: string }> {
     return this.runExclusively(async () => {
-      const transaction = this.newOAuthTransaction();
+      const transaction = this.newOAuthTransaction(input.redirectUri);
       const request = await this.boundary(
         'oauth-begin-failed',
         'Could not start Cloudflare authorization.',
@@ -135,6 +150,7 @@ export class CloudflareConnectionService {
           state: transaction.state,
           codeChallenge: this.s256(transaction.codeVerifier),
           codeChallengeMethod: 'S256',
+          redirectUri: input.redirectUri,
         }),
       );
       // A new attempt deliberately invalidates every previous callback.
@@ -164,9 +180,24 @@ export class CloudflareConnectionService {
         () => this.dependencies.oauth.exchange({
           code: input.code,
           codeVerifier: transaction.codeVerifier,
+          redirectUri: transaction.redirectUri,
         }),
       );
       return this.connectVerifiedCredential(credential.accessToken, 'oauth');
+    });
+  }
+
+  async cancelOAuth(state: string): Promise<boolean> {
+    return this.runExclusively(async () => {
+      if (!this.pendingOAuth || this.pendingOAuth.state !== state) return false;
+      this.pendingOAuth = undefined;
+      return true;
+    });
+  }
+
+  async abandonOAuth(): Promise<void> {
+    await this.runExclusively(async () => {
+      this.pendingOAuth = undefined;
     });
   }
 
@@ -181,7 +212,21 @@ export class CloudflareConnectionService {
     return this.runExclusively(async () => {
       this.assertRemoteActionsAllowed();
       const stored = await this.readUsableConnection();
-      return this.listAuthorizedAccounts(stored.credential, stored.binding);
+      return stored.authorizedAccounts;
+    });
+  }
+
+  async getPublishingConnection(): Promise<CloudflarePublishingConnection> {
+    return this.runExclusively(async () => {
+      const stored = await this.readUsableConnection();
+      const account = stored.binding.account;
+      if (!account) {
+        throw new CloudflareConnectionError(
+          'credential-unavailable',
+          'Connect Cloudflare again before publishing.',
+        );
+      }
+      return { account: { ...account }, credential: stored.credential };
     });
   }
 
@@ -189,7 +234,7 @@ export class CloudflareConnectionService {
     return this.runExclusively(async () => {
       this.assertRemoteActionsAllowed();
       const stored = await this.readUsableConnection();
-      const accounts = await this.listAuthorizedAccounts(stored.credential, stored.binding);
+      const accounts = stored.authorizedAccounts;
       const account = accounts.find((candidate) => candidate.id === accountId);
       if (!account) {
         throw new CloudflareConnectionError(
@@ -235,18 +280,15 @@ export class CloudflareConnectionService {
       const credential = await this.readCredential();
       if (!credential) return this.markExpired(binding);
       try {
-        const verifiedAccount = await this.dependencies.api.verify(credential);
-        if (verifiedAccount.id !== binding.account.id) {
-          await this.requireRecovery(binding);
-          return this.recoveryStatus ?? { state: 'expired' };
-        }
+        await this.validateStoredConnection(credential, binding);
       } catch (error) {
-        if (error instanceof CloudflareCredentialExpiredError) return this.markExpired(binding);
-        throw this.safeError(
-          error,
-          'api-account-verification-failed',
-          'Cloudflare connection verification failed. Retry the connection.',
-        );
+        if (
+          error instanceof CloudflareConnectionError
+          && error.code === 'credential-unavailable'
+        ) {
+          return this.recoveryStatus ?? { state: 'expired', method: binding.method, account: binding.account };
+        }
+        throw error;
       }
       return {
         state: 'connected',
@@ -262,7 +304,7 @@ export class CloudflareConnectionService {
       const previousBinding = await this.readBinding();
       await this.boundary(
         'credential-storage-failed',
-        'The Cloudflare credential could not be removed from Keychain.',
+        'The Cloudflare credential could not be removed from SecretStorage.',
         () => this.dependencies.keychain.remove(keychainService),
       );
       const status: CloudflareConnectionStatus = { state: 'disconnected' };
@@ -290,13 +332,15 @@ export class CloudflareConnectionService {
     credential: string,
     method: 'oauth' | 'api-token',
   ): Promise<CloudflareConnectionStatus> {
-    const verifiedAccount = await this.boundary(
-      'api-account-verification-failed',
-      'Cloudflare account verification failed. Check the credential and retry.',
-      () => this.dependencies.api.verify(credential),
-    );
+    const verifiedAccount = method === 'api-token'
+      ? await this.boundary(
+        'api-account-verification-failed',
+        'Cloudflare account verification failed. Check the credential and retry.',
+        () => this.dependencies.api.verify(credential),
+      )
+      : undefined;
     const candidates = await this.listAuthorizedAccounts(credential);
-    const account = candidates.find((candidate) => candidate.id === verifiedAccount.id)
+    const account = candidates.find((candidate) => candidate.id === verifiedAccount?.id)
       ?? candidates[0];
     if (!account) {
       throw new CloudflareConnectionError(
@@ -309,7 +353,7 @@ export class CloudflareConnectionService {
     const previousBinding = await this.readBinding();
     await this.boundary(
       'credential-storage-failed',
-      'The Cloudflare credential could not be saved in Keychain.',
+      'The Cloudflare credential could not be saved in SecretStorage.',
       () => this.dependencies.keychain.save(keychainService, credential),
     );
     try {
@@ -351,33 +395,43 @@ export class CloudflareConnectionService {
         'The Cloudflare credential is unavailable. Connect Cloudflare again.',
       );
     }
-    let verifiedAccount: CloudflareAccount;
-    try {
-      verifiedAccount = await this.dependencies.api.verify(credential);
-    } catch (error) {
-      if (error instanceof CloudflareCredentialExpiredError) {
-        try {
-          await this.markExpired(binding);
-        } catch {
-          await this.requireRecovery(binding);
-          throw this.recoveryRequiredError();
+    const authorizedAccounts = await this.validateStoredConnection(credential, binding);
+    return { binding, credential, authorizedAccounts };
+  }
+
+  private async validateStoredConnection(
+    credential: string,
+    binding: CloudflareConnectionStatus,
+  ): Promise<CloudflareAccount[]> {
+    if (binding.method === 'api-token') {
+      try {
+        await this.dependencies.api.verify(credential);
+      } catch (error) {
+        if (error instanceof CloudflareCredentialExpiredError) {
+          try {
+            await this.markExpired(binding);
+          } catch {
+            await this.requireRecovery(binding);
+            throw this.recoveryRequiredError();
+          }
+          throw new CloudflareConnectionError(
+            'credential-unavailable',
+            'The Cloudflare credential has expired. Connect Cloudflare again.',
+          );
         }
-        throw new CloudflareConnectionError(
-          'credential-unavailable',
-          'The Cloudflare credential has expired. Connect Cloudflare again.',
+        throw this.safeError(
+          error,
+          'api-account-verification-failed',
+          'Cloudflare connection verification failed. Retry the connection.',
         );
       }
-      throw this.safeError(
-        error,
-        'api-account-verification-failed',
-        'Cloudflare connection verification failed. Retry the connection.',
-      );
     }
-    if (verifiedAccount.id !== binding.account.id) {
+    const authorizedAccounts = await this.listAuthorizedAccounts(credential, binding);
+    if (!binding.account || !authorizedAccounts.some((account) => account.id === binding.account?.id)) {
       await this.requireRecovery(binding);
       throw this.recoveryRequiredError();
     }
-    return { binding, credential };
+    return authorizedAccounts;
   }
 
   private async listAuthorizedAccounts(
@@ -454,7 +508,7 @@ export class CloudflareConnectionService {
   private async readCredential(): Promise<string | undefined> {
     return this.boundary(
       'credential-storage-failed',
-      'The Cloudflare credential could not be read from Keychain.',
+      'The Cloudflare credential could not be read from SecretStorage.',
       () => this.dependencies.keychain.read(keychainService),
     );
   }
@@ -542,10 +596,11 @@ export class CloudflareConnectionService {
     return new CloudflareConnectionError(code, message);
   }
 
-  private newOAuthTransaction(): OAuthTransaction {
+  private newOAuthTransaction(redirectUri?: string): OAuthTransaction {
     return {
       state: randomBytes(32).toString('base64url'),
       codeVerifier: randomBytes(32).toString('base64url'),
+      ...(redirectUri === undefined ? {} : { redirectUri }),
     };
   }
 

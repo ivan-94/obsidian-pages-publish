@@ -769,6 +769,10 @@ function extractMarkdownAssetReferences(
   return references;
 }
 
+export function countMarkdownAssetReferences(snapshot: ArticleSourceSnapshot): number {
+  return extractMarkdownAssetReferences(snapshot).length;
+}
+
 interface AssetMarkupCandidate {
   kind: 'image' | 'link';
   offset: number;

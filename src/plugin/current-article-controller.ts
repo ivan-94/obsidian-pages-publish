@@ -16,6 +16,14 @@ export const articleIntentEditorFields = [
   { name: 'redirects', label: '重定向覆盖', kind: 'list' },
 ] as const;
 
+export function articleContentIssueLabel(issue: {
+  severity: 'blocker' | 'warning';
+  dormant: boolean;
+}): '阻塞' | '警告' | '休眠警告' {
+  if (issue.dormant) return '休眠警告';
+  return issue.severity === 'blocker' ? '阻塞' : '警告';
+}
+
 export class LatestCurrentArticleProjection {
   private generation = 0;
 

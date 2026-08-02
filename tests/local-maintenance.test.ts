@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createLocalMaintenanceService } from '../src/maintenance/local-maintenance';
+import {
+  createLocalMaintenanceService,
+} from '../src/maintenance/local-maintenance';
+import { BoundedDiagnosticLog } from '../src/maintenance/maintenance-service';
 
 type Node = {
   type: 'file' | 'folder';
@@ -78,11 +81,63 @@ async function waitFor(assertion: () => void): Promise<void> {
 }
 
 describe('local maintenance adapter integration', () => {
+  it('exposes the same host environment through maintenance and repair', async () => {
+    const adapter = new FakeDataAdapter();
+    const repair = vi.fn(async () => ({ stage: 'ready' }));
+    const service = createLocalMaintenanceService({
+      directory: 'plugin/maintenance',
+      pluginVersion: '0.1.0',
+      platform: 'darwin',
+      adapter: adapter as unknown as import('obsidian').DataAdapter,
+      environment: {
+        getStatus: () => ({ stage: 'ready' }),
+        repair,
+      },
+    });
+
+    expect(service.getStatus()).toMatchObject({
+      environment: { stage: 'ready' },
+      capabilities: { repairEnvironment: true },
+    });
+    await service.repairEnvironment();
+    expect(repair).toHaveBeenCalledOnce();
+  });
+
+  it('exposes a host-provided safe-log view and includes only structured log data in diagnostics', async () => {
+    const adapter = new FakeDataAdapter();
+    const log = new BoundedDiagnosticLog();
+    const open = vi.fn(async () => undefined);
+    log.append({
+      at: '2026-08-01T12:00:00.000Z',
+      stage: 'upload',
+      code: 'upload-failed',
+      counts: { files: 3 },
+    });
+    const service = createLocalMaintenanceService({
+      directory: 'plugin/maintenance',
+      pluginVersion: '0.1.0',
+      platform: 'darwin',
+      adapter: adapter as unknown as import('obsidian').DataAdapter,
+      diagnosticLog: log,
+      logs: { open },
+    });
+
+    expect(service.getStatus().capabilities.openLogs).toBe(true);
+    await service.openLogs();
+    expect(open).toHaveBeenCalledOnce();
+    await service.exportDiagnostics({ confirmed: true });
+    expect(adapter.write).toHaveBeenCalledWith(
+      expect.stringMatching(/diagnostics\/diagnostics-/u),
+      expect.stringContaining('upload-failed'),
+    );
+  });
+
   it('best-effort prunes old files and complete build directories at startup without deleting recovery', async () => {
     const adapter = new FakeDataAdapter();
     adapter.addFile('plugin/maintenance/logs/old.log', 10, 0);
     adapter.addFile('plugin/maintenance/receipts/old-receipt.json', 10, 0);
     adapter.addFile('plugin/maintenance/receipts/deployment-recovery.json', 10, 0);
+    adapter.addFile('plugin/maintenance/receipts/activation-pending.json', 10, 0);
     adapter.addFolder('plugin/maintenance/builds/old-build', 0);
     adapter.addFile('plugin/maintenance/builds/old-build/assets/data.js', 64, 0);
     adapter.addFolder('plugin/maintenance/builds/current-build', 0);
@@ -105,6 +160,9 @@ describe('local maintenance adapter integration', () => {
     expect(adapter.remove).toHaveBeenCalledWith('plugin/maintenance/receipts/old-receipt.json');
     expect(adapter.remove).not.toHaveBeenCalledWith(
       'plugin/maintenance/receipts/deployment-recovery.json',
+    );
+    expect(adapter.remove).not.toHaveBeenCalledWith(
+      'plugin/maintenance/receipts/activation-pending.json',
     );
     expect(adapter.rmdir).not.toHaveBeenCalledWith(
       'plugin/maintenance/builds/current-build',

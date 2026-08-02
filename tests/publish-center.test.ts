@@ -6,6 +6,28 @@ import {
 } from '../src/publication/publish-center';
 
 describe('publish center state', () => {
+  it('projects the canonical site URL and most recent successful publication time for the header', () => {
+    const state = createPublishCenterState({
+      siteName: 'Header wiki',
+      siteUrl: 'https://header-wiki.pages.dev',
+      scan: { configRevision: 'config', digest: 'scan', candidates: [], issues: [] },
+      articles: [{
+        sourcePath: 'notes/header.md',
+        title: 'Header',
+        url: '/notes/header/',
+        visibility: 'public',
+        sourceDigest: 'digest',
+        lastPublishedAt: '2026-08-01T10:30:00.000Z',
+      }],
+      baseline: { status: 'first-publish' },
+    });
+
+    expect(state).toMatchObject({
+      siteUrl: 'https://header-wiki.pages.dev',
+      lastPublishedAt: '2026-08-01T10:30:00.000Z',
+    });
+  });
+
   it('reports a selected article with a changed source digest as an update from the last successful deployment', () => {
     const state = createPublishCenterState({
       siteName: 'Release wiki',

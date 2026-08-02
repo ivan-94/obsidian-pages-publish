@@ -21,6 +21,7 @@ import {
 import {
   loadSiteConfigFromDirectory,
   saveSiteConfigToDirectory,
+  validateSiteConfigForDirectory,
   type EditableSiteConfig,
   type SiteConfigV1,
 } from './config/site-config';
@@ -42,6 +43,7 @@ import {
   type PreparedArticleIntentEdit,
 } from './publication/article-metadata';
 import {
+  deriveArticlePublicationState,
   resolveCurrentArticlePanelFromDirectory,
   type CurrentArticleContext,
   type CurrentArticlePanelState,
@@ -67,6 +69,7 @@ import {
 import {
   PagesPublishMaintenanceService,
   type MaintenanceStatus,
+  type SafeDiagnosticLogEntry,
 } from './maintenance/maintenance-service';
 import {
   projectGlobalUiState,
@@ -87,9 +90,12 @@ import {
   type SetupAccount,
   type SetupDraft,
   type SetupProject,
+  type SetupProgressStage,
   type SetupResult,
   type SetupReview,
 } from './setup/site-setup';
+import type { PublicationEnvironmentStatus } from './runtime/environment-manager';
+import { siteCanonicalOrigin } from './site/discovery';
 
 export type LaunchTarget = 'setup' | 'publish-center';
 
@@ -133,12 +139,73 @@ export interface InitialSetupConnectionBoundary {
   listAvailableAccounts(): Promise<SetupAccount[]>;
 }
 
+/** Optional connection-changing capabilities used only after an explicit UI action. */
+export interface InitialSetupConnectionActions {
+  isOAuthAvailable?(): boolean;
+  beginOAuth?(input?: { redirectUri?: string }): Promise<{ url: string }>;
+  completeOAuth?(input: { state: string; code: string }): Promise<{
+    state: 'disconnected' | 'connected' | 'expired';
+    account?: SetupAccount;
+  }>;
+  cancelOAuth?(state: string): Promise<boolean>;
+  abandonOAuth?(): Promise<void>;
+  connectApiToken?(token: string): Promise<{
+    state: 'disconnected' | 'connected' | 'expired';
+    account?: SetupAccount;
+  }>;
+  selectAccount?(accountId: string): Promise<{
+    state: 'disconnected' | 'connected' | 'expired';
+    account?: SetupAccount;
+  }>;
+}
+
+type InitialSetupConnectionHost = InitialSetupConnectionBoundary & InitialSetupConnectionActions;
+
+/** Host-owned listener preparation required before a desktop OAuth browser launch. */
+export interface InitialSetupOAuthCallbackBoundary {
+  start(): Promise<{ redirectUri: string }>;
+  stop?(): Promise<void>;
+}
+
+export interface InitialSetupEnvironmentBoundary {
+  getStatus(): PublicationEnvironmentStatus;
+  prepare(): Promise<PublicationEnvironmentStatus>;
+  repair(): Promise<PublicationEnvironmentStatus>;
+}
+
+export type InitialSetupEnvironmentStatus =
+  | PublicationEnvironmentStatus
+  | {
+    stage: 'unavailable';
+    impact: string;
+    nextAction?: 'repair';
+    detailsAvailable?: boolean;
+  };
+
 export type InitialSetupConnection =
   | { state: 'unavailable' }
   | {
     state: 'disconnected' | 'connected' | 'expired';
     account?: SetupAccount;
   };
+
+export type ConfiguredCustomDomainStatus =
+  | { state: 'unavailable' }
+  | { state: 'not-configured' }
+  | {
+    state: 'pending' | 'active' | 'failed';
+    hostname: string;
+    message?: string;
+  };
+
+export interface ConfiguredCustomDomainStatusBoundary {
+  inspect(): Promise<ConfiguredCustomDomainStatus>;
+}
+
+/** Receives only schema-constrained diagnostic events; it never accepts free text. */
+export interface DiagnosticLogBoundary {
+  append(entry: SafeDiagnosticLogEntry): void;
+}
 
 interface PublicationPreparation {
   scan: CoordinatedScanResult<SiteScanResult>;
@@ -153,18 +220,23 @@ export class PagesPublishApplication {
   private readonly scanCoordinator: ContentScanCoordinator<SiteScanResult>;
   private readonly currentArticleListeners = new Set<() => void>();
   private readonly setup: SiteSetupService | undefined;
-  private readonly setupConnection: InitialSetupConnectionBoundary | undefined;
+  private readonly setupConnection: InitialSetupConnectionHost | undefined;
+  private readonly oauthCallback: InitialSetupOAuthCallbackBoundary | undefined;
+  private readonly setupEnvironment: InitialSetupEnvironmentBoundary | undefined;
   private readonly publisher:
     | PublicationOrchestrator<PublicationPreparation>
     | undefined;
   private readonly deploymentFacts: DeploymentFactsCoordinator | undefined;
+  private readonly customDomainStatus: ConfiguredCustomDomainStatusBoundary | undefined;
   private readonly maintenance: PagesPublishMaintenanceService | undefined;
+  private readonly diagnosticLog: DiagnosticLogBoundary | undefined;
   private readonly globalUiListeners = new Set<() => void>();
   private unsubscribePublisherUi: (() => void) | undefined;
   private activeScans = 0;
   private latestScan: SiteScanResult | undefined;
   private pendingPublicationChanges: number | 'unknown' | undefined;
   private preparedPublishSnapshot: PublicationSnapshot | undefined;
+  private initialSetupDraft: SetupDraft | undefined;
 
   constructor(
     private readonly vaultRoot: string,
@@ -174,16 +246,24 @@ export class PagesPublishApplication {
       scanDebounceMs?: number;
       scanTimers?: ScanTimerBoundary;
       setup?: SiteSetupService;
-      setupConnection?: InitialSetupConnectionBoundary;
+      setupConnection?: InitialSetupConnectionHost;
+      oauthCallback?: InitialSetupOAuthCallbackBoundary;
+      setupEnvironment?: InitialSetupEnvironmentBoundary;
       deploymentAdapter?: CloudflarePagesDeploymentBoundary;
       deploymentFacts?: DeploymentFactsCoordinator;
+      customDomainStatus?: ConfiguredCustomDomainStatusBoundary;
       maintenance?: PagesPublishMaintenanceService;
+      diagnosticLog?: DiagnosticLogBoundary;
     } = {},
   ) {
     this.setup = options.setup;
     this.setupConnection = options.setupConnection;
+    this.oauthCallback = options.oauthCallback;
+    this.setupEnvironment = options.setupEnvironment;
     this.deploymentFacts = options.deploymentFacts;
+    this.customDomainStatus = options.customDomainStatus;
     this.maintenance = options.maintenance;
+    this.diagnosticLog = options.diagnosticLog;
     this.scanCoordinator = new ContentScanCoordinator(
       options.scan ??
         (async ({ signal }) =>
@@ -199,6 +279,7 @@ export class PagesPublishApplication {
       });
       this.unsubscribePublisherUi = this.publisher.subscribe((status) => {
         if (status.state === 'succeeded') this.pendingPublicationChanges = 0;
+        this.recordPublicationDiagnostic(status);
         this.notifyGlobalUiChange();
       });
     }
@@ -220,6 +301,16 @@ export class PagesPublishApplication {
     return session;
   }
 
+  async openPublishedSite(): Promise<string> {
+    const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+    if (loaded.status !== 'editable') {
+      throw new Error(`Site config version ${loaded.version} is read-only.`);
+    }
+    const url = siteCanonicalOrigin(loaded.config);
+    this.openExternal(url);
+    return url;
+  }
+
   getPreviewStatus(): PreviewServerStatus {
     return this.previewServer.getStatus();
   }
@@ -237,6 +328,24 @@ export class PagesPublishApplication {
     return { ...session, articleUrl };
   }
 
+  async openArticleOnlinePage(sourcePath: string): Promise<string> {
+    const state = await this.getCurrentArticlePanel({ pinnedPath: sourcePath });
+    const value = state.status === 'article'
+      ? state.route.onlineUrl
+      : state.status === 'out-of-scope-online'
+        ? state.onlineUrl
+        : undefined;
+    if (!value) throw new Error('This article does not have an online page.');
+    const url = value.startsWith('/')
+      ? new URL(value.slice(1), `${await this.publishCenterSiteUrl()}/`)
+      : new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new Error('The online article URL is not safe to open.');
+    }
+    this.openExternal(url.toString());
+    return url.toString();
+  }
+
   async preparePreview(): Promise<LocalPreview> {
     return (await this.prepareStablePreview('preview')).preview;
   }
@@ -245,10 +354,12 @@ export class PagesPublishApplication {
     options: { baseline?: PublishBaseline } = {},
   ): Promise<PublishCenterState> {
     const initialScan = await this.requestScan('manual-refresh');
+    const siteUrl = await this.publishCenterSiteUrl();
     let center: PublishCenterState;
     if (initialScan.value.issues.some((issue) => issue.severity === 'blocker')) {
       center = createPublishCenterState({
         siteName: await this.publishCenterSiteName(),
+        siteUrl,
         scan: initialScan.value,
         articles: initialScan.value.candidates.map((candidate) => ({
           sourcePath: candidate.sourcePath,
@@ -268,6 +379,7 @@ export class PagesPublishApplication {
       const prepared = await this.prepareStablePreview('manual-refresh');
       center = createPublishCenterState({
         siteName: prepared.preview.siteName,
+        siteUrl,
         scan: prepared.scan.value,
         articles: prepared.preview.articles,
         baseline: options.baseline ?? await this.defaultPublishBaseline(prepared.preview),
@@ -280,7 +392,7 @@ export class PagesPublishApplication {
   }
 
   async preparePublishSnapshot(): Promise<PublicationSnapshot> {
-    const prepared = await this.prepareStablePreview('publish');
+    const prepared = await this.prepareStablePreview('publish', 'published');
     const snapshot = createPublicationSnapshot(prepared.scan.value, prepared.preview);
     this.preparedPublishSnapshot = snapshot;
     return snapshot;
@@ -305,8 +417,17 @@ export class PagesPublishApplication {
    */
   async getGlobalUiState(): Promise<GlobalUiProjection> {
     const configured = (await this.getLaunchTarget()) === 'publish-center';
+    let connection: InitialSetupConnection['state'] = 'unavailable';
+    if (configured) {
+      try {
+        connection = (await this.getInitialSetupConnection()).state;
+      } catch {
+        connection = 'unavailable';
+      }
+    }
     return projectGlobalUiState({
       configured,
+      connection,
       scan: this.activeScans > 0 ? 'scanning' : 'idle',
       blockers: this.latestScan?.issues.filter((issue) => issue.severity === 'blocker').length,
       pending: this.pendingPublicationChanges,
@@ -337,6 +458,18 @@ export class PagesPublishApplication {
     if (!this.deploymentFacts) throw new PublicationUnavailableError();
     await this.deploymentFacts.recover(inspector);
     await this.publisher?.refreshPublicationFacts();
+  }
+
+  /** Clears an upload-uncertain lock only after an explicit UI confirmation. */
+  async acknowledgeUploadUncertainPublication(): Promise<void> {
+    if (!this.deploymentFacts) throw new PublicationUnavailableError();
+    await this.deploymentFacts.acknowledgeUploadUncertainActivation();
+    await this.publisher?.refreshPublicationFacts();
+  }
+
+  /** Invoked only by the explicit settings-page “check status” action. */
+  async inspectConfiguredCustomDomain(): Promise<ConfiguredCustomDomainStatus> {
+    return this.customDomainStatus?.inspect() ?? { state: 'unavailable' };
   }
 
   /** Refreshes durable publication recovery state when the host starts. */
@@ -384,6 +517,7 @@ export class PagesPublishApplication {
 
   private async prepareStablePreview(
     trigger: 'manual-refresh' | 'preview' | 'publish',
+    renderMode: 'local' | 'published' = 'local',
   ): Promise<{
     preview: LocalPreview;
     scan: CoordinatedScanResult<SiteScanResult>;
@@ -394,7 +528,9 @@ export class PagesPublishApplication {
         (issue) => issue.severity === 'blocker',
       );
       if (blockers.length > 0) throw new PublishingBlockedError(blockers);
-      const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot);
+      const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot, {
+        renderMode,
+      });
       const after = await this.requestScan(trigger);
       if (after.value.digest === before.value.digest) return { preview, scan: after };
     }
@@ -413,7 +549,9 @@ export class PagesPublishApplication {
   private async buildPublication(
     preparation: PublicationPreparation,
   ): Promise<PublicationSnapshot> {
-    const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot);
+    const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot, {
+      renderMode: 'published',
+    });
     const verified = await this.requestScan('publish');
     if (verified.value.digest !== preparation.scan.value.digest) {
       throw new Error(
@@ -468,6 +606,42 @@ export class PagesPublishApplication {
     return this.requireSetup().review(draft);
   }
 
+  getInitialSetupDraft(): SetupDraft | undefined {
+    return this.initialSetupDraft === undefined
+      ? undefined
+      : structuredClone(this.initialSetupDraft);
+  }
+
+  preserveInitialSetupDraft(draft: SetupDraft): void {
+    this.initialSetupDraft = structuredClone(draft);
+  }
+
+  getInitialSetupEnvironment(): InitialSetupEnvironmentStatus {
+    return this.setupEnvironment?.getStatus() ?? {
+      stage: 'unavailable',
+      impact: '当前插件构建未接入本地发布环境。',
+      detailsAvailable: true,
+    };
+  }
+
+  async prepareInitialSetupEnvironment(): Promise<InitialSetupEnvironmentStatus> {
+    if (!this.setupEnvironment) return this.getInitialSetupEnvironment();
+    try {
+      return await this.setupEnvironment.prepare();
+    } finally {
+      this.notifyGlobalUiChange();
+    }
+  }
+
+  async repairInitialSetupEnvironment(): Promise<InitialSetupEnvironmentStatus> {
+    if (!this.setupEnvironment) return this.getInitialSetupEnvironment();
+    try {
+      return await this.setupEnvironment.repair();
+    } finally {
+      this.notifyGlobalUiChange();
+    }
+  }
+
   isInitialSetupAvailable(): boolean {
     return this.setup !== undefined && this.setupConnection !== undefined;
   }
@@ -482,18 +656,200 @@ export class PagesPublishApplication {
     return this.setupConnection.listAvailableAccounts();
   }
 
+  canConnectInitialSetupApiToken(): boolean {
+    return this.setupConnection?.connectApiToken !== undefined;
+  }
+
+  canConnectInitialSetupOAuth(): boolean {
+    const connection = this.setupConnection;
+    return connection?.beginOAuth !== undefined &&
+      connection?.completeOAuth !== undefined &&
+      connection.isOAuthAvailable?.() === true;
+  }
+
+  async beginInitialSetupOAuth(): Promise<void> {
+    const connection = this.setupConnection;
+    if (!connection?.beginOAuth || connection.isOAuthAvailable?.() !== true) {
+      throw new InitialSetupUnavailableError();
+    }
+    let callback: { redirectUri: string } | undefined;
+    try {
+      callback = await this.oauthCallback?.start();
+      const authorization = await connection.beginOAuth(callback);
+      this.openExternal(authorization.url);
+    } catch (error) {
+      await this.oauthCallback?.stop?.().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async completeInitialSetupOAuth(input: {
+    state: string;
+    code: string;
+  }): Promise<InitialSetupConnection> {
+    const connection = this.setupConnection;
+    if (!connection?.completeOAuth || connection.isOAuthAvailable?.() !== true) {
+      throw new InitialSetupUnavailableError();
+    }
+    try {
+      return await connection.completeOAuth(input);
+    } finally {
+      this.notifyGlobalUiChange();
+    }
+  }
+
+  async cancelInitialSetupOAuth(state: string): Promise<boolean> {
+    const connection = this.setupConnection;
+    if (!connection?.cancelOAuth) return false;
+    try {
+      return await connection.cancelOAuth(state);
+    } finally {
+      this.notifyGlobalUiChange();
+    }
+  }
+
+  async abandonInitialSetupOAuth(): Promise<void> {
+    const connection = this.setupConnection;
+    if (!connection?.abandonOAuth) return;
+    try {
+      await connection.abandonOAuth();
+    } finally {
+      this.notifyGlobalUiChange();
+    }
+  }
+
+  canSelectInitialSetupAccount(): boolean {
+    return this.setupConnection?.selectAccount !== undefined;
+  }
+
+  async connectInitialSetupApiToken(token: string): Promise<InitialSetupConnection> {
+    const connection = this.setupConnection;
+    if (!connection?.connectApiToken) throw new InitialSetupUnavailableError();
+    try {
+      return await connection.connectApiToken(token);
+    } finally {
+      this.notifyGlobalUiChange();
+    }
+  }
+
+  async selectInitialSetupAccount(accountId: string): Promise<InitialSetupConnection> {
+    const connection = this.setupConnection;
+    if (!connection?.selectAccount) throw new InitialSetupUnavailableError();
+    try {
+      return await connection.selectAccount(accountId);
+    } finally {
+      this.notifyGlobalUiChange();
+    }
+  }
+
+  async selectConfiguredAccount(accountId: string): Promise<InitialSetupConnection> {
+    const previous = await this.connectedSetupAccount();
+    const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+    if (loaded.status !== 'editable') {
+      throw new Error(`Site config version ${loaded.version} is read-only.`);
+    }
+    try {
+      const selected = await this.selectInitialSetupAccount(accountId);
+      const account = 'account' in selected ? selected.account : undefined;
+      if (selected.state !== 'connected' || !account) throw new InitialSetupUnavailableError();
+      await this.requireSetup().verifyConfiguredProject(
+        account,
+        loaded.config.cloudflare.projectName,
+      );
+      return selected;
+    } catch (error) {
+      try {
+        await this.selectInitialSetupAccount(previous.id);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          'Cloudflare account verification failed and the previous account could not be restored.',
+        );
+      }
+      throw error;
+    }
+  }
+
   listInitialSetupProjects(account: SetupAccount): Promise<SetupProject[]> {
     return this.requireSetup().listProjects(account);
   }
 
-  async confirmInitialSetup(draft: SetupDraft): Promise<SetupResult> {
-    return this.requireSetup().confirm(draft);
+  async bindConfiguredProject(projectName: string): Promise<SetupProject> {
+    const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+    if (loaded.status !== 'editable') {
+      throw new Error(`Site config version ${loaded.version} is read-only.`);
+    }
+    const draft = structuredClone(loaded.config);
+    draft.cloudflare.projectName = projectName;
+    await validateSiteConfigForDirectory(this.vaultRoot, draft);
+    const account = await this.connectedSetupAccount();
+    const project = await this.requireSetup().verifyConfiguredProject(account, projectName);
+    await this.assertSetupAccountUnchanged(account.id);
+    await saveSiteConfigToDirectory(this.vaultRoot, draft, {
+      expectedRevision: loaded.revision,
+    });
+    await this.requestScan('config-save');
+    return project;
   }
 
-  getCurrentArticlePanel(
+  async connectConfiguredCustomDomain(hostname: string): Promise<ConfiguredCustomDomainStatus> {
+    const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+    if (loaded.status !== 'editable') {
+      throw new Error(`Site config version ${loaded.version} is read-only.`);
+    }
+    const draft = structuredClone(loaded.config);
+    draft.cloudflare.customDomain = hostname;
+    await validateSiteConfigForDirectory(this.vaultRoot, draft);
+    const account = await this.connectedSetupAccount();
+    const result = await this.requireSetup().connectConfiguredCustomDomain(
+      account,
+      draft.cloudflare.projectName,
+      hostname,
+    );
+    await this.assertSetupAccountUnchanged(account.id);
+    await saveSiteConfigToDirectory(this.vaultRoot, draft, {
+      expectedRevision: loaded.revision,
+    });
+    await this.requestScan('config-save');
+    return { state: result.status, hostname, ...(result.message ? { message: result.message } : {}) };
+  }
+
+  async confirmInitialSetup(
+    draft: SetupDraft,
+    onProgress?: (stage: SetupProgressStage) => void,
+  ): Promise<SetupResult> {
+    const result = await this.requireSetup().confirm(draft, onProgress);
+    this.initialSetupDraft = undefined;
+    return result;
+  }
+
+  async getCurrentArticlePanel(
     context: CurrentArticleContext,
   ): Promise<CurrentArticlePanelState> {
-    return resolveCurrentArticlePanelFromDirectory(this.vaultRoot, context);
+    const state = await resolveCurrentArticlePanelFromDirectory(this.vaultRoot, context);
+    if (state.status !== 'article') return state;
+    const baseline = this.deploymentFacts
+      ? await this.deploymentFacts.getBaseline()
+      : undefined;
+    const previous = baseline?.status === 'available'
+      ? baseline.articles.find((article) => article.sourcePath === state.sourcePath)
+      : undefined;
+    const publication = this.getPublicationStatus();
+    return {
+      ...state,
+      ...(publication.state === 'failed' ? { sitePublicationFailed: true } : {}),
+      publicationState: deriveArticlePublicationState({
+        visibility: state.metadata.visibility.value,
+        pendingUrl: state.route.pendingUrl,
+        onlineUrl: previous?.url ?? state.route.onlineUrl,
+        currentSourceDigest: state.currentSourceDigest,
+        deployedSourceDigest: previous?.sourceDigest ?? state.metadata.deployment?.sourceDigest,
+        deployedVisibility: previous?.visibility,
+        hasBlocker: [...state.contentIssues, ...state.route.issues].some(
+          (issue) => issue.severity === 'blocker' && !('dormant' in issue && issue.dormant),
+        ),
+      }),
+    };
   }
 
   prepareArticleIntentEdit(
@@ -628,6 +984,7 @@ export class PagesPublishApplication {
             this.pendingPublicationChanges = scanMayChangePublication(trigger)
               ? 'unknown'
               : undefined;
+            this.recordScanDiagnostic(result.value);
             return result;
           }
         } catch (error) {
@@ -666,6 +1023,22 @@ export class PagesPublishApplication {
     return this.setup;
   }
 
+  private async connectedSetupAccount(): Promise<SetupAccount> {
+    const connection = await this.getInitialSetupConnection();
+    const account = 'account' in connection ? connection.account : undefined;
+    if (connection.state !== 'connected' || !account) {
+      throw new InitialSetupUnavailableError();
+    }
+    return account;
+  }
+
+  private async assertSetupAccountUnchanged(accountId: string): Promise<void> {
+    const current = await this.connectedSetupAccount();
+    if (current.id !== accountId) {
+      throw new Error('Cloudflare account changed while applying the remote setting.');
+    }
+  }
+
   private requirePublisher(): PublicationOrchestrator<PublicationPreparation> {
     if (!this.publisher) throw new PublicationUnavailableError();
     return this.publisher;
@@ -678,6 +1051,33 @@ export class PagesPublishApplication {
 
   private notifyGlobalUiChange(): void {
     for (const listener of this.globalUiListeners) listener();
+  }
+
+  private recordScanDiagnostic(scan: SiteScanResult): void {
+    const blockers = scan.issues.filter((issue) => issue.severity === 'blocker').length;
+    const warnings = scan.issues.filter((issue) => issue.severity === 'warning').length;
+    // Diagnostics are best-effort. A host-owned sink must not change scan or
+    // publication behavior, and it only receives finite aggregate counts.
+    try {
+      this.diagnosticLog?.append({
+        at: new Date().toISOString(),
+        stage: 'scan',
+        code: 'scan-complete',
+        counts: { candidates: scan.candidates.length, blockers, warnings },
+      });
+    } catch {
+      // A failed diagnostics sink is intentionally not a publishing failure.
+    }
+  }
+
+  private recordPublicationDiagnostic(status: PublicationRunStatus): void {
+    const event = publicationDiagnostic(status);
+    if (!event) return;
+    try {
+      this.diagnosticLog?.append({ at: new Date().toISOString(), ...event });
+    } catch {
+      // A failed diagnostics sink is intentionally not a publishing failure.
+    }
   }
 
   private globalEnvironmentState(): 'preparing' | 'failed' | undefined {
@@ -709,6 +1109,11 @@ export class PagesPublishApplication {
       ? { status: 'missing' }
       : { status: 'first-publish' };
   }
+
+  private async publishCenterSiteUrl(): Promise<string | undefined> {
+    const loaded = await loadSiteConfigFromDirectory(this.vaultRoot);
+    return loaded.status === 'editable' ? siteCanonicalOrigin(loaded.config) : undefined;
+  }
 }
 
 function deploymentUrlPath(value: string | undefined): string | undefined {
@@ -731,7 +1136,38 @@ function toGlobalPublicationState(
   if (status.state === 'running' || status.state === 'failed') {
     return { state: status.state, stage: status.stage };
   }
+  if (status.state === 'reconciliation-required') {
+    return { state: status.state, reconciliation: status.reconciliation };
+  }
   return { state: status.state };
+}
+
+function publicationDiagnostic(
+  status: PublicationRunStatus,
+): Omit<SafeDiagnosticLogEntry, 'at'> | undefined {
+  if (status.state === 'idle') return undefined;
+  if (status.state === 'running') {
+    if (status.stage === 'prepare') {
+      return { stage: 'maintenance', code: 'publication-preparing' };
+    }
+    return { stage: status.stage, code: `${status.stage}-started` };
+  }
+  if (status.state === 'succeeded') {
+    return {
+      stage: 'activate',
+      code: 'activation-complete',
+      counts: { files: status.deployment.output.fileCount },
+    };
+  }
+  if (status.state === 'failed') {
+    return {
+      stage: status.stage === 'prepare' ? 'maintenance' : status.stage,
+      code: `${status.stage}-failed`,
+    };
+  }
+  return status.reconciliation === 'upload-uncertain'
+    ? { stage: 'upload', code: 'upload-outcome-unknown' }
+    : { stage: 'activate', code: 'activation-reconciliation-required' };
 }
 
 function scanMayChangePublication(trigger: ScanTrigger): boolean {

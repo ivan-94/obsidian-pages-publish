@@ -53,6 +53,7 @@ describe('local site preview', () => {
         '---',
         'publication:',
         '  visibility: public',
+        '  redirects: [/notes/old/]',
         '---',
         '# Hello Pages',
         '',
@@ -91,6 +92,19 @@ describe('local site preview', () => {
     expect(preview.files['/notes/index.html']).toContain(
       '<a href="/notes/hello/">Hello Pages</a>',
     );
+
+    const published = await prepareLocalPreviewFromDirectory(vault, {
+      renderMode: 'published',
+    });
+    const publishedHtml = Object.entries(published.files).filter(([path]) =>
+      path.endsWith('.html'),
+    );
+    expect(published.files['/notes/old/index.html']).toBeDefined();
+    for (const [, html] of publishedHtml) {
+      expect(html).not.toContain('data-pages-preview="local"');
+      expect(html).not.toContain('本地预览 · 尚未发布');
+      expect(html).not.toContain('URL 预览');
+    }
   });
 
   it('rejects a site config that omits required product schema fields', async () => {

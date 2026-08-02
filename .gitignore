@@ -4,4 +4,7 @@ main.js
 coverage/
 release/
 data.json
+.env
 .DS_Store
+hats/*/test-vault/
+hats

@@ -55,7 +55,7 @@ export interface PublicationEnvironmentStatus {
     | 'installing'
     | 'ready'
     | 'failed';
-  runtime?: { source: 'system' | 'managed'; version: string };
+  runtime?: { source: 'obsidian' | 'system' | 'managed'; version: string };
   engine?: { version: string };
   impact?: string;
   nextAction?: 'repair';
@@ -227,7 +227,7 @@ function verifyChecksum(
   }
 }
 
-function compatibleNodeVersion(version: string): boolean {
+export function compatibleNodeVersion(version: string): boolean {
   const match = /^v?(\d+)\.(\d+)\.(\d+)$/u.exec(version);
   if (!match) return false;
   const major = Number(match[1]);

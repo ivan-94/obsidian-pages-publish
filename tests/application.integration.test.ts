@@ -4,9 +4,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PagesPublishApplication } from '../src/application';
 import { DeploymentFactsCoordinator, FileSystemDeploymentStateStore } from '../src/publication/deployment-facts';
-import { PagesPublishMaintenanceService } from '../src/maintenance/maintenance-service';
+import {
+  BoundedDiagnosticLog,
+  PagesPublishMaintenanceService,
+} from '../src/maintenance/maintenance-service';
 import type { SiteScanResult } from '../src/content/site-scanner';
 import type { SiteConfigV1 } from '../src/config/site-config';
+import { loadSiteConfigFromDirectory } from '../src/config/site-config';
 import {
   SiteSetupService,
   type SetupDraft,
@@ -52,6 +56,27 @@ describe('Pages Publish application', () => {
     await expect(application.getLaunchTarget()).resolves.toBe('publish-center');
   });
 
+  it('checks a configured custom-domain status only through an explicit host boundary', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const inspect = vi.fn(async () => ({
+      state: 'pending' as const,
+      hostname: 'docs.example.com',
+    }));
+    const application = new PagesPublishApplication(vault, undefined, {
+      customDomainStatus: { inspect },
+    });
+
+    await expect(application.inspectConfiguredCustomDomain()).resolves.toEqual({
+      state: 'pending',
+      hostname: 'docs.example.com',
+    });
+    expect(inspect).toHaveBeenCalledOnce();
+    await expect(new PagesPublishApplication(vault).inspectConfiguredCustomDomain()).resolves.toEqual({
+      state: 'unavailable',
+    });
+  });
+
   it('projects scans into global feedback without treating idle work as a notification', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
     vaults.push(vault);
@@ -90,6 +115,75 @@ describe('Pages Publish application', () => {
     });
     expect(updates).toHaveBeenCalled();
     unsubscribe();
+    await application.shutdown();
+  });
+
+  it('records only structured scan outcomes for local diagnostics', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const diagnosticLog = new BoundedDiagnosticLog();
+    const application = new PagesPublishApplication(vault, undefined, {
+      diagnosticLog,
+      scan: async () => ({
+        configRevision: 'revision',
+        digest: 'digest',
+        candidates: [{
+          sourcePath: 'private/secret.md',
+          contentRootPath: 'private',
+          sourceDigest: 'digest',
+        }],
+        issues: [
+          {
+            severity: 'blocker',
+            code: 'content-root-missing',
+            path: 'private/secret.md',
+            message: 'Do not put this message in the local diagnostic log.',
+          },
+          {
+            severity: 'warning',
+            code: 'unsupported-asset',
+            path: 'private/secret.png',
+            message: 'Do not put this message in the local diagnostic log.',
+          },
+        ],
+      }),
+    });
+
+    await application.requestScan('manual-refresh');
+
+    const [entry] = diagnosticLog.entries();
+    expect(entry).toMatchObject({
+      stage: 'scan',
+      code: 'scan-complete',
+      counts: { candidates: 1, blockers: 1, warnings: 1 },
+    });
+    expect(entry?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+    expect(JSON.stringify(diagnosticLog.entries())).not.toContain('private/secret');
+    expect(JSON.stringify(diagnosticLog.entries())).not.toContain('Must not be logged');
+    await application.shutdown();
+  });
+
+  it('continues a scan when the optional diagnostic sink fails', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const append = vi.fn(() => {
+      throw new Error('diagnostic storage unavailable');
+    });
+    const application = new PagesPublishApplication(vault, undefined, {
+      diagnosticLog: { append },
+      scan: async () => ({
+        configRevision: 'revision',
+        digest: 'digest',
+        candidates: [],
+        issues: [],
+      }),
+    });
+
+    await expect(application.requestScan('manual-refresh')).resolves.toMatchObject({
+      status: 'applied',
+      value: { digest: 'digest' },
+    });
+    expect(append).toHaveBeenCalledOnce();
     await application.shutdown();
   });
 
@@ -252,6 +346,222 @@ describe('Pages Publish application', () => {
     await expect(application.listInitialSetupProjects({ id: 'account-1', name: 'Personal' }))
       .resolves.toEqual([expect.objectContaining({ name: 'existing-wiki' })]);
     await application.shutdown();
+  });
+
+  it('rebinds a configured site only after verifying the project in the connected account', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), [
+      'version: 1',
+      'site:',
+      '  name: Rebind wiki',
+      '  home_layout: sections',
+      'content_roots:',
+      '  - path: notes',
+      '    public_root: /notes',
+      'assets:',
+      '  exclude: []',
+      'features:',
+      '  search: true',
+      '  graph: true',
+      'cloudflare:',
+      '  project_name: old-project',
+      '',
+    ].join('\n'), 'utf8');
+    const createProject = vi.fn();
+    const findProject = vi.fn(async ({ projectName }: { projectName: string }) => ({
+      id: 'project-new',
+      name: projectName,
+      accountId: 'account-1',
+      pagesDevUrl: `https://${projectName}.pages.dev`,
+      compatible: true,
+    }));
+    const setup = new SiteSetupService(vault, {
+      projects: {
+        findProject,
+        createProject,
+        verifyProject: async (project) => project,
+        ensureCustomDomain: async () => ({ status: 'pending' as const }),
+      },
+    });
+    const application = new PagesPublishApplication(vault, undefined, {
+      setup,
+      setupConnection: {
+        refreshStatus: async () => ({
+          state: 'connected' as const,
+          account: { id: 'account-1', name: 'Personal' },
+        }),
+        listAvailableAccounts: async () => [{ id: 'account-1', name: 'Personal' }],
+      },
+    });
+
+    await expect(application.bindConfiguredProject('new-project')).resolves.toMatchObject({
+      name: 'new-project',
+      accountId: 'account-1',
+    });
+    const loaded = await loadSiteConfigFromDirectory(vault);
+    expect(loaded).toMatchObject({
+      status: 'editable',
+      config: { cloudflare: { projectName: 'new-project' } },
+    });
+    expect(createProject).not.toHaveBeenCalled();
+  });
+
+  it('exposes explicit API-token connection and account-selection actions to the setup UI', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const connectApiToken = vi.fn(async () => ({
+      state: 'connected' as const,
+      account: { id: 'account-1', name: 'Personal' },
+    }));
+    const selectAccount = vi.fn(async () => ({
+      state: 'connected' as const,
+      account: { id: 'account-2', name: 'Work' },
+    }));
+    const application = new PagesPublishApplication(vault, undefined, {
+      setupConnection: {
+        refreshStatus: async () => ({ state: 'disconnected' as const }),
+        listAvailableAccounts: async () => [
+          { id: 'account-1', name: 'Personal' },
+          { id: 'account-2', name: 'Work' },
+        ],
+        connectApiToken,
+        selectAccount,
+      },
+    });
+
+    expect(application.canConnectInitialSetupApiToken()).toBe(true);
+    expect(application.canSelectInitialSetupAccount()).toBe(true);
+    await expect(application.connectInitialSetupApiToken('token-secret')).resolves.toEqual({
+      state: 'connected',
+      account: { id: 'account-1', name: 'Personal' },
+    });
+    await expect(application.selectInitialSetupAccount('account-2')).resolves.toEqual({
+      state: 'connected',
+      account: { id: 'account-2', name: 'Work' },
+    });
+    expect(connectApiToken).toHaveBeenCalledWith('token-secret');
+    expect(selectAccount).toHaveBeenCalledWith('account-2');
+    await application.shutdown();
+  });
+
+  it('opens the known online page for an article that moved outside content roots', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'guide'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), [
+      'version: 1',
+      'site:',
+      '  name: Online Wiki',
+      '  home_layout: sections',
+      'content_roots:',
+      '  - path: notes',
+      '    public_root: /notes',
+      'features:',
+      '  search: false',
+      '  graph: false',
+      'cloudflare:',
+      '  project_name: online-wiki',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(join(vault, 'guide', 'online.md'), [
+      '---',
+      'publication:',
+      '  visibility: public',
+      '  deployment:',
+      '    url: https://online-wiki.pages.dev/notes/online/',
+      '---',
+      '# Online',
+      '',
+    ].join('\n'), 'utf8');
+    const openExternal = vi.fn();
+    const application = new PagesPublishApplication(vault, openExternal);
+
+    await expect(application.openArticleOnlinePage('guide/online.md'))
+      .resolves.toBe('https://online-wiki.pages.dev/notes/online/');
+    expect(openExternal).toHaveBeenCalledWith('https://online-wiki.pages.dev/notes/online/');
+  });
+
+  it('reports a site publication failure without replacing the article deployment state', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), [
+      'version: 1',
+      'site:',
+      '  name: Failed Publish Wiki',
+      '  home_layout: sections',
+      'content_roots:',
+      '  - path: notes',
+      '    public_root: /notes',
+      'features:',
+      '  search: false',
+      '  graph: false',
+      'cloudflare:',
+      '  project_name: failed-publish-wiki',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(
+      join(vault, 'notes', 'draft.md'),
+      '---\npublication:\n  visibility: public\n---\n# Draft\n',
+      'utf8',
+    );
+    const application = new PagesPublishApplication(vault, undefined, {
+      deploymentAdapter: {
+        validate: async () => undefined,
+        upload: async () => {
+          throw new Error('upload failed');
+        },
+        activate: async () => {
+          throw new Error('must not activate');
+        },
+      },
+    });
+
+    await expect(application.publishSite()).rejects.toThrow('upload failed');
+    await expect(application.getCurrentArticlePanel({ activePath: 'notes/draft.md' }))
+      .resolves.toMatchObject({
+        status: 'article',
+        publicationState: 'pending-first-publish',
+        sitePublicationFailed: true,
+      });
+  });
+
+  it('opens the Cloudflare authorization URL only through an explicit OAuth setup action', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const openExternal = vi.fn();
+    const prepareOAuthCallback = vi.fn(async () => ({
+      redirectUri: 'http://127.0.0.1:8977/oauth/callback',
+    }));
+    const beginOAuth = vi.fn(async () => ({
+      url: 'https://dash.cloudflare.com/oauth2/auth?state=one-time',
+    }));
+    const application = new PagesPublishApplication(vault, openExternal, {
+      setupConnection: {
+        refreshStatus: async () => ({ state: 'disconnected' }),
+        listAvailableAccounts: async () => [],
+        isOAuthAvailable: () => true,
+        beginOAuth,
+        completeOAuth: async () => ({ state: 'connected' }),
+      },
+      oauthCallback: { start: prepareOAuthCallback },
+    });
+
+    expect(application.canConnectInitialSetupOAuth()).toBe(true);
+    await application.beginInitialSetupOAuth();
+
+    expect(beginOAuth).toHaveBeenCalledOnce();
+    expect(beginOAuth).toHaveBeenCalledWith({
+      redirectUri: 'http://127.0.0.1:8977/oauth/callback',
+    });
+    expect(openExternal).toHaveBeenCalledWith(
+      'https://dash.cloudflare.com/oauth2/auth?state=one-time',
+    );
   });
 
   it('opens a real local preview through the external browser boundary', async () => {
@@ -421,6 +731,10 @@ describe('Pages Publish application', () => {
 
     expect(snapshot.files['/notes/release/index.html']).toContain('First version');
     expect(snapshot.files['/notes/release/index.html']).not.toContain('Second version');
+    expect(snapshot.files['/notes/release/index.html']).not.toContain(
+      'data-pages-preview="local"',
+    );
+    expect(snapshot.files['/notes/release/index.html']).not.toContain('URL 预览');
     expect(snapshot.scanDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(application.getPreparedPublishSnapshot()).toBe(snapshot);
     await application.shutdown();
@@ -442,7 +756,17 @@ describe('Pages Publish application', () => {
       'utf8',
     );
     const stages: string[] = [];
+    const diagnosticEntries = new BoundedDiagnosticLog();
+    const diagnosticLog = {
+      append: (entry: import('../src/maintenance/maintenance-service').SafeDiagnosticLogEntry) => {
+        diagnosticEntries.append(entry);
+        if (entry.code === 'upload-started') {
+          throw new Error('diagnostic storage unavailable');
+        }
+      },
+    };
     const application = new PagesPublishApplication(vault, undefined, {
+      diagnosticLog,
       deploymentAdapter: {
         validate: async () => {
           stages.push('prepare:validate');
@@ -450,6 +774,10 @@ describe('Pages Publish application', () => {
         upload: async (input) => {
           stages.push(`upload:${input.scanDigest}`);
           expect(input.files['/notes/release/index.html']).toContain('First version');
+          expect(input.files['/notes/release/index.html']).not.toContain(
+            'data-pages-preview="local"',
+          );
+          expect(input.files['/notes/release/index.html']).not.toContain('URL 预览');
           return { deploymentId: 'deployment-1' };
         },
         activate: async (input) => {
@@ -472,6 +800,17 @@ describe('Pages Publish application', () => {
       state: 'succeeded',
       stage: 'activate',
     });
+    expect(diagnosticEntries.entries()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'maintenance', code: 'publication-preparing' }),
+      expect.objectContaining({ stage: 'build', code: 'build-started' }),
+      expect.objectContaining({ stage: 'upload', code: 'upload-started' }),
+      expect.objectContaining({ stage: 'activate', code: 'activate-started' }),
+      expect.objectContaining({ stage: 'activate', code: 'activation-complete' }),
+    ]));
+    const activationLog = diagnosticEntries.entries().find((entry) =>
+      entry.code === 'activation-complete',
+    );
+    expect(activationLog?.counts?.files).toBeTypeOf('number');
     await application.shutdown();
   });
 

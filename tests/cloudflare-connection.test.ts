@@ -4,7 +4,6 @@ import {
   CloudflareConnectionService,
   CloudflareCredentialExpiredError,
   CLOUD_FLARE_PAGES_CAPABILITIES,
-  CLOUD_FLARE_PAGES_SCOPES,
   type CloudflareAccount,
   type CloudflareConnectionDependencies,
 } from '../src/cloudflare/connection';
@@ -45,12 +44,13 @@ describe('Cloudflare connection service', () => {
       state: string;
       codeChallenge: string;
       codeChallengeMethod: 'S256';
+      redirectUri?: string;
     }> = [];
     const beginOAuth = vi.fn(async (input: (typeof requests)[number]) => {
       requests.push(input);
       return { authorizationUrl: 'https://dash.cloudflare.com/oauth/authorize' };
     });
-    const exchanges: Array<{ code: string; codeVerifier: string }> = [];
+    const exchanges: Array<{ code: string; codeVerifier: string; redirectUri?: string }> = [];
     const exchange = vi.fn(async (input: (typeof exchanges)[number]) => {
       exchanges.push(input);
       return { accessToken: 'oauth-access-secret' };
@@ -61,19 +61,21 @@ describe('Cloudflare connection service', () => {
       keychain,
     }));
 
-    const first = await service.beginOAuth();
+    const redirectUri = 'http://127.0.0.1:8977/oauth/callback';
+    const first = await service.beginOAuth({ redirectUri });
     const firstRequest = requests[0];
-    const second = await service.beginOAuth();
+    const second = await service.beginOAuth({ redirectUri });
     const secondRequest = requests[1];
 
     expect(first.url).toContain('https://dash.cloudflare.com/oauth/authorize');
     expect(second.url).toContain('https://dash.cloudflare.com/oauth/authorize');
     expect(firstRequest).toMatchObject({
-      scopes: CLOUD_FLARE_PAGES_SCOPES,
+      scopes: ['memberships.read', 'page.read', 'page.write'],
       codeChallengeMethod: 'S256',
     });
     expect(firstRequest?.state).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(firstRequest?.codeChallenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(firstRequest?.redirectUri).toBe(redirectUri);
     expect(secondRequest?.state).not.toBe(firstRequest?.state);
 
     await expect(
@@ -87,10 +89,65 @@ describe('Cloudflare connection service', () => {
     expect(exchanges).toHaveLength(1);
     expect(exchanges[0]?.code).toBe('code-secret');
     expect(exchanges[0]?.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(exchanges[0]?.redirectUri).toBe(redirectUri);
     expect(keychain.save).toHaveBeenCalledWith(
       'pages-publish.cloudflare',
       'oauth-access-secret',
     );
+  });
+
+  it('cancels only the matching in-flight OAuth transaction', async () => {
+    let state = '';
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async (input) => {
+          state = input.state;
+          return { authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' };
+        },
+        exchange: async () => ({ accessToken: 'oauth-access-secret' }),
+      },
+    }));
+    await service.beginOAuth();
+
+    await expect(service.cancelOAuth('stale-state')).resolves.toBe(false);
+    await expect(service.cancelOAuth(state)).resolves.toBe(true);
+    await expect(service.completeOAuth({
+      state,
+      code: 'cancelled-code',
+    })).rejects.toMatchObject({ code: 'oauth-callback-invalid' });
+  });
+
+  it('verifies an OAuth grant through memberships and Pages without the API Token verify endpoint', async () => {
+    let state = '';
+    const verify = vi.fn(async () => {
+      throw new Error('API Token verification must not receive an OAuth credential');
+    });
+    const listAccounts = vi.fn(async () => [personal]);
+    const verifyPermissions = vi.fn(async () => true);
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async (input) => {
+          state = input.state;
+          return { authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' };
+        },
+        exchange: async () => ({ accessToken: 'oauth-access-secret' }),
+      },
+      api: { verify, listAccounts, verifyPermissions },
+    }));
+
+    await service.beginOAuth();
+
+    await expect(service.completeOAuth({ state, code: 'authorization-code' })).resolves.toEqual({
+      state: 'connected',
+      method: 'oauth',
+      account: personal,
+    });
+    expect(verify).not.toHaveBeenCalled();
+    expect(listAccounts).toHaveBeenCalledWith('oauth-access-secret');
+    expect(verifyPermissions).toHaveBeenCalledWith('oauth-access-secret', {
+      accountId: personal.id,
+      capabilities: CLOUD_FLARE_PAGES_CAPABILITIES,
+    });
   });
 
   it('validates an advanced API Token for generic Pages capabilities before persisting it', async () => {
@@ -107,6 +164,7 @@ describe('Cloudflare connection service', () => {
       method: 'api-token',
       account: work,
     });
+    expect(verify).toHaveBeenCalledWith('advanced-token-secret');
     expect(verifyPermissions).toHaveBeenCalledWith('advanced-token-secret', {
       accountId: 'account-2',
       capabilities: CLOUD_FLARE_PAGES_CAPABILITIES,
@@ -132,6 +190,36 @@ describe('Cloudflare connection service', () => {
       code: 'api-permissions-insufficient',
     });
     expect(keychain.save).not.toHaveBeenCalled();
+  });
+
+  it('does not persist an OAuth credential when membership discovery fails', async () => {
+    let state = '';
+    const keychain = { save: vi.fn(), read: vi.fn(), remove: vi.fn() };
+    const bindings = { read: vi.fn(), write: vi.fn() };
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async (input) => {
+          state = input.state;
+          return { authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' };
+        },
+        exchange: async () => ({ accessToken: 'oauth-access-secret' }),
+      },
+      api: {
+        verify: vi.fn(),
+        verifyPermissions: vi.fn(),
+        listAccounts: async () => { throw new Error('membership discovery failed'); },
+      },
+      keychain,
+      bindings,
+    }));
+
+    await service.beginOAuth();
+
+    await expect(service.completeOAuth({ state, code: 'authorization-code' })).rejects.toMatchObject({
+      code: 'api-accounts-list-failed',
+    });
+    expect(keychain.save).not.toHaveBeenCalled();
+    expect(bindings.write).not.toHaveBeenCalled();
   });
 
   it('uses another authorized account when the verified default account lacks Pages access', async () => {
@@ -172,7 +260,7 @@ describe('Cloudflare connection service', () => {
         remove: async () => { savedSecret = ''; },
       },
       bindings: {
-        read: async () => ({ state: 'connected', method: 'oauth', account: personal }),
+        read: async () => ({ state: 'connected', method: 'oauth', account: work }),
         write: async (status) => { persisted = status; },
       },
     }));
@@ -216,40 +304,39 @@ describe('Cloudflare connection service', () => {
     expect(JSON.stringify(status)).not.toContain('oauth-access-secret');
   });
 
-  it('treats a verified account that differs from the stored account as recovery-required', async () => {
-    const write = vi.fn(async () => {
-      throw new Error('binding storage is temporarily unavailable');
-    });
+  it('keeps a non-default selected account connected when it still has Pages access', async () => {
+    const write = vi.fn(async () => undefined);
     const service = new CloudflareConnectionService(makeDependencies({
       api: {
-        verify: async () => work,
+        verify: async () => personal,
         verifyPermissions: async () => true,
         listAccounts: async () => [personal, work],
       },
       keychain: { save: vi.fn(), read: async () => 'replacement-token', remove: vi.fn() },
       bindings: {
-        read: async () => ({ state: 'connected', method: 'oauth', account: personal }),
+        read: async () => ({ state: 'connected', method: 'oauth', account: work }),
         write,
       },
     }));
 
     await expect(service.refreshStatus()).resolves.toEqual({
-      state: 'expired',
+      state: 'connected',
       method: 'oauth',
-      account: personal,
+      account: work,
     });
-    await expect(service.listAvailableAccounts()).rejects.toMatchObject({
-      code: 'credential-recovery-required',
+    await expect(service.getPublishingConnection()).resolves.toEqual({
+      account: work,
+      credential: 'replacement-token',
     });
-    expect(write).toHaveBeenCalledWith({ state: 'expired', method: 'oauth', account: personal });
+    expect(write).not.toHaveBeenCalled();
   });
 
-  it('preflights the stored credential before listing accounts after an app restart', async () => {
+  it('requires recovery when the selected account loses Pages access after an app restart', async () => {
     const listAccounts = vi.fn(async () => [personal, work]);
     const service = new CloudflareConnectionService(makeDependencies({
       api: {
-        verify: async () => work,
-        verifyPermissions: async () => true,
+        verify: async () => personal,
+        verifyPermissions: async (_token, input) => input.accountId === work.id,
         listAccounts,
       },
       keychain: { save: vi.fn(), read: async () => 'replacement-token', remove: vi.fn() },
@@ -262,7 +349,7 @@ describe('Cloudflare connection service', () => {
     await expect(service.listAvailableAccounts()).rejects.toMatchObject({
       code: 'credential-recovery-required',
     });
-    expect(listAccounts).not.toHaveBeenCalled();
+    expect(listAccounts).toHaveBeenCalledOnce();
   });
 
   it('marks the connection expired when account listing reports an expired credential', async () => {
@@ -454,6 +541,31 @@ describe('Cloudflare connection service', () => {
     expect(JSON.stringify(error)).not.toContain(secret);
   });
 
+  it('refreshes a stored OAuth connection through memberships and Pages without API Token verification', async () => {
+    const verify = vi.fn(async () => {
+      throw new Error('API Token verification must not receive an OAuth credential');
+    });
+    const service = new CloudflareConnectionService(makeDependencies({
+      api: {
+        verify,
+        verifyPermissions: async () => true,
+        listAccounts: async () => [personal],
+      },
+      keychain: { save: vi.fn(), read: async () => 'oauth-access-secret', remove: vi.fn() },
+      bindings: {
+        read: async () => ({ state: 'connected', method: 'oauth', account: personal }),
+        write: vi.fn(),
+      },
+    }));
+
+    await expect(service.refreshStatus()).resolves.toEqual({
+      state: 'connected',
+      method: 'oauth',
+      account: personal,
+    });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it('treats a rejected stored credential as expired without exposing it', async () => {
     const service = new CloudflareConnectionService(makeDependencies({
       api: {
@@ -463,15 +575,30 @@ describe('Cloudflare connection service', () => {
       },
       keychain: { save: vi.fn(), read: async () => 'expired-token-secret', remove: vi.fn() },
       bindings: {
-        read: async () => ({ state: 'connected', method: 'oauth', account: personal }),
+        read: async () => ({ state: 'connected', method: 'api-token', account: personal }),
         write: vi.fn(),
       },
     }));
 
     await expect(service.refreshStatus()).resolves.toEqual({
       state: 'expired',
-      method: 'oauth',
+      method: 'api-token',
       account: personal,
+    });
+  });
+
+  it('provides a verified Keychain credential only to the active Pages host boundary', async () => {
+    const service = new CloudflareConnectionService(makeDependencies({
+      keychain: { save: vi.fn(), read: async () => 'stored-token-secret', remove: vi.fn() },
+      bindings: {
+        read: async () => ({ state: 'connected', method: 'api-token', account: personal }),
+        write: vi.fn(),
+      },
+    }));
+
+    await expect(service.getPublishingConnection()).resolves.toEqual({
+      account: personal,
+      credential: 'stored-token-secret',
     });
   });
 });

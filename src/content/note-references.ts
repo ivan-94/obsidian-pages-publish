@@ -390,6 +390,10 @@ function extractNoteReferences(
   return references;
 }
 
+export function countNoteReferences(snapshot: ArticleSourceSnapshot): number {
+  return extractNoteReferences(snapshot).length;
+}
+
 interface ResolvedEmbedEdge {
   from: string;
   to: string;

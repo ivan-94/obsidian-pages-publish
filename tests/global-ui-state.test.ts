@@ -19,6 +19,16 @@ describe('global UI state projection', () => {
 
     expect(projectGlobalUiState({
       configured: true,
+      connection: 'expired',
+      scan: 'scanning',
+      blockers: 2,
+    })).toEqual({
+      ribbon: { route: 'publish-center', tooltip: 'Cloudflare 授权已失效' },
+      statusBar: { route: 'publish-center', text: 'Pages：Cloudflare 需要重新授权' },
+    });
+
+    expect(projectGlobalUiState({
+      configured: true,
       scan: 'idle',
       blockers: 2,
       pending: 9,
@@ -63,6 +73,14 @@ describe('global UI state projection', () => {
     })).toEqual({
       ribbon: { route: 'publish-center', tooltip: '上次发布失败，线上保持不变' },
       statusBar: { route: 'publish-center', text: 'Pages：发布失败' },
+    });
+
+    expect(projectGlobalUiState({
+      configured: true,
+      publication: { state: 'reconciliation-required', reconciliation: 'upload-uncertain' },
+    })).toEqual({
+      ribbon: { route: 'publish-center', tooltip: '上传结果未确认，请核验 cloudflare' },
+      statusBar: { route: 'publish-center', text: 'Pages：上传结果未确认' },
     });
   });
 

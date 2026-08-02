@@ -2,8 +2,9 @@ import { extname, relative } from 'path';
 import { loadSiteConfigFromDirectory } from '../config/site-config';
 import {
   prepareLegacyPublicationMigrationFromDirectory,
-  readArticleMetadataFromDirectory,
+  readArticleSnapshotFromDirectory,
   type ArticlePublicationMetadata,
+  type ArticleSourceSnapshot,
   type PreparedLegacyPublicationMigration,
 } from './article-metadata';
 import {
@@ -15,10 +16,12 @@ import {
 import { collectDirectoryRouteSources } from '../routing/directory-route-sources';
 import {
   inspectNoteReferences,
+  countNoteReferences,
   type NoteReferenceIssue,
 } from '../content/note-references';
 import {
   collectLocalPreviewAssets,
+  countMarkdownAssetReferences,
   type LocalAssetIssue,
 } from '../content/local-assets';
 import { inspectRawHtml, type RawHtmlIssue } from '../content/raw-html';
@@ -26,8 +29,13 @@ import { inspectRawHtml, type RawHtmlIssue } from '../content/raw-html';
 export type ArticlePublicationState =
   | 'private'
   | 'pending-first-publish'
-  | 'deployed'
-  | 'pending-takedown';
+  | 'synced'
+  | 'updated'
+  | 'url-changed'
+  | 'visibility-changed'
+  | 'pending-takedown'
+  | 'blocked'
+  | 'unknown';
 
 export interface CurrentArticleContext {
   activePath?: string | null;
@@ -41,6 +49,9 @@ export interface CurrentArticlePanelArticle {
   contentRootPath: string;
   metadata: ArticlePublicationMetadata;
   publicationState: ArticlePublicationState;
+  sitePublicationFailed?: boolean;
+  currentSourceDigest: string;
+  dependencies: { images: number; notes: number; externalLinks: number };
   contentIssues: ArticleContentIssue[];
   route: {
     pendingUrl?: string;
@@ -68,6 +79,12 @@ export type CurrentArticlePanelState =
       status: 'out-of-scope';
       selection: 'active' | 'pinned';
       sourcePath: string;
+    }
+  | {
+      status: 'out-of-scope-online';
+      selection: 'active' | 'pinned';
+      sourcePath: string;
+      onlineUrl: string;
     }
   | { status: 'missing-pinned'; sourcePath: string }
   | { status: 'no-site'; sourcePath: string }
@@ -100,10 +117,29 @@ export async function resolveCurrentArticlePanelFromDirectory(
   const root = loaded.config.contentRoots.find((candidate) =>
     pathIsInside(sourcePath, candidate.path),
   );
-  if (!root) return { status: 'out-of-scope', selection, sourcePath };
+  if (!root) {
+    try {
+      const snapshot = await readArticleSnapshotFromDirectory(vaultRoot, sourcePath);
+      if (snapshot.metadata.deployment?.url) {
+        return {
+          status: 'out-of-scope-online',
+          selection,
+          sourcePath,
+          onlineUrl: snapshot.metadata.deployment.url,
+        };
+      }
+    } catch {
+      // An out-of-scope path remains an out-of-scope state even when unreadable.
+    }
+    return { status: 'out-of-scope', selection, sourcePath };
+  }
   let metadata: ArticlePublicationMetadata;
+  let currentSourceDigest: string;
+  let articleSnapshot: ArticleSourceSnapshot;
   try {
-    metadata = await readArticleMetadataFromDirectory(vaultRoot, sourcePath);
+    articleSnapshot = await readArticleSnapshotFromDirectory(vaultRoot, sourcePath);
+    metadata = articleSnapshot.metadata;
+    currentSourceDigest = articleSnapshot.contentDigest ?? articleSnapshot.revision;
   } catch (error) {
     if (context.pinnedPath && isErrno(error, 'ENOENT')) {
       return { status: 'missing-pinned', sourcePath };
@@ -121,6 +157,7 @@ export async function resolveCurrentArticlePanelFromDirectory(
   }
   let routePlan: SiteRoutePlan;
   let contentIssues: ArticleContentIssue[];
+  let dependencies: CurrentArticlePanelArticle['dependencies'];
   try {
     const collected = await collectDirectoryRouteSources(vaultRoot, loaded.config);
     const planned = planSiteRoutes(loaded.config, collected.inputs);
@@ -147,11 +184,32 @@ export async function resolveCurrentArticlePanelFromDirectory(
         (left, right) =>
           left.line - right.line || left.column - right.column,
       );
+    dependencies = {
+      images: countMarkdownAssetReferences(articleSnapshot),
+      notes: countNoteReferences(articleSnapshot),
+      externalLinks: assetPlan.externalLinks.filter(
+        (link) => link.sourcePath === sourcePath,
+      ).length,
+    };
   } catch (error) {
     return { status: 'config-error', sourcePath, message: errorMessage(error) };
   }
   const plannedArticle = routePlan.articles.find(
     (article) => article.sourcePath === sourcePath,
+  );
+  const routeIssues = routePlan.issues.filter(
+    (issue) =>
+      issue.sourcePath === sourcePath ||
+      issue.relatedSourcePaths?.includes(sourcePath) ||
+      (plannedArticle !== undefined &&
+        issue.directoryPath !== undefined &&
+        pathIsInside(sourcePath, issue.directoryPath)) ||
+      (plannedArticle !== undefined &&
+        issue.relatedDirectoryPaths?.some((directoryPath) =>
+          pathIsInside(sourcePath, directoryPath),
+        )) ||
+      issue.route === plannedArticle?.url ||
+      issue.route === metadata.deployment?.url,
   );
   return {
     status: 'article',
@@ -159,7 +217,18 @@ export async function resolveCurrentArticlePanelFromDirectory(
     sourcePath,
     contentRootPath: root.path,
     metadata,
-    publicationState: publicationState(metadata),
+    currentSourceDigest,
+    dependencies,
+    publicationState: deriveArticlePublicationState({
+      visibility: metadata.visibility.value,
+      pendingUrl: plannedArticle?.url,
+      onlineUrl: metadata.deployment?.url,
+      currentSourceDigest,
+      deployedSourceDigest: metadata.deployment?.sourceDigest,
+      hasBlocker: [...contentIssues, ...routeIssues].some(
+        (issue) => issue.severity === 'blocker' && !('dormant' in issue && issue.dormant),
+      ),
+    }),
     contentIssues,
     route: {
       ...(plannedArticle?.url === undefined ? {} : { pendingUrl: plannedArticle.url }),
@@ -169,20 +238,7 @@ export async function resolveCurrentArticlePanelFromDirectory(
       redirects: routePlan.redirects.filter(
         (redirect) => redirect.to === plannedArticle?.url,
       ),
-      issues: routePlan.issues.filter(
-        (issue) =>
-          issue.sourcePath === sourcePath ||
-          issue.relatedSourcePaths?.includes(sourcePath) ||
-          (plannedArticle !== undefined &&
-            issue.directoryPath !== undefined &&
-            pathIsInside(sourcePath, issue.directoryPath)) ||
-          (plannedArticle !== undefined &&
-            issue.relatedDirectoryPaths?.some((directoryPath) =>
-              pathIsInside(sourcePath, directoryPath),
-            )) ||
-          issue.route === plannedArticle?.url ||
-          issue.route === metadata.deployment?.url,
-      ),
+      issues: routeIssues,
     },
     ...(legacyMigration === undefined ? {} : { legacyMigration }),
   };
@@ -196,14 +252,40 @@ function isErrno(error: unknown, code: string): boolean {
   return (error as NodeJS.ErrnoException).code === code;
 }
 
-function publicationState(
-  metadata: ArticlePublicationMetadata,
-): ArticlePublicationState {
-  const isOnline = metadata.deployment?.url !== undefined;
-  if (metadata.visibility.value === 'private') {
-    return isOnline ? 'pending-takedown' : 'private';
+export function deriveArticlePublicationState(input: {
+  visibility: 'public' | 'unlisted' | 'private';
+  pendingUrl?: string;
+  onlineUrl?: string;
+  currentSourceDigest?: string;
+  deployedSourceDigest?: string;
+  deployedVisibility?: 'public' | 'unlisted' | 'private';
+  hasBlocker: boolean;
+}): ArticlePublicationState {
+  if (input.hasBlocker) return 'blocked';
+  if (input.visibility === 'private') {
+    return input.onlineUrl ? 'pending-takedown' : 'private';
   }
-  return isOnline ? 'deployed' : 'pending-first-publish';
+  if (!input.onlineUrl) return 'pending-first-publish';
+  if (input.pendingUrl && routePath(input.pendingUrl) !== routePath(input.onlineUrl)) {
+    return 'url-changed';
+  }
+  if (input.deployedVisibility && input.visibility !== input.deployedVisibility) {
+    return 'visibility-changed';
+  }
+  if (!input.currentSourceDigest || !input.deployedSourceDigest) return 'unknown';
+  if (input.currentSourceDigest !== input.deployedSourceDigest) {
+    return 'updated';
+  }
+  return 'synced';
+}
+
+function routePath(value: string): string {
+  if (value.startsWith('/')) return value;
+  try {
+    return new URL(value).pathname;
+  } catch {
+    return value;
+  }
 }
 
 function pathIsInside(sourcePath: string, rootPath: string): boolean {

@@ -239,6 +239,34 @@ describe('Cloudflare Pages direct-upload deployment adapter', () => {
     }
   });
 
+  it('reports a Pages Write permission failure from an explicitly requested deployment create', async () => {
+    const adapter = new CloudflarePagesHttpDeploymentAdapter({
+      accountId: 'account-1',
+      projectName: 'deploy-wiki',
+      credential: async () => 'api-token',
+      http: {
+        request: async (input) => {
+          if (input.path.endsWith('/upload-token')) return { jwt: jwt({}) };
+          if (input.path === '/pages/assets/check-missing') return [];
+          if (input.path === '/pages/assets/upsert-hashes') return {};
+          if (input.path.endsWith('/deployments')) {
+            throw Object.assign(new Error('forbidden'), { status: 403 });
+          }
+          return {};
+        },
+      },
+    });
+
+    await expect(adapter.upload({
+      scanDigest: 'scan-1',
+      files: { '/index.html': '<h1>Permission check</h1>' },
+      assets: {},
+    })).rejects.toMatchObject({
+      code: 'permission-denied',
+      message: 'Cloudflare requires Pages Write permission to upload this site. Update the API token and reconnect.',
+    });
+  });
+
   it.each([
     ['unexpected deployment id', {
       id: 'other-deployment',
