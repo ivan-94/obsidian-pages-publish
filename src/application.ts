@@ -76,6 +76,8 @@ import {
   type GlobalUiProjection,
   type GlobalPublicationState,
 } from './plugin/global-ui-state';
+
+const CONNECTION_REFRESH_AFTER_IDLE_MS = 5 * 60 * 1000;
 import { collectDirectoryRouteSources } from './routing/directory-route-sources';
 import {
   normalizeRouteUrlPath,
@@ -235,6 +237,11 @@ export class PagesPublishApplication {
   private activeScans = 0;
   private latestScan: SiteScanResult | undefined;
   private pendingPublicationChanges: number | 'unknown' | undefined;
+  private publishCenterCache: PublishCenterState | undefined;
+  private publishCenterCacheInvalidated = true;
+  private publishCenterCacheGeneration = 0;
+  private initialSetupConnectionCache: InitialSetupConnection | undefined;
+  private initialSetupConnectionCheckedAt = 0;
   private preparedPublishSnapshot: PublicationSnapshot | undefined;
   private initialSetupDraft: SetupDraft | undefined;
 
@@ -351,8 +358,17 @@ export class PagesPublishApplication {
   }
 
   async getPublishCenter(
-    options: { baseline?: PublishBaseline } = {},
+    options: { baseline?: PublishBaseline; forceRefresh?: boolean } = {},
   ): Promise<PublishCenterState> {
+    if (
+      !options.forceRefresh
+      && options.baseline === undefined
+      && !this.publishCenterCacheInvalidated
+      && this.publishCenterCache
+    ) {
+      return this.publishCenterCache;
+    }
+    const cacheGeneration = this.publishCenterCacheGeneration;
     const initialScan = await this.requestScan('manual-refresh');
     const siteUrl = await this.publishCenterSiteUrl();
     let center: PublishCenterState;
@@ -386,6 +402,13 @@ export class PagesPublishApplication {
         output: previewOutput(prepared.preview),
       });
     }
+    if (
+      options.baseline === undefined
+      && cacheGeneration === this.publishCenterCacheGeneration
+    ) {
+      this.publishCenterCache = center;
+      this.publishCenterCacheInvalidated = false;
+    }
     this.pendingPublicationChanges = center.summary.changes;
     this.notifyGlobalUiChange();
     return center;
@@ -417,14 +440,9 @@ export class PagesPublishApplication {
    */
   async getGlobalUiState(): Promise<GlobalUiProjection> {
     const configured = (await this.getLaunchTarget()) === 'publish-center';
-    let connection: InitialSetupConnection['state'] = 'unavailable';
-    if (configured) {
-      try {
-        connection = (await this.getInitialSetupConnection()).state;
-      } catch {
-        connection = 'unavailable';
-      }
-    }
+    // Startup feedback must stay local and instantaneous. Cloudflare is
+    // refreshed only after the user opens a surface or requests a check.
+    const connection: InitialSetupConnection['state'] = 'unavailable';
     return projectGlobalUiState({
       configured,
       connection,
@@ -458,6 +476,7 @@ export class PagesPublishApplication {
     if (!this.deploymentFacts) throw new PublicationUnavailableError();
     await this.deploymentFacts.recover(inspector);
     await this.publisher?.refreshPublicationFacts();
+    this.invalidatePublishCenterCache();
   }
 
   /** Clears an upload-uncertain lock only after an explicit UI confirmation. */
@@ -465,6 +484,7 @@ export class PagesPublishApplication {
     if (!this.deploymentFacts) throw new PublicationUnavailableError();
     await this.deploymentFacts.acknowledgeUploadUncertainActivation();
     await this.publisher?.refreshPublicationFacts();
+    this.invalidatePublishCenterCache();
   }
 
   /** Invoked only by the explicit settings-page “check status” action. */
@@ -646,9 +666,32 @@ export class PagesPublishApplication {
     return this.setup !== undefined && this.setupConnection !== undefined;
   }
 
-  async getInitialSetupConnection(): Promise<InitialSetupConnection> {
+  async getInitialSetupConnection(
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<InitialSetupConnection> {
     if (!this.setup || !this.setupConnection) return { state: 'unavailable' };
-    return this.setupConnection.refreshStatus();
+    const stale = Date.now() - this.initialSetupConnectionCheckedAt >= CONNECTION_REFRESH_AFTER_IDLE_MS;
+    if (!options.forceRefresh && !stale && this.initialSetupConnectionCache) {
+      return this.initialSetupConnectionCache;
+    }
+    const connection = await this.setupConnection.refreshStatus();
+    this.cacheInitialSetupConnection(connection);
+    return connection;
+  }
+
+  private cacheInitialSetupConnection(connection: InitialSetupConnection): void {
+    this.initialSetupConnectionCache = connection;
+    this.initialSetupConnectionCheckedAt = Date.now();
+  }
+
+  private invalidateInitialSetupConnectionCache(): void {
+    this.initialSetupConnectionCache = undefined;
+    this.initialSetupConnectionCheckedAt = 0;
+  }
+
+  private invalidatePublishCenterCache(): void {
+    this.publishCenterCacheInvalidated = true;
+    this.publishCenterCacheGeneration += 1;
   }
 
   async listInitialSetupAccounts(): Promise<SetupAccount[]> {
@@ -692,7 +735,9 @@ export class PagesPublishApplication {
       throw new InitialSetupUnavailableError();
     }
     try {
-      return await connection.completeOAuth(input);
+      const completed = await connection.completeOAuth(input);
+      this.cacheInitialSetupConnection(completed);
+      return completed;
     } finally {
       this.notifyGlobalUiChange();
     }
@@ -704,6 +749,7 @@ export class PagesPublishApplication {
     try {
       return await connection.cancelOAuth(state);
     } finally {
+      this.invalidateInitialSetupConnectionCache();
       this.notifyGlobalUiChange();
     }
   }
@@ -714,6 +760,7 @@ export class PagesPublishApplication {
     try {
       await connection.abandonOAuth();
     } finally {
+      this.invalidateInitialSetupConnectionCache();
       this.notifyGlobalUiChange();
     }
   }
@@ -726,7 +773,9 @@ export class PagesPublishApplication {
     const connection = this.setupConnection;
     if (!connection?.connectApiToken) throw new InitialSetupUnavailableError();
     try {
-      return await connection.connectApiToken(token);
+      const connected = await connection.connectApiToken(token);
+      this.cacheInitialSetupConnection(connected);
+      return connected;
     } finally {
       this.notifyGlobalUiChange();
     }
@@ -736,7 +785,9 @@ export class PagesPublishApplication {
     const connection = this.setupConnection;
     if (!connection?.selectAccount) throw new InitialSetupUnavailableError();
     try {
-      return await connection.selectAccount(accountId);
+      const selected = await connection.selectAccount(accountId);
+      this.cacheInitialSetupConnection(selected);
+      return selected;
     } finally {
       this.notifyGlobalUiChange();
     }
@@ -972,6 +1023,7 @@ export class PagesPublishApplication {
   async requestScan(
     trigger: ScanTrigger,
   ): Promise<CoordinatedScanResult<SiteScanResult>> {
+    if (trigger !== 'manual-refresh') this.invalidatePublishCenterCache();
     this.activeScans += 1;
     this.notifyGlobalUiChange();
     try {
@@ -1004,8 +1056,8 @@ export class PagesPublishApplication {
   }
 
   notifyFileChange(): void {
+    this.invalidatePublishCenterCache();
     for (const listener of this.currentArticleListeners) listener();
-    void this.requestScan('file-change').catch(() => undefined);
   }
 
   async shutdown(): Promise<void> {

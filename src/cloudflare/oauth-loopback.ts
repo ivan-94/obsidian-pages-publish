@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { parseCloudflareOAuthCallback } from './oauth-callback';
+import { CloudflareOAuthCallbackFailure } from './oauth-callback-failure';
 
 /**
  * This exact URL must be registered on the Cloudflare OAuth client. A numeric
@@ -135,8 +136,14 @@ export class CloudflareOAuthLoopbackServer {
     }
     try {
       await this.callback(callback);
-    } catch {
-      this.respond(response, 400, 'Cloudflare authorization could not be completed. Return to Obsidian and try again.');
+    } catch (error) {
+      this.respond(
+        response,
+        400,
+        error instanceof CloudflareOAuthCallbackFailure
+          ? error.browserMessage
+          : 'Cloudflare authorization could not be completed. Return to Obsidian and try again.',
+      );
       return;
     }
     this.callbackConsumed = true;

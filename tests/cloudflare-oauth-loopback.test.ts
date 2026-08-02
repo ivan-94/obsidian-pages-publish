@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CloudflareOAuthLoopbackServer,
 } from '../src/cloudflare/oauth-loopback';
+import { CloudflareOAuthCallbackFailure } from '../src/cloudflare/oauth-callback-failure';
 
 describe('Cloudflare OAuth loopback callback', () => {
   beforeEach(() => {
@@ -71,6 +72,26 @@ describe('Cloudflare OAuth loopback callback', () => {
     await expect(get(`${redirectUri}?state=newest-state&code=newest-code`)).resolves.toMatchObject({
       status: 200,
     });
+  });
+
+  it('returns a safe, actionable callback failure without exposing an OAuth code', async () => {
+    const redirectUri = 'http://127.0.0.1:18984/oauth/callback';
+    const server = new CloudflareOAuthLoopbackServer({
+      redirectUri,
+      callback: async () => {
+        throw new CloudflareOAuthCallbackFailure(
+          'Cloudflare 未接受本次授权码。请在 Obsidian 中重新开始授权。',
+        );
+      },
+    });
+    await server.start();
+
+    const response = await get(`${redirectUri}?state=one-time-state&code=authorization-code`);
+
+    expect(response).toMatchObject({ status: 400 });
+    expect(response.body).toContain('Cloudflare 未接受本次授权码');
+    expect(response.body).not.toContain('authorization-code');
+    await server.stop();
   });
 
   it('cancels the matching pending authorization when Cloudflare returns an OAuth error', async () => {

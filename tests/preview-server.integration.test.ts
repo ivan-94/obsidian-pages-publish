@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createConnection } from 'net';
+import { once } from 'events';
+import { setTimeout as delay } from 'timers/promises';
 import { LocalPreviewServer } from '../src/preview/server';
 
 describe('local preview server', () => {
@@ -39,6 +42,39 @@ describe('local preview server', () => {
     await server.stop();
     await expect(fetch(first.url)).rejects.toThrow();
     await expect(fetch(second.url)).rejects.toThrow();
+  });
+
+  it('restarts while a browser connection to the previous preview remains open', async () => {
+    const server = new LocalPreviewServer();
+    servers.push(server);
+    const first = await server.start({ '/index.html': '<h1>First</h1>' });
+    const firstUrl = new URL(first.url);
+    const browserConnection = createConnection({
+      host: firstUrl.hostname,
+      port: Number(firstUrl.port),
+    });
+    await once(browserConnection, 'connect');
+    browserConnection.write(
+      `GET / HTTP/1.1\r\nHost: ${firstUrl.host}\r\nConnection: keep-alive\r\n`,
+    );
+    await delay(10);
+
+    let timedOut = false;
+    const restarting = server.start({ '/index.html': '<h1>Second</h1>' });
+    const second = await Promise.race([
+      restarting,
+      delay(100).then(() => {
+        timedOut = true;
+        return undefined;
+      }),
+    ]);
+
+    browserConnection.destroy();
+    await restarting;
+    expect(timedOut).toBe(false);
+    expect(second).toBeDefined();
+    const response = await fetch(second!.url);
+    expect(await response.text()).toContain('<h1>Second</h1>');
   });
 
   it('serves binary preview assets with their declared media type', async () => {

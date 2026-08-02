@@ -70,6 +70,66 @@ describe('Cloudflare desktop OAuth host', () => {
     expect(call?.body).not.toContain('client_secret');
   });
 
+  it('retains refresh credentials and expiry returned by Cloudflare', async () => {
+    const request = vi.fn(async (_input: OAuthRequest) => ({
+      status: 200,
+      json: {
+        access_token: 'oauth-access-token',
+        refresh_token: 'oauth-refresh-token',
+        expires_in: 3600,
+      },
+    }));
+    const oauth = new CloudflareDesktopOAuth({
+      clientId: 'public-client-id',
+      redirectUri: 'http://127.0.0.1:8976/oauth/callback',
+      request,
+    });
+
+    await expect(oauth.exchange({
+      code: 'authorization-code',
+      codeVerifier: 'one-time-verifier',
+    })).resolves.toEqual({
+      accessToken: 'oauth-access-token',
+      refreshToken: 'oauth-refresh-token',
+      expiresInSeconds: 3600,
+    });
+  });
+
+  it('uses the refresh-token grant without a client secret', async () => {
+    const request = vi.fn(async (_input: OAuthRequest) => ({
+      status: 200,
+      json: {
+        access_token: 'renewed-access-token',
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 7200,
+      },
+    }));
+    const oauth = new CloudflareDesktopOAuth({
+      clientId: 'public-client-id',
+      redirectUri: 'http://127.0.0.1:8976/oauth/callback',
+      request,
+    });
+
+    await expect(oauth.refresh({ refreshToken: 'existing-refresh-token' })).resolves.toEqual({
+      accessToken: 'renewed-access-token',
+      refreshToken: 'rotated-refresh-token',
+      expiresInSeconds: 7200,
+    });
+
+    const call = request.mock.calls[0]?.[0];
+    expect(call).toMatchObject({
+      url: 'https://dash.cloudflare.com/oauth2/token',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    expect(Object.fromEntries(new URLSearchParams(call?.body))).toEqual({
+      client_id: 'public-client-id',
+      grant_type: 'refresh_token',
+      refresh_token: 'existing-refresh-token',
+    });
+    expect(call?.body).not.toContain('client_secret');
+  });
+
   it('uses the loopback URL selected for this authorization in both legs of the OAuth flow', async () => {
     const request = vi.fn(async (_input: OAuthRequest) => ({
       status: 200,

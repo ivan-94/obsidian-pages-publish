@@ -3,6 +3,7 @@ import {
   CloudflareConnectionError,
   CloudflareConnectionService,
   CloudflareCredentialExpiredError,
+  CloudflareOAuthRefreshRejectedError,
   CLOUD_FLARE_PAGES_CAPABILITIES,
   type CloudflareAccount,
   type CloudflareConnectionDependencies,
@@ -148,6 +149,171 @@ describe('Cloudflare connection service', () => {
       accountId: personal.id,
       capabilities: CLOUD_FLARE_PAGES_CAPABILITIES,
     });
+  });
+
+  it('stores OAuth refresh credentials separately and records only the access expiry in local status', async () => {
+    let state = '';
+    const secrets = new Map<string, string>();
+    let persisted: unknown;
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async (input) => {
+          state = input.state;
+          return { authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' };
+        },
+        exchange: async () => ({
+          accessToken: 'oauth-access-secret',
+          refreshToken: 'oauth-refresh-secret',
+          expiresInSeconds: 3600,
+        }),
+      },
+      keychain: {
+        save: async (serviceName, secret) => { secrets.set(serviceName, secret); },
+        read: async (serviceName) => secrets.get(serviceName),
+        remove: async (serviceName) => { secrets.delete(serviceName); },
+      },
+      bindings: {
+        read: async () => undefined,
+        write: async (status) => { persisted = status; },
+      },
+    }));
+
+    await service.beginOAuth();
+    await service.completeOAuth({ state, code: 'authorization-code' });
+
+    expect(secrets.get('pages-publish.cloudflare')).toBe('oauth-access-secret');
+    expect(secrets.get('pages-publish.cloudflare-refresh')).toBe('oauth-refresh-secret');
+    expect(persisted).toMatchObject({
+      state: 'connected',
+      method: 'oauth',
+      account: personal,
+    });
+    expect(Date.parse((persisted as { accessTokenExpiresAt?: string }).accessTokenExpiresAt ?? '')).toBeGreaterThan(Date.now());
+    expect(JSON.stringify(persisted)).not.toContain('oauth-access-secret');
+    expect(JSON.stringify(persisted)).not.toContain('oauth-refresh-secret');
+  });
+
+  it('refreshes an OAuth access token before expiry and keeps a rotated refresh credential secure', async () => {
+    const secrets = new Map([
+      ['pages-publish.cloudflare', 'expiring-access-secret'],
+      ['pages-publish.cloudflare-refresh', 'previous-refresh-secret'],
+    ]);
+    const refresh = vi.fn(async () => ({
+      accessToken: 'renewed-access-secret',
+      refreshToken: 'rotated-refresh-secret',
+      expiresInSeconds: 3600,
+    }));
+    let persisted: unknown;
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async () => ({ authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' }),
+        exchange: async () => ({ accessToken: 'unused' }),
+        refresh,
+      },
+      api: {
+        verify: async () => personal,
+        verifyPermissions: async () => true,
+        listAccounts: async (token) => {
+          expect(token).toBe('renewed-access-secret');
+          return [personal];
+        },
+      },
+      keychain: {
+        save: async (serviceName, secret) => { secrets.set(serviceName, secret); },
+        read: async (serviceName) => secrets.get(serviceName),
+        remove: async (serviceName) => { secrets.delete(serviceName); },
+      },
+      bindings: {
+        read: async () => ({
+          state: 'connected',
+          method: 'oauth',
+          account: personal,
+          accessTokenExpiresAt: new Date(Date.now() + 10_000).toISOString(),
+        }),
+        write: async (status) => { persisted = status; },
+      },
+    }));
+
+    await expect(service.getPublishingConnection()).resolves.toEqual({
+      account: personal,
+      credential: 'renewed-access-secret',
+    });
+    expect(refresh).toHaveBeenCalledWith({ refreshToken: 'previous-refresh-secret' });
+    expect(secrets.get('pages-publish.cloudflare')).toBe('renewed-access-secret');
+    expect(secrets.get('pages-publish.cloudflare-refresh')).toBe('rotated-refresh-secret');
+    expect(JSON.stringify(persisted)).not.toContain('renewed-access-secret');
+    expect(JSON.stringify(persisted)).not.toContain('rotated-refresh-secret');
+  });
+
+  it('refreshes and retries once when Cloudflare rejects an OAuth access token early', async () => {
+    const secrets = new Map([
+      ['pages-publish.cloudflare', 'rejected-access-secret'],
+      ['pages-publish.cloudflare-refresh', 'refresh-secret'],
+    ]);
+    const listAccounts = vi.fn(async (token: string) => {
+      if (token === 'rejected-access-secret') throw new CloudflareCredentialExpiredError();
+      return [personal];
+    });
+    const refresh = vi.fn(async () => ({ accessToken: 'replacement-access-secret' }));
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async () => ({ authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' }),
+        exchange: async () => ({ accessToken: 'unused' }),
+        refresh,
+      },
+      api: { verify: async () => personal, verifyPermissions: async () => true, listAccounts },
+      keychain: {
+        save: async (serviceName, secret) => { secrets.set(serviceName, secret); },
+        read: async (serviceName) => secrets.get(serviceName),
+        remove: async (serviceName) => { secrets.delete(serviceName); },
+      },
+      bindings: {
+        read: async () => ({ state: 'connected', method: 'oauth', account: personal }),
+        write: vi.fn(),
+      },
+    }));
+
+    await expect(service.getPublishingConnection()).resolves.toEqual({
+      account: personal,
+      credential: 'replacement-access-secret',
+    });
+    expect(refresh).toHaveBeenCalledWith({ refreshToken: 'refresh-secret' });
+    expect(listAccounts).toHaveBeenNthCalledWith(1, 'rejected-access-secret');
+    expect(listAccounts).toHaveBeenNthCalledWith(2, 'replacement-access-secret');
+  });
+
+  it('requires reauthorization only when Cloudflare rejects the refresh grant', async () => {
+    const write = vi.fn(async () => undefined);
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async () => ({ authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' }),
+        exchange: async () => ({ accessToken: 'unused' }),
+        refresh: async () => { throw new CloudflareOAuthRefreshRejectedError(); },
+      },
+      keychain: {
+        save: vi.fn(),
+        read: async (serviceName) => serviceName === 'pages-publish.cloudflare'
+          ? 'expired-access-secret'
+          : 'rejected-refresh-secret',
+        remove: vi.fn(),
+      },
+      bindings: {
+        read: async () => ({
+          state: 'connected',
+          method: 'oauth',
+          account: personal,
+          accessTokenExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+        }),
+        write,
+      },
+    }));
+
+    await expect(service.refreshStatus()).resolves.toEqual({
+      state: 'expired',
+      method: 'oauth',
+      account: personal,
+    });
+    expect(write).toHaveBeenCalledWith({ state: 'expired', method: 'oauth', account: personal });
   });
 
   it('validates an advanced API Token for generic Pages capabilities before persisting it', async () => {
@@ -374,7 +540,7 @@ describe('Cloudflare connection service', () => {
   });
 
   it('serializes credential changes so the final binding and Keychain credential agree', async () => {
-    let savedSecret: string | undefined;
+    const savedSecrets = new Map<string, string>();
     let persisted: unknown;
     let releaseFirstWrite: (() => void) | undefined;
     const firstWriteStarted = new Promise<void>((resolve) => {
@@ -392,9 +558,9 @@ describe('Cloudflare connection service', () => {
         listAccounts: async (token) => [{ id: token, name: token }],
       },
       keychain: {
-        save: async (_service, secret) => { savedSecret = secret; },
-        read: async () => savedSecret,
-        remove: async () => { savedSecret = undefined; },
+        save: async (service, secret) => { savedSecrets.set(service, secret); },
+        read: async (service) => savedSecrets.get(service),
+        remove: async (service) => { savedSecrets.delete(service); },
       },
       bindings: {
         read: async () => undefined,
@@ -415,7 +581,7 @@ describe('Cloudflare connection service', () => {
     unblockFirstWrite?.();
     await Promise.all([first, second]);
 
-    expect(savedSecret).toBe('second-token');
+    expect(savedSecrets.get('pages-publish.cloudflare')).toBe('second-token');
     expect(persisted).toEqual({
       state: 'connected',
       method: 'api-token',

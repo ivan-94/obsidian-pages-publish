@@ -68,6 +68,8 @@ export class PagesPublishView extends ItemView {
   private lastLaunchTarget: 'setup' | 'publish-center' | undefined;
   private activeRender: Promise<void> | undefined;
   private renderAgain = false;
+  private refreshPublishCenterInFlight = false;
+  private sitePreviewInFlight: Promise<void> | undefined;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -106,7 +108,10 @@ export class PagesPublishView extends ItemView {
       // second full render here would make each scan start another scan forever.
       // Setup notifications remain coalesced because environment/OAuth changes
       // can materially advance the wizard while it is already rendering.
-      if (this.lastLaunchTarget === 'publish-center' && this.activeRender) return;
+      if (
+        this.lastLaunchTarget === 'publish-center'
+        && (this.activeRender || this.refreshPublishCenterInFlight)
+      ) return;
       void this.render();
     });
     if (this.application.isPublicationAvailable()) {
@@ -175,16 +180,16 @@ export class PagesPublishView extends ItemView {
     }
 
     try {
-      const center = await this.application.getPublishCenter();
-      let connection: InitialSetupConnection = { state: 'unavailable' };
-      try {
-        connection = await this.application.getInitialSetupConnection();
-      } catch {
-        connection = { state: 'unavailable' };
-      }
+      this.renderLoadingPublishCenter(container);
+      const [center, connection] = await Promise.all([
+        this.application.getPublishCenter(),
+        this.application.getInitialSetupConnection().catch(
+          (): InitialSetupConnection => ({ state: 'unavailable' }),
+        ),
+      ]);
       this.lastPublishCenter = center;
       this.lastPublishConnection = connection;
-      this.renderPublishCenter(container, center, connection);
+      this.renderCachedPublishCenter();
     } catch (error) {
       container.createEl('h2', { text: '无法读取发布配置' });
       container.createEl('p', {
@@ -192,6 +197,15 @@ export class PagesPublishView extends ItemView {
         text: errorMessage(error),
       });
     }
+  }
+
+  private renderLoadingPublishCenter(container: HTMLElement): void {
+    container.createDiv({ cls: 'pages-publish-view__type', text: '发布中心' });
+    container.createEl('h2', { text: '正在加载发布中心' });
+    container.createEl('p', {
+      cls: 'pages-publish-view__summary',
+      text: '正在读取发布内容；Cloudflare 状态将在后台检查。',
+    });
   }
 
   private renderPublishingWithoutScan(
@@ -214,6 +228,31 @@ export class PagesPublishView extends ItemView {
     container.addClass('pages-publish-view');
     container.createDiv({ cls: 'pages-publish-view__eyebrow', text: '发布工具' });
     this.renderPublishCenter(container, this.lastPublishCenter, this.lastPublishConnection);
+  }
+
+  private async refreshPublishCenter(options: {
+    content?: boolean;
+    connection?: boolean;
+  }): Promise<void> {
+    if (this.refreshPublishCenterInFlight) return;
+    this.refreshPublishCenterInFlight = true;
+    try {
+      const [center, connection] = await Promise.all([
+        options.content
+          ? this.application.getPublishCenter({ forceRefresh: true })
+          : Promise.resolve(this.lastPublishCenter),
+        options.connection
+          ? this.application.getInitialSetupConnection({ forceRefresh: true })
+          : Promise.resolve(this.lastPublishConnection),
+      ]);
+      if (center) this.lastPublishCenter = center;
+      this.lastPublishConnection = connection;
+      this.renderCachedPublishCenter();
+    } catch (error) {
+      new Notice(`无法检查发布状态：${errorMessage(error)}`);
+    } finally {
+      this.refreshPublishCenterInFlight = false;
+    }
   }
 
   private renderPublishCenter(
@@ -295,7 +334,10 @@ export class PagesPublishView extends ItemView {
       });
     }
     new ButtonComponent(scanBar).setButtonText('重新扫描').onClick(async () => {
-      await this.render();
+      await this.refreshPublishCenter({ content: true });
+    });
+    new ButtonComponent(scanBar).setButtonText('检查 Cloudflare').onClick(async () => {
+      await this.refreshPublishCenter({ connection: true });
     });
     if (!center.canPublish) {
       const blocker = center.issues.find((issue) => issue.severity === 'blocker');
@@ -491,14 +533,10 @@ export class PagesPublishView extends ItemView {
     const actions = container.createDiv({ cls: 'pages-publish-view__actions' });
     const publication = this.application.getPublicationStatus();
     this.renderPublicationStatus(container, publication);
-    new ButtonComponent(actions).setButtonText('预览站点').onClick(async () => {
-      try {
-        await this.application.openPreview();
-        new Notice('本地预览已打开。');
-      } catch (error) {
-        new Notice(`无法打开本地预览：${errorMessage(error)}`);
-      }
-    });
+    new ButtonComponent(actions)
+      .setButtonText(this.sitePreviewInFlight ? '正在准备预览…' : '预览站点')
+      .setDisabled(this.sitePreviewInFlight !== undefined)
+      .onClick(() => this.openSitePreview());
     new ButtonComponent(actions)
       .setButtonText(publishButtonLabel(center.canPublish, publication))
       .setCta()
@@ -525,6 +563,29 @@ export class PagesPublishView extends ItemView {
           await this.render();
         }
       });
+  }
+
+  private openSitePreview(): Promise<void> {
+    if (this.sitePreviewInFlight) return this.sitePreviewInFlight;
+    const operation = this.openSitePreviewExclusive();
+    this.sitePreviewInFlight = operation;
+    this.renderCachedPublishCenter();
+    void operation.finally(() => {
+      if (this.sitePreviewInFlight === operation) {
+        this.sitePreviewInFlight = undefined;
+        this.renderCachedPublishCenter();
+      }
+    }).catch(() => undefined);
+    return operation;
+  }
+
+  private async openSitePreviewExclusive(): Promise<void> {
+    try {
+      await this.application.openPreview();
+      new Notice('本地预览已打开。');
+    } catch (error) {
+      new Notice(`无法打开本地预览：${errorMessage(error)}`);
+    }
   }
 
   private renderPublicationStatus(

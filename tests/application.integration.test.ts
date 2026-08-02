@@ -8,7 +8,7 @@ import {
   BoundedDiagnosticLog,
   PagesPublishMaintenanceService,
 } from '../src/maintenance/maintenance-service';
-import type { SiteScanResult } from '../src/content/site-scanner';
+import { scanSiteFromDirectory, type SiteScanResult } from '../src/content/site-scanner';
 import type { SiteConfigV1 } from '../src/config/site-config';
 import { loadSiteConfigFromDirectory } from '../src/config/site-config';
 import {
@@ -75,6 +75,89 @@ describe('Pages Publish application', () => {
     await expect(new PagesPublishApplication(vault).inspectConfiguredCustomDomain()).resolves.toEqual({
       state: 'unavailable',
     });
+  });
+
+  it('reuses a checked Cloudflare connection until the user explicitly checks again', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const refreshStatus = vi.fn(async () => ({
+      state: 'connected' as const,
+      account: { id: 'account-1', name: 'Personal' },
+    }));
+    const application = new PagesPublishApplication(vault, undefined, {
+      setup: {} as never,
+      setupConnection: {
+        refreshStatus,
+        listAvailableAccounts: async () => [],
+      },
+    });
+
+    await expect(application.getInitialSetupConnection()).resolves.toMatchObject({
+      state: 'connected',
+    });
+    await expect(application.getInitialSetupConnection()).resolves.toMatchObject({
+      state: 'connected',
+    });
+    expect(refreshStatus).toHaveBeenCalledOnce();
+
+    await application.getInitialSetupConnection({ forceRefresh: true });
+    expect(refreshStatus).toHaveBeenCalledTimes(2);
+    await application.shutdown();
+  });
+
+  it('refreshes a cached Cloudflare connection after five minutes of inactivity', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-02T08:00:00.000Z'));
+      const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+      vaults.push(vault);
+      const refreshStatus = vi.fn(async () => ({ state: 'connected' as const }));
+      const application = new PagesPublishApplication(vault, undefined, {
+        setup: {} as never,
+        setupConnection: { refreshStatus, listAvailableAccounts: async () => [] },
+      });
+
+      await application.getInitialSetupConnection();
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      await application.getInitialSetupConnection();
+
+      expect(refreshStatus).toHaveBeenCalledTimes(2);
+      await application.shutdown();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('replaces a cached connection when an explicit connect or account change succeeds', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const disconnected = { state: 'disconnected' as const };
+    const personal = {
+      state: 'connected' as const,
+      account: { id: 'account-1', name: 'Personal' },
+    };
+    const work = {
+      state: 'connected' as const,
+      account: { id: 'account-2', name: 'Work' },
+    };
+    const refreshStatus = vi.fn(async () => disconnected);
+    const application = new PagesPublishApplication(vault, undefined, {
+      setup: {} as never,
+      setupConnection: {
+        refreshStatus,
+        listAvailableAccounts: async () => [],
+        connectApiToken: async () => personal,
+        selectAccount: async () => work,
+      },
+    });
+
+    await application.getInitialSetupConnection();
+    await application.connectInitialSetupApiToken('token-secret');
+    await expect(application.getInitialSetupConnection()).resolves.toEqual(personal);
+    await application.selectInitialSetupAccount('account-2');
+    await expect(application.getInitialSetupConnection()).resolves.toEqual(work);
+    expect(refreshStatus).toHaveBeenCalledOnce();
+    await application.shutdown();
   });
 
   it('projects scans into global feedback without treating idle work as a notification', async () => {
@@ -663,6 +746,81 @@ describe('Pages Publish application', () => {
         }),
       ],
     });
+    await application.shutdown();
+  });
+
+  it('reuses the publish-center snapshot until a Vault change invalidates it', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Cached Center\n  home_layout: sections\ncontent_roots:\n  - path: notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: cached-center\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'release.md'),
+      '---\npublication:\n  visibility: public\n---\n# Cached release\n',
+      'utf8',
+    );
+    const scan = vi.fn(({ signal }: { signal?: AbortSignal }) =>
+      scanSiteFromDirectory(vault, { signal }),
+    );
+    const application = new PagesPublishApplication(vault, undefined, { scan });
+
+    const first = await application.getPublishCenter();
+    expect(scan).toHaveBeenCalledTimes(3);
+
+    const cached = await application.getPublishCenter();
+    expect(cached).toBe(first);
+    expect(scan).toHaveBeenCalledTimes(3);
+
+    application.notifyFileChange();
+    const refreshed = await application.getPublishCenter();
+    expect(refreshed).not.toBe(first);
+    expect(scan).toHaveBeenCalledTimes(6);
+    await application.shutdown();
+  });
+
+  it('does not cache a publish-center snapshot built across a Vault change', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Concurrent Center\n  home_layout: sections\ncontent_roots:\n  - path: notes\n    public_root: /notes\nfeatures:\n  search: false\n  graph: false\ncloudflare:\n  project_name: concurrent-center\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'release.md'),
+      '---\npublication:\n  visibility: public\n---\n# Concurrent release\n',
+      'utf8',
+    );
+    let calls = 0;
+    let releaseScan!: () => void;
+    const scan = vi.fn(async ({ signal }: { signal?: AbortSignal }) => {
+      calls += 1;
+      if (calls === 4) {
+        await new Promise<void>((resolve) => {
+          releaseScan = resolve;
+        });
+      }
+      return scanSiteFromDirectory(vault, { signal });
+    });
+    const application = new PagesPublishApplication(vault, undefined, { scan });
+
+    await application.getPublishCenter();
+    const refreshing = application.getPublishCenter({ forceRefresh: true });
+    await vi.waitFor(() => expect(calls).toBe(4));
+    application.notifyFileChange();
+    releaseScan();
+    const crossedChange = await refreshing;
+
+    const afterChange = await application.getPublishCenter();
+    expect(afterChange).not.toBe(crossedChange);
+    expect(calls).toBe(9);
     await application.shutdown();
   });
 

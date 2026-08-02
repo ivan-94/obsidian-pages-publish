@@ -1382,6 +1382,148 @@ describe('publish-center table accessibility', () => {
     ]);
   });
 
+  it('shows a publish-center loading state while the first on-demand snapshot is prepared', async () => {
+    let releaseCenter!: (value: Record<string, unknown>) => void;
+    const getPublishCenter = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => {
+      releaseCenter = resolve;
+    }));
+    const getInitialSetupConnection = vi.fn(async () => ({ state: 'disconnected' as const }));
+    const view = new PagesPublishView({} as never, {
+      isPublicationAvailable: () => false,
+      getLaunchTarget: async () => 'publish-center',
+      getPublicationStatus: () => ({ state: 'idle' }),
+      getPublishCenter,
+      getInitialSetupConnection,
+    } as never);
+
+    const opening = view.onOpen();
+    const content = view.contentEl as unknown as ElementModel;
+    await vi.waitFor(() => {
+      expect(descendants(content, 'h2').map((heading) => heading.text))
+        .toContain('正在加载发布中心');
+    });
+
+    releaseCenter({
+      siteName: 'Loading Wiki',
+      baseline: 'first-publish',
+      canPublish: true,
+      scanDigest: 'scan',
+      output: { status: 'known', fileCount: 1, assetCount: 0, assetBytes: 0 },
+      summary: {
+        changes: 1, added: 1, updated: 0, urlChanged: 0, visibilityChanged: 0,
+        takedowns: 0, unknown: 0, blockers: 0, warnings: 0,
+      },
+      issues: [],
+      articles: [],
+    });
+    await opening;
+    expect(descendants(content, 'h2').map((heading) => heading.text))
+      .not.toContain('正在加载发布中心');
+
+    await clickButton(content, '检查 Cloudflare');
+    expect(getInitialSetupConnection).toHaveBeenLastCalledWith({ forceRefresh: true });
+  });
+
+  it('shows one in-flight site preview and prevents duplicate opens', async () => {
+    let releasePreview!: () => void;
+    const previewBarrier = new Promise<void>((resolve) => {
+      releasePreview = resolve;
+    });
+    const openPreview = vi.fn(async () => {
+      await previewBarrier;
+      return { url: 'http://127.0.0.1:4173/' };
+    });
+    const view = new PagesPublishView({} as never, {
+      isPublicationAvailable: () => false,
+      getLaunchTarget: async () => 'publish-center',
+      getPublicationStatus: () => ({ state: 'idle' }),
+      getPublishCenter: async () => ({
+        siteName: 'Preview Wiki',
+        baseline: 'first-publish',
+        canPublish: true,
+        scanDigest: 'scan',
+        output: { status: 'known', fileCount: 1, assetCount: 0, assetBytes: 0 },
+        summary: {
+          changes: 1, added: 1, updated: 0, urlChanged: 0, visibilityChanged: 0,
+          takedowns: 0, unknown: 0, blockers: 0, warnings: 0,
+        },
+        issues: [],
+        articles: [],
+      }),
+      getInitialSetupConnection: async () => ({ state: 'unavailable' }),
+      openPreview,
+    } as never);
+
+    await view.onOpen();
+    const content = view.contentEl as unknown as ElementModel;
+    const previewButton = descendants(content, 'button')
+      .find((button) => button.text === '预览站点');
+    expect(previewButton).toBeDefined();
+    const firstOpen = previewButton?.click?.();
+    const busyButton = descendants(content, 'button')
+      .find((button) => button.text === '正在准备预览…');
+
+    expect(descendants(content, 'button').map((button) => button.text))
+      .toContain('正在准备预览…');
+    expect(busyButton?.attributes.disabled).toBe('true');
+    const duplicateOpen = busyButton?.click?.();
+    expect(openPreview).toHaveBeenCalledOnce();
+
+    releasePreview();
+    await Promise.all([firstOpen, duplicateOpen]);
+    expect(descendants(content, 'button').map((button) => button.text))
+      .toContain('预览站点');
+  });
+
+  it('does not start a second refresh when scan-state updates arrive during a manual rescan', async () => {
+    let globalUiListener: (() => void) | undefined;
+    let releaseRefresh!: () => void;
+    const refreshBarrier = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const center = {
+      siteName: 'Refresh Wiki',
+      baseline: 'first-publish' as const,
+      canPublish: true,
+      scanDigest: 'scan',
+      output: { status: 'known' as const, fileCount: 1, assetCount: 0, assetBytes: 0 },
+      summary: {
+        changes: 1, added: 1, updated: 0, urlChanged: 0, visibilityChanged: 0,
+        takedowns: 0, unknown: 0, blockers: 0, warnings: 0,
+      },
+      issues: [],
+      articles: [],
+    };
+    let calls = 0;
+    const getPublishCenter = vi.fn(async () => {
+      calls += 1;
+      if (calls > 1) await refreshBarrier;
+      return center;
+    });
+    const view = new PagesPublishView({} as never, {
+      isPublicationAvailable: () => false,
+      subscribeGlobalUiState: (listener: () => void) => {
+        globalUiListener = listener;
+        return () => undefined;
+      },
+      getLaunchTarget: async () => 'publish-center',
+      getPublicationStatus: () => ({ state: 'idle' }),
+      getPublishCenter,
+      getInitialSetupConnection: async () => ({ state: 'disconnected' }),
+    } as never);
+
+    await view.onOpen();
+    const content = view.contentEl as unknown as ElementModel;
+    const refresh = clickButton(content, '重新扫描');
+    await vi.waitFor(() => expect(getPublishCenter).toHaveBeenCalledTimes(2));
+    globalUiListener?.();
+    await Promise.resolve();
+    expect(getPublishCenter).toHaveBeenCalledTimes(2);
+
+    releaseRefresh();
+    await refresh;
+  });
+
   it('opens article review as a sibling drawer and returns to the content list', async () => {
     const getPublishCenter = vi.fn(async () => ({
       siteName: 'Drawer Wiki',

@@ -44,7 +44,7 @@ describe('plugin lifecycle', () => {
     expect(host.vaultChange).toBeUndefined();
   });
 
-  it('starts a configured vault scan when the plugin activates', async () => {
+  it('does not scan a configured vault until the user enters a plugin surface', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-plugin-'));
     vaults.push(vault);
     await mkdir(join(vault, '.publish'), { recursive: true });
@@ -60,15 +60,38 @@ describe('plugin lifecycle', () => {
 
     const activation = activatePagesPublish(application, host);
 
-    await vi.waitFor(() => {
-      expect(scan).toHaveBeenCalledWith(
-        expect.objectContaining({ trigger: 'plugin-load' }),
-      );
-    });
+    await Promise.resolve();
+    expect(scan).not.toHaveBeenCalled();
     await activation.dispose();
   });
 
-  it('debounces vault file events through the application scanner', async () => {
+  it('does not refresh Cloudflare while the plugin only registers startup feedback', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-plugin-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await writeFile(join(vault, '.publish', 'site.yml'), 'configured', 'utf8');
+    const refreshStatus = vi.fn(async () => ({ state: 'connected' as const }));
+    const application = new PagesPublishApplication(vault, undefined, {
+      setup: {} as never,
+      setupConnection: {
+        refreshStatus,
+        listAvailableAccounts: async () => [],
+        isOAuthAvailable: () => false,
+        beginOAuth: async () => ({ url: 'https://example.invalid' }),
+        completeOAuth: async () => ({ state: 'disconnected' as const }),
+        connectApiToken: async () => ({ state: 'disconnected' as const }),
+      },
+    });
+    const host = new RecordingHost();
+
+    const activation = activatePagesPublish(application, host);
+
+    await Promise.resolve();
+    expect(refreshStatus).not.toHaveBeenCalled();
+    await activation.dispose();
+  });
+
+  it('does not scan vault file events before the user opens a plugin surface', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-plugin-'));
     vaults.push(vault);
     const scan = vi.fn(async () => ({
@@ -86,15 +109,12 @@ describe('plugin lifecycle', () => {
 
     host.emitVaultChange();
 
-    await vi.waitFor(() => {
-      expect(scan).toHaveBeenCalledWith(
-        expect.objectContaining({ trigger: 'file-change' }),
-      );
-    });
+    await Promise.resolve();
+    expect(scan).not.toHaveBeenCalled();
     await activation.dispose();
   });
 
-  it('keeps the Ribbon and status bar on the same global state projection', async () => {
+  it('keeps startup feedback lightweight until a plugin surface loads content', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-plugin-'));
     vaults.push(vault);
     await mkdir(join(vault, '.publish'), { recursive: true });
@@ -117,8 +137,7 @@ describe('plugin lifecycle', () => {
 
     await vi.waitFor(() => {
       expect(host.globalFeedback?.presentation).toEqual({
-        ribbon: { route: 'publish-center', tooltip: '打开发布中心：1 个阻塞' },
-        statusBar: { route: 'publish-center', text: 'Pages：1 个阻塞' },
+        ribbon: { route: 'publish-center', tooltip: '打开发布中心' },
       });
     });
     await host.clickGlobalFeedback();

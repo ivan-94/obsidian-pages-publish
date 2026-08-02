@@ -37,7 +37,6 @@ export function activatePagesPublish(
   application: PagesPublishApplication,
   host: PagesPublishHost,
 ): PagesPublishActivation {
-  void application.startScanning().catch(() => undefined);
   const openPrimarySurface = async (): Promise<void> => {
     await host.openWorkspace((await application.getGlobalUiState()).ribbon.route);
   };

@@ -1,4 +1,8 @@
-import type { CloudflareOAuthBoundary } from './connection';
+import {
+  CloudflareOAuthRefreshRejectedError,
+  type CloudflareOAuthBoundary,
+  type CloudflareOAuthTokens,
+} from './connection';
 
 export interface CloudflareOAuthRequestBoundary {
   request(input: {
@@ -48,7 +52,7 @@ export class CloudflareDesktopOAuth implements CloudflareOAuthBoundary {
     code: string;
     codeVerifier: string;
     redirectUri?: string;
-  }): Promise<{ accessToken: string }> {
+  }): Promise<CloudflareOAuthTokens> {
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: this.clientId,
@@ -62,12 +66,22 @@ export class CloudflareDesktopOAuth implements CloudflareOAuthBoundary {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
     });
-    const payload = objectValue(response.json);
-    const accessToken = payload?.access_token;
-    if (response.status !== 200 || typeof accessToken !== 'string' || accessToken.length === 0) {
-      throw new Error('Cloudflare OAuth token exchange failed.');
-    }
-    return { accessToken };
+    return tokenResponse(response, 'Cloudflare OAuth token exchange failed.');
+  }
+
+  async refresh(input: { refreshToken: string }): Promise<CloudflareOAuthTokens> {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: this.clientId,
+      refresh_token: requiredValue(input.refreshToken, 'OAuth refresh token'),
+    });
+    const response = await this.request({
+      url: 'https://dash.cloudflare.com/oauth2/token',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    return tokenResponse(response, 'Cloudflare OAuth token refresh failed.', true);
   }
 
   private redirectUriFor(value: string | undefined): string {
@@ -102,4 +116,28 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function tokenResponse(
+  response: { status: number; json: unknown },
+  failureMessage: string,
+  isRefresh = false,
+): CloudflareOAuthTokens {
+  const payload = objectValue(response.json);
+  const accessToken = payload?.access_token;
+  if (response.status !== 200 || typeof accessToken !== 'string' || accessToken.length === 0) {
+    if (isRefresh && (response.status === 400 || response.status === 401)) {
+      throw new CloudflareOAuthRefreshRejectedError();
+    }
+    throw new Error(failureMessage);
+  }
+  const refreshToken = payload?.refresh_token;
+  const expiresIn = payload?.expires_in;
+  return {
+    accessToken,
+    ...(typeof refreshToken === 'string' && refreshToken.length > 0 ? { refreshToken } : {}),
+    ...(typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0
+      ? { expiresInSeconds: expiresIn }
+      : {}),
+  };
 }
