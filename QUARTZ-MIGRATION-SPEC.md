@@ -1,6 +1,6 @@
 # Pages Publish Quartz 5 改造规格
 
-> 文档状态：实现完成 / Quartz HAT 已准备 / 候选发布人工验收待执行
+> 文档状态：实现完成 / Quartz HAT 首轮发现取消竞态并已修复 / 回归 HAT 待执行
 >
 > 适用产品：Pages Publish Obsidian Community Plugin
 >
@@ -631,7 +631,7 @@ src/runtime/npm-installer.ts
 | AC-QZ-01 | `QuartzSiteBuilder` 保持 `SiteBuilder`/`LocalPreview` façade；架构边界测试锁定 Application、core、publication、Cloudflare 无 Quartz import；快照/receipt/恢复测试全量通过 | 自动门禁通过 | 真实首发、失败恢复旅程 |
 | AC-QZ-02 | `release-package` 与 clean-Vault install smoke；实际 release staging 严格三文件 | 通过 | Obsidian GUI 干净安装 |
 | AC-QZ-03 | 固定 Node 22.23.1 arm64/x64 manifest、Node 20 拒绝、真实 Node 22 + Quartz install/smoke/build | 通过 | 在候选 Obsidian 内确认 embedded/managed 两条实际路径 |
-| AC-QZ-04 | 固定 archive/lock SHA、受控 `npm ci`、原子激活、离线 cache hit、fallback、Repair、磁盘预算、阶段通知、取消与缓存保留测试 | 自动门禁通过 | UI 首装/取消/失败/Repair 的可理解性与真实网络切换 |
+| AC-QZ-04 | 固定 archive/lock SHA、受控 `npm ci`、原子激活、离线 cache hit、fallback、Repair、磁盘预算、阶段通知、取消与缓存保留测试；HAT 首轮发现“取消后的 idle 被向导自动 prepare”并增加调用链回归测试 | 自动门禁通过；HAT 修复待复验 | UI 首装/取消/失败/Repair 的可理解性与真实网络切换 |
 | AC-QZ-05 | staging 负向 fixture、symlink/archive 防护、macOS sandbox Vault canary、output canary 审计 | 通过 | 干净 Vault 放置真实 canary 后复验 |
 | AC-QZ-06 | Unicode、中文、空格、大小写、case collision、多个 root、index/custom index、redirect、`home_layout`、`publication.order`、扁平 HTML 相对引用与动态 Tag 尾斜杠的 Route Bridge/真实 build 测试；输出受控 `_redirects` 301 manifest | 通过 | 线上 redirect 响应 |
 | AC-QZ-07 | public/unlisted/private staging 与最终 HTML/JSON/XML/binary 负向检查；受控 canonical/noindex；真实 content index/sitemap/navigation smoke；同前缀 public/unlisted route 回归测试 | 通过 | 浏览器 Search/Graph/Explorer/Backlinks/Tag/Sitemap 人工抽查 |
@@ -641,7 +641,7 @@ src/runtime/npm-installer.ts
 | AC-QZ-11 | Direct Upload MIME/路径/大小/文件数/40 MiB/2,000 文件 batch、upload/activate 失败与部署事实测试；根 `_redirects` 与 Cloudflare `/404.html` fallback 产物 | 自动门禁通过 | 隔离 Cloudflare 项目的首发、更新、永久重定向、404、激活失败与下线 |
 | AC-QZ-12 | 全量测试、typecheck、lint、build、package、diff-check、插件生产 audit；真实 engine 依赖清单与安全处置复核 | 通过 | engine 升级时重新审计；完成 HAT 后作候选发布决策 |
 
-自动证据不能替代人工 HAT。尤其 AC-QZ-04、09、11 中明确列出的 UI、视觉和真实 Cloudflare 场景，在 [`hats/20260803-quartz-migration/guide.md`](./hats/20260803-quartz-migration/guide.md) 完成并留证前不得声称候选发布验收通过。
+自动证据不能替代人工 HAT。尤其 AC-QZ-04、09、11 中明确列出的 UI、视觉和真实 Cloudflare 场景，在 [`hats/20260803-quartz-migration/guide.md`](./hats/20260803-quartz-migration/guide.md) 完成并留证前不得声称候选发布验收通过。首轮 run `20260803-140904` 在 AC-QZ-04 取消场景失败并按 P0 fail-fast 停止；代码修复和回归测试通过不等于该 HAT 场景已经复验通过。
 
 ## 17. 测试策略
 
@@ -761,11 +761,12 @@ HAT 至少包含：
 - 使用裁剪后的固定 engine 执行 `tests/quartz-real-smoke.test.ts`、`tests/quartz-site-builder-real.test.ts` 与 `tests/release-benchmark.test.ts`：真实构建、Vault sandbox、Unicode/空格/大小写/冲突 route、扁平 HTML 相对资源、动态 Tag Page、canonical/noindex、redirect HTML + `_redirects` 301、Cloudflare 404 fallback、`sections/latest`、order/date、custom index、同前缀 unlisted/public route、确定性和 360 篇基准全部通过；最新基准为扫描 101 ms、构建 3.01 秒、heap 增量 29.0 MiB。
 - `npm run typecheck`、`npm run lint`、`npm run package` 和 `git diff --check` 通过；release staging 只有 `main.js`、`manifest.json`、`styles.css` 三个文件。
 - `npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org/`：插件生产依赖 0 finding。Quartz lock 的两个 high 按本节安全裁剪策略处置并进入引擎依赖清单。
-- `bash -n hats/20260803-quartz-migration/prepare.sh` 与 `prepare.sh prepare` 通过；HAT 状态为 `prepared`。本机没有 `shellcheck`；`hat-run` 自动报告与人工 GUI/Cloudflare 执行尚未开始。
+- `bash -n hats/20260803-quartz-migration/prepare.sh` 与 `prepare.sh prepare` 通过；HAT 状态为 `prepared`。本机没有 `shellcheck`。
+- HAT run `20260803-140904` 在 Obsidian 1.13.4 完成三文件安装并真实安装 Node 22.23.1/Quartz engine；P0-003 复现取消后第二条 `npm ci` 仍激活 engine，overall 为 `FAIL` 并按 fail-fast 停止。根因是取消后的 `idle` 状态触发向导自动 prepare；现已将取消后的 idle 标记为显式 Repair，并增加发布中心调用链与环境状态回归测试。自动门禁通过，仍需新的 HAT run 证明真实 GUI 竞态消失。
 
 ### Open questions / risks
 
-- 尚未执行本迁移候选的干净 Obsidian 安装、浅色/深色/窄屏/键盘、Cloudflare 首发/更新/失败恢复等人工 HAT；因此当前状态是实现完成、HAT 已准备，不是候选发布验收完成。
+- 首轮 HAT 已通过干净三文件安装，但取消场景失败后按 P0 fail-fast 停止；修复尚未用新的冷启动 GUI run 复验。离线、浅色/深色/窄屏/键盘、Cloudflare 首发/更新/失败恢复等场景仍未执行，因此不是候选发布验收完成。
 - 首次安装已提供 runtime 下载/安装、engine 下载/安装和 smoke 离散阶段，以及取消与 Repair。Obsidian `requestUrl` 不提供可靠的流式字节百分比，当前取消会立即停止受控安装链和后续落盘，但底层已发出的 HTTP 请求可能在宿主内部结束后才释放。
 - Quartz v5 上游 lock 当前仍包含两个 high advisory；本实现通过受控配置、代码可达性裁剪、物理删除、smoke 和缓存复核处置。升级 engine 时必须重新审计，不能自动沿用处置结论。
 - 1.5 GiB 磁盘门槛已成为自动安装门禁；10 秒/256 MiB 性能门槛仍需在 HAT 指定机器复测。

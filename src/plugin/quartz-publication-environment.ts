@@ -136,6 +136,8 @@ export class QuartzPublicationEnvironment {
         this.updateStatus({
           stage: 'idle',
           impact: '本地发布环境准备已取消；未验证的临时文件已清理。',
+          nextAction: 'repair',
+          detailsAvailable: true,
         });
         throw error;
       }

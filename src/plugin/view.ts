@@ -1099,7 +1099,11 @@ export class PagesPublishView extends ItemView {
       return heading;
     };
     let environment = this.application.getInitialSetupEnvironment();
-    if (this.setupStep === 0 && environment.stage === 'idle') {
+    if (
+      this.setupStep === 0
+      && environment.stage === 'idle'
+      && environment.nextAction !== 'repair'
+    ) {
       const preparation = this.application.prepareInitialSetupEnvironment();
       environment = this.application.getInitialSetupEnvironment();
       void preparation
@@ -1199,7 +1203,10 @@ export class PagesPublishView extends ItemView {
           text: environment.impact ?? '请完成本地环境准备后重试。',
         });
       }
-      if (environment.stage === 'failed' && environment.nextAction === 'repair') {
+      if (
+        (environment.stage === 'failed' || environment.stage === 'idle')
+        && environment.nextAction === 'repair'
+      ) {
         new ButtonComponent(container)
           .setButtonText('重试环境准备')
           .onClick(async () => {

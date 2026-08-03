@@ -112,6 +112,10 @@ describe('Quartz publication environment', () => {
     await expect(preparation).rejects.toMatchObject({ name: 'AbortError' });
     expect(environment.getStatus().stage).toBe('idle');
     expect(environment.getStatus().impact).toContain('已取消');
+    expect(environment.getStatus()).toMatchObject({
+      nextAction: 'repair',
+      detailsAvailable: true,
+    });
     expect(observed).toContain('checking-system');
     expect(observed).toContain('downloading-runtime');
     expect(observed.at(-1)).toBe('idle');

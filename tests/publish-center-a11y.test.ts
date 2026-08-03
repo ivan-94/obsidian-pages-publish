@@ -325,12 +325,32 @@ describe('publish-center table accessibility', () => {
       .toHaveLength(1);
   });
 
-  it('shows the active runtime download phase and lets the user cancel it', async () => {
-    const cancelInitialSetupEnvironment = vi.fn(() => true);
+  it('does not automatically restart environment preparation after the user cancels it', async () => {
+    let environment: {
+      stage: 'downloading-runtime' | 'idle';
+      impact?: string;
+      nextAction?: 'repair';
+      detailsAvailable?: boolean;
+    } = { stage: 'downloading-runtime' };
+    const prepareInitialSetupEnvironment = vi.fn(
+      () => new Promise<never>(() => undefined),
+    );
+    const cancelInitialSetupEnvironment = vi.fn(() => {
+      environment = {
+        stage: 'idle',
+        impact: '本地发布环境准备已取消；未验证的临时文件已清理。',
+        nextAction: 'repair',
+        detailsAvailable: true,
+      };
+      return true;
+    });
+    const repairInitialSetupEnvironment = vi.fn(async () => environment);
     const view = new PagesPublishView({} as never, {
       isPublicationAvailable: () => false,
       getLaunchTarget: async () => 'setup',
-      getInitialSetupEnvironment: () => ({ stage: 'downloading-runtime' }),
+      getInitialSetupEnvironment: () => environment,
+      prepareInitialSetupEnvironment,
+      repairInitialSetupEnvironment,
       cancelInitialSetupEnvironment,
       getInitialSetupConnection: vi.fn(),
       isInitialSetupAvailable: () => true,
@@ -344,6 +364,11 @@ describe('publish-center table accessibility', () => {
       .toContain('● 下载固定 Node.js 22 运行时');
     await clickButton(content, '取消环境准备');
     expect(cancelInitialSetupEnvironment).toHaveBeenCalledOnce();
+    expect(prepareInitialSetupEnvironment).not.toHaveBeenCalled();
+    expect(descendants(content, 'button').map((button) => button.text))
+      .toContain('重试环境准备');
+    await clickButton(content, '重试环境准备');
+    expect(repairInitialSetupEnvironment).toHaveBeenCalledOnce();
   });
 
   it('shows truthful environment stages and a safe details disclosure', async () => {
