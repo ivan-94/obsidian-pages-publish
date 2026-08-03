@@ -47,7 +47,7 @@
 - `test-vault/notes/second.md`：公开双链目标。
 - `test-vault/notes/hidden.md`：unlisted canary，只能直接访问。
 - `test-vault/notes/private.md`：private 高熵 canary，任何输出均不得出现。
-- `.publish/themes/*.tgz`：从独立外部主题 package 打包后复制，integrity 写入 `site.yml`。
+- `.publish/themes/*.tgz`：从独立外部主题 package 打包后复制；初始配置使用 Quartz default，人工导入并确认信任后才把精确 integrity 写入 `site.yml`。
 - 无数据库、迁移或共享 sandbox 数据；cleanup 只删除 marker 所属 HAT Vault。
 
 ## 数据迁移检查
@@ -219,6 +219,7 @@
 ### Key decisions
 
 - 采用 blank 隔离 HAT，不接触生产 Vault、生产 Cloudflare 或共享数据。
+- 初始 `site.yml` 不预激活可执行主题；先用 Quartz default 启动，再由验收者完成导入、取消和显式信任。
 - 首轮以本地 `.tgz` 完整验收；npm 发布是后续人工动作，不伪造 registry 结果。
 - 外部主题不进入插件三文件包；真实测试只消费打包产物。
 - 浏览器能力沿用 Quartz Search/Explorer/Graph/TOC/Backlinks，布局 class 使用主题独立命名空间。

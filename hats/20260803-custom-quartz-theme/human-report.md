@@ -35,10 +35,11 @@
   - Next: HAT-P0-002
 
 - [ ] HAT-P0-002 — 本地 `.tgz` 导入、身份和显式信任
-  - Status: READY
-  - Human result: pending
-  - Notes: open Obsidian settings → Community plugins → Pages Publish → 站点主题.
-  - Next: cancel the trust prompt once, then import again and confirm the exact artifact.
+  - Status: IN PROGRESS
+  - Human result: opening Publish Center before installation showed the expected fail-closed message: `Configured theme is not installed or no longer verifies.`
+  - Evidence: [`human-artifacts/HAT-P0-002-preinstall-fail-closed.png`](./human-artifacts/HAT-P0-002-preinstall-fail-closed.png)
+  - Notes: this exposed a HAT fixture issue: `site.yml` activated an untrusted theme before the installation case began. The fixture now starts on Quartz default while retaining the local `.tgz` for import.
+  - Next: reload Obsidian, confirm Publish Center opens on Quartz default, then open settings → Pages Publish → 站点主题 and import the local `.tgz`.
 
 - [x] HAT-P0-003 — 真实 Quartz 深度主题构建
   - Status: PASS (automated)
@@ -100,6 +101,7 @@
 
 - The controlled HAT Vault receives only the packaged three-file candidate.
 - The external theme remains a Vault-local `.tgz`; it is not copied into the plugin bundle.
+- A fresh HAT Vault starts on Quartz default; it does not pre-activate executable theme code before human trust confirmation.
 - Human acceptance starts at HAT-P0-002 because automated P0 isolation/build checks already passed.
 
 ### Verification evidence
@@ -110,4 +112,5 @@
 ### Open questions / risks
 
 - Obsidian must reload after plugin files are updated.
+- The pre-install fail-closed screenshot is expected security behaviour; the fixture ordering was corrected so it no longer blocks the start of HAT.
 - npm and Cloudflare external cases remain unavailable until package publication and explicit authorization.

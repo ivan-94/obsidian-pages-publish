@@ -52,7 +52,9 @@ prepared() {
   artifact_name="$(theme_artifact_name "$integrity")"
   [[ -s "$test_vault/.publish/themes/$artifact_name" && ! -L "$test_vault/.publish/themes/$artifact_name" ]] || return 1
   cmp -s "$theme_archive" "$test_vault/.publish/themes/$artifact_name" || return 1
-  grep -Fq "$integrity" "$test_vault/.publish/site.yml" || return 1
+  if grep -Eq '^  theme:' "$test_vault/.publish/site.yml"; then
+    grep -Fq "$integrity" "$test_vault/.publish/site.yml" || return 1
+  fi
   local fixture
   for fixture in notes/field-note.md notes/second.md notes/hidden.md notes/private.md; do
     [[ -s "$test_vault/$fixture" && ! -L "$test_vault/$fixture" ]] || return 1
@@ -95,16 +97,6 @@ site:
   description: 外部 Quartz 野兽派主题隔离验收站点
   home_layout: latest
   timezone: Asia/Shanghai
-  theme:
-    source: local
-    artifact: $artifact_path
-    integrity: $integrity
-    options:
-      accent: orange
-      graphMode: compact
-      homeHero: latest
-      showPublicCount: true
-      wordmark: PUBLIC FIELD NOTES
 content_roots:
   - path: notes
     public_root: /notes
