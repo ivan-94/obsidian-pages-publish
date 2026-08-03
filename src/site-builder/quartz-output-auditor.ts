@@ -1,6 +1,7 @@
 import { extname } from 'node:path';
 import type { PreviewAsset } from '../content/local-assets';
 import type { ArticleSourceSnapshot } from '../publication/article-metadata';
+import { siteCanonicalOrigin } from '../site/discovery';
 import type { QuartzRawBuildOutput } from './quartz-build-runner';
 import type { QuartzStagingCompilation } from './quartz-staging-compiler';
 import { quartzSlugRoute } from './quartz-route-bridge';
@@ -91,16 +92,25 @@ export function bridgeAndAuditQuartzOutput(
   const outputPathBridges = new Map(
     routeBridges.map((bridge) => [routeOutputPath(bridge.quartz), routeOutputPath(bridge.planned)]),
   );
-  const routes = [
+  const emittedDirectoryRoutes = Object.keys(raw.files).flatMap((rawPath) => {
+    const normalized = normalizeQuartzOutputPath(rawPath);
+    const output = outputPathBridges.get(normalized) ?? normalized;
+    return output.endsWith('/index.html')
+      ? [output.slice(0, -'index.html'.length)]
+      : [];
+  });
+  const routes = [...new Set([
     ...staging.routeManifest.articles.map((article) => article.url),
     ...staging.routePlan.sections.map((section) => section.url),
     ...staging.routePlan.systemRoutes.filter((route) => route.endsWith('/')),
-  ].sort((left, right) => right.length - left.length);
+    ...emittedDirectoryRoutes,
+  ])].sort((left, right) => right.length - left.length);
 
   for (const [rawPath, content] of Object.entries(raw.files)) {
     if (isDisabledQuartzComponentArtifact(rawPath)) continue;
     const normalizedOutputPath = normalizeQuartzOutputPath(rawPath);
     const outputPath = outputPathBridges.get(normalizedOutputPath) ?? normalizedOutputPath;
+    auditEphemeralPathLeak(outputPath, content, raw.forbiddenOutputText ?? []);
     auditForbiddenContent(outputPath, content, policy);
     if (files[outputPath] !== undefined || assets[outputPath] !== undefined) {
       throw new QuartzOutputAuditError(
@@ -110,22 +120,15 @@ export function bridgeAndAuditQuartzOutput(
     }
     const contentType = contentTypeForPath(outputPath);
     if (isTextContent(contentType)) {
-      const source = sanitizeQuartzDiscoveryOutput(
-        outputPath,
-        stabilizeKnownQuartzOutput(
-          outputPath,
-          sanitizeKnownQuartzOutput(
-            rewriteRouteReferences(
-              rewriteQuartzRouteReferences(
-                new TextDecoder('utf-8', { fatal: true }).decode(content),
-                routeBridges,
-              ),
-              routes,
-            ),
-          ),
-        ),
-        staging,
-      );
+      let source = new TextDecoder('utf-8', { fatal: true }).decode(content);
+      source = rebaseQuartzHtmlReferences(rawPath, source, contentType);
+      source = rewriteQuartzRouteReferences(source, routeBridges);
+      source = rewriteRouteReferences(source, routes);
+      source = sanitizeKnownQuartzOutput(source);
+      source = stabilizeKnownQuartzOutput(outputPath, source);
+      source = sanitizeUnlistedHtmlNavigation(outputPath, source, staging);
+      source = ensureControlledHtmlMetadata(outputPath, source, staging);
+      source = sanitizeQuartzDiscoveryOutput(outputPath, source, staging);
       const remoteResource = remoteRuntimeResource(source, contentType);
       if (remoteResource) {
         throw new QuartzOutputAuditError(
@@ -190,6 +193,7 @@ export function bridgeAndAuditQuartzOutput(
     }
   }
 
+  auditInternalHtmlReferences(files, assets, staging);
   auditUnlistedDiscovery(files, staging);
   return {
     files: Object.freeze(files),
@@ -197,11 +201,170 @@ export function bridgeAndAuditQuartzOutput(
   };
 }
 
+function auditInternalHtmlReferences(
+  files: Readonly<Record<string, string>>,
+  assets: Readonly<Record<string, PreviewAsset>>,
+  staging: Readonly<QuartzStagingCompilation>,
+): void {
+  const origin = siteCanonicalOrigin(staging.config);
+  const outputPaths = new Set([...Object.keys(files), ...Object.keys(assets)]);
+  for (const [outputPath, source] of Object.entries(files)) {
+    if (!outputPath.endsWith('.html')) continue;
+    for (const match of source.matchAll(
+      /(?<![-\w])\b(?:href|src|poster|action)\s*=\s*["']([^"']+)["']/giu,
+    )) {
+      const reference = decodeXmlText(match[1] ?? '');
+      if (reference.startsWith('#')) continue;
+      let target: URL;
+      try {
+        target = new URL(reference, `${origin}${outputPath}`);
+      } catch {
+        throw new QuartzOutputAuditError(
+          'quartz-route-mismatch',
+          `Quartz output ${outputPath} contains an invalid internal reference.`,
+        );
+      }
+      if (['javascript:', 'file:'].includes(target.protocol)) {
+        throw new QuartzOutputAuditError(
+          'quartz-output-invalid',
+          `Quartz output ${outputPath} contains an unsafe URL protocol.`,
+        );
+      }
+      if (target.origin !== origin) continue;
+      let pathname: string;
+      try {
+        pathname = decodeURIComponent(target.pathname);
+      } catch {
+        throw new QuartzOutputAuditError(
+          'quartz-route-mismatch',
+          `Quartz output ${outputPath} contains an invalid encoded path.`,
+        );
+      }
+      const targetPath = pathname.endsWith('/') ? `${pathname}index.html` : pathname;
+      if (!outputPaths.has(targetPath)) {
+        throw new QuartzOutputAuditError(
+          'quartz-route-mismatch',
+          `Quartz output ${outputPath} links to missing output ${pathname}.`,
+        );
+      }
+    }
+  }
+}
+
+function rebaseQuartzHtmlReferences(
+  rawPath: string,
+  source: string,
+  contentType: string,
+): string {
+  if (contentType !== 'text/html') return source;
+  const origin = 'https://pages-publish.invalid';
+  const base = `${origin}/${rawPath}`;
+  const rebase = (value: string): string => {
+    if (value.length === 0 || value.startsWith('#')) return value;
+    const decoded = decodeXmlText(value);
+    try {
+      const target = new URL(decoded, base);
+      if (target.origin !== origin) return decoded;
+      return `${target.pathname}${target.search}${target.hash}`;
+    } catch {
+      return decoded;
+    }
+  };
+  const attributesRebased = source.replace(
+      /(?<![-\w])\b(href|src|poster|action)\s*=\s*(["'])([^"']*)\2/giu,
+      (_attribute, name: string, quote: string, value: string) =>
+        `${name}=${quote}${escapeHtmlAttribute(rebase(value))}${quote}`,
+    );
+  return attributesRebased.replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, (script) =>
+    script.replace(
+        /(\b(?:fetch|import)\s*\(\s*)(["'])(\.\.?\/[^"']+)\2/gu,
+        (_call, prefix: string, quote: string, value: string) =>
+          `${prefix}${quote}${escapeJavaScriptString(rebase(value), quote)}${quote}`,
+      ));
+}
+
 function stabilizeKnownQuartzOutput(outputPath: string, source: string): string {
   if (outputPath === '/sitemap.xml') {
     return source.replace(/\s*<lastmod>[^<]*<\/lastmod>/gu, '');
   }
   return source;
+}
+
+function ensureControlledHtmlMetadata(
+  outputPath: string,
+  source: string,
+  staging: Readonly<QuartzStagingCompilation>,
+): string {
+  if (!outputPath.endsWith('.html')) return source;
+  const plannedRoutes = [
+    ...staging.routeManifest.articles.map((article) => article.url),
+    ...staging.routePlan.sections.map((section) => section.url),
+    ...staging.routePlan.systemRoutes.filter((route) => route.endsWith('/')),
+  ];
+  const route = plannedRoutes.find((candidate) => routeOutputPath(candidate) === outputPath)
+    ?? (outputPath.startsWith('/tags/') && outputPath.endsWith('/index.html')
+      ? outputPath.slice(0, -'index.html'.length)
+      : undefined);
+  if (route === undefined) return source;
+  const canonical = `${siteCanonicalOrigin(staging.config)}${route}`;
+  const controlled = source.replace(
+    /<link\b(?=[^>]*\brel\s*=\s*["'][^"']*\bcanonical\b[^"']*["'])[^>]*>/giu,
+    '',
+  );
+  const metadata = [`<link rel="canonical" href="${escapeHtmlAttribute(encodeURI(canonical))}"/>`];
+  const unlisted = staging.routeManifest.articles.some((article) =>
+    article.visibility === 'unlisted' && article.url === route);
+  if (unlisted && !/<meta\b(?=[^>]*\bname\s*=\s*["']robots["'])(?=[^>]*\bcontent\s*=\s*["'][^"']*\bnoindex\b)[^>]*>/iu.test(controlled)) {
+    metadata.push('<meta name="robots" content="noindex"/>');
+  }
+  const insertion = metadata.join('');
+  if (/<\/head>/iu.test(controlled)) {
+    return controlled.replace(/<\/head>/iu, `${insertion}</head>`);
+  }
+  if (/<html\b[^>]*>/iu.test(controlled)) {
+    return controlled.replace(/<html\b[^>]*>/iu, (tag) => `${tag}<head>${insertion}</head>`);
+  }
+  return `${insertion}${controlled}`;
+}
+
+function sanitizeUnlistedHtmlNavigation(
+  outputPath: string,
+  source: string,
+  staging: Readonly<QuartzStagingCompilation>,
+): string {
+  if (!outputPath.endsWith('.html')) return source;
+  const unlistedRoutes = new Set(
+    staging.routeManifest.articles
+      .filter((article) => article.visibility === 'unlisted')
+      .map((article) => normalizeRoutePath(article.url)),
+  );
+  const unlistedRouteTokens = [...unlistedRoutes]
+    .map((route) => route.replace(/^\//u, ''));
+  if (unlistedRoutes.size === 0) return source;
+  const origin = siteCanonicalOrigin(staging.config);
+  const pageUrl = outputPath === '/index.html'
+    ? `${origin}/`
+    : `${origin}${outputPath.replace(/index\.html$/u, '')}`;
+  return source
+    .split(/(<article\b[^>]*>[\s\S]*?<\/article>)/giu)
+    .map((segment) => /^<article\b/iu.test(segment)
+      ? segment
+      : segment.replace(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<\/a>/giu,
+        (anchor, href: string) => {
+          try {
+            const decodedHref = decodeURIComponent(decodeXmlText(href));
+            if (unlistedRouteTokens.some((token) => containsRouteToken(decodedHref, token))) {
+              return '';
+            }
+            const target = new URL(decodedHref, pageUrl);
+            if (target.origin !== origin) return anchor;
+            const route = normalizeRoutePath(decodeURIComponent(target.pathname));
+            return unlistedRoutes.has(route) ? '' : anchor;
+          } catch {
+            return anchor;
+          }
+        }))
+    .join('');
 }
 
 function sanitizeQuartzDiscoveryOutput(
@@ -438,17 +601,22 @@ function rewriteRouteReferences(source: string, routes: readonly string[]): stri
 }
 
 function sanitizeKnownQuartzOutput(source: string): string {
-  return source.replace(
-    /<link rel="preconnect" href="https:\/\/cdnjs\.cloudflare\.com" crossorigin="anonymous"\s*\/?\s*>/giu,
-    '',
-  );
+  return source
+    .replace(
+      /<link rel="preconnect" href="https:\/\/cdnjs\.cloudflare\.com" crossorigin="anonymous"\s*\/?\s*>/giu,
+      '',
+    )
+    .replace(
+      /<meta\b(?=[^>]*(?:property|name)\s*=\s*["'](?:og:image(?::(?:url|type|alt))?|twitter:image)["'])[^>]*>/giu,
+      '',
+    );
 }
 
 function auditUnlistedDiscovery(
   files: Readonly<Record<string, string>>,
   staging: Readonly<QuartzStagingCompilation>,
 ): void {
-  const discoveryPaths = Object.keys(files).filter(
+  const fullDiscoveryPaths = Object.keys(files).filter(
     (path) => path === '/sitemap.xml'
       || path === '/index.xml'
       || path === '/static/contentIndex.json'
@@ -458,14 +626,24 @@ function auditUnlistedDiscovery(
       || staging.routePlan.sections.some((section) => path === routeOutputPath(section.url))
       || path.startsWith('/tags/'),
   );
+  const publicArticlePaths = new Set(
+    staging.routeManifest.articles
+      .filter((article) => article.visibility === 'public')
+      .map((article) => routeOutputPath(article.url)),
+  );
+  const discoverySurfaces = [
+    ...fullDiscoveryPaths.map((path) => ({ path, source: files[path] ?? '' })),
+    ...[...publicArticlePaths]
+      .filter((path) => !fullDiscoveryPaths.includes(path) && files[path] !== undefined)
+      .map((path) => ({ path, source: removeAuthoredArticleContent(files[path] ?? '') })),
+  ];
   for (const article of staging.routeManifest.articles) {
     if (article.visibility !== 'unlisted') continue;
     const routeToken = article.url.replace(/^\//u, '').replace(/\/$/u, '');
     const textTokens = [article.title, article.sourcePath]
       .filter((token) => token.length >= 2);
-    for (const path of discoveryPaths) {
+    for (const { path, source } of discoverySurfaces) {
       if (path === routeOutputPath(article.url)) continue;
-      const source = files[path] ?? '';
       const leakedToken = containsRouteToken(source, routeToken)
         ? routeToken
         : textTokens.find((token) => source.includes(token));
@@ -477,6 +655,10 @@ function auditUnlistedDiscovery(
       }
     }
   }
+}
+
+function removeAuthoredArticleContent(source: string): string {
+  return source.replace(/<article\b[^>]*>[\s\S]*?<\/article>/giu, '');
 }
 
 function containsRouteToken(source: string, token: string): boolean {
@@ -556,6 +738,22 @@ function auditForbiddenContent(
   }
 }
 
+function auditEphemeralPathLeak(
+  outputPath: string,
+  content: Uint8Array,
+  forbiddenText: readonly string[],
+): void {
+  const bytes = Buffer.from(content.buffer, content.byteOffset, content.byteLength);
+  const tokens = forbiddenText.flatMap((token) => [token, encodeURI(token)]);
+  for (const token of new Set(tokens)) {
+    if (token.length === 0 || bytes.indexOf(Buffer.from(token, 'utf8')) < 0) continue;
+    throw new QuartzOutputAuditError(
+      'quartz-output-invalid',
+      `Quartz output ${outputPath} contains an ephemeral build path.`,
+    );
+  }
+}
+
 function contentTypeForPath(path: string): string {
   const extension = extname(path).toLowerCase();
   const types: Record<string, string> = {
@@ -593,4 +791,17 @@ function isTextContent(contentType: string): boolean {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replaceAll('<', '&lt;');
+}
+
+function escapeJavaScriptString(value: string, quote: string): string {
+  const escaped = value.replaceAll('\\', '\\\\');
+  return quote === '"' ? escaped.replaceAll('"', '\\"') : escaped.replaceAll("'", "\\'");
 }

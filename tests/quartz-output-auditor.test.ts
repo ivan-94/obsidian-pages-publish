@@ -1,22 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import {
-  QuartzOutputAuditError,
-  bridgeAndAuditQuartzOutput,
-} from '../src/site-builder/quartz-output-auditor';
+import { bridgeAndAuditQuartzOutput } from '../src/site-builder/quartz-output-auditor';
 import type { QuartzStagingCompilation } from '../src/site-builder/quartz-staging-compiler';
 
 describe('Quartz output route bridge and auditor', () => {
   it('normalizes Quartz flat HTML into existing directory routes', () => {
     const output = bridgeAndAuditQuartzOutput(
       rawOutput({
-        'writing/hello.html': '<a href="/writing/hidden">Hidden</a>',
+        'writing/hello.html': [
+          '<html><head><link rel="stylesheet" href="../index.css"/>',
+          '<script>fetch("../static/contentIndex.json")</script></head>',
+          '<body><nav><a href="../writing/hello">Writing</a></nav>',
+          '<article><a href="/writing/hidden">Hidden</a>',
+          '<code>fetch("../example.json")</code></article></body></html>',
+        ].join(''),
         'writing/hidden.html': '<h1>Hidden</h1>',
+        'index.css': 'body{}',
       }),
       staging(),
     );
 
     expect(output.files['/writing/hello/index.html']).toContain('/writing/hidden/');
+    expect(output.files['/writing/hello/index.html']).toContain('href="/index.css"');
+    expect(output.files['/writing/hello/index.html']).toContain(
+      'fetch("/static/contentIndex.json")',
+    );
+    expect(output.files['/writing/hello/index.html']).toContain(
+      '<code>fetch("../example.json")</code>',
+    );
+    expect(output.files['/writing/hello/index.html']).toContain('href="/writing/hello/"');
     expect(output.files['/writing/hidden/index.html']).toContain('Hidden');
+    expect(output.files['/writing/hello/index.html']).toContain(
+      '<link rel="canonical" href="https://example.com/writing/hello/"/>',
+    );
+    expect(output.files['/writing/hidden/index.html']).toContain(
+      '<meta name="robots" content="noindex"/>',
+    );
     expect(output.files['/privacy/index.html']).toBeDefined();
     expect(output.files['/search/index.html']).toBeDefined();
     expect(output.files['/graph/index.html']).toBeDefined();
@@ -73,10 +91,50 @@ describe('Quartz output route bridge and auditor', () => {
 
   it('does not confuse an unlisted route with a longer public route prefix', () => {
     const raw = rawOutput({
-      'index.html': '<a href="/writing/hidden-section/child/">Public child</a>',
+      'index.html': '<aside data-route="writing/hidden-section/child">Public child</aside>',
     });
 
     expect(() => bridgeAndAuditQuartzOutput(raw, staging())).not.toThrow();
+  });
+
+  it('removes unlisted navigation while preserving explicit authored links', () => {
+    const explorerLeak = rawOutput({
+      'writing/hello.html': [
+        '<article><a href="/writing/hidden/">Explicit link</a></article>',
+        '<aside class="explorer"><a href="/writing/hidden/">Hidden</a></aside>',
+      ].join(''),
+    });
+    const output = bridgeAndAuditQuartzOutput(explorerLeak, staging());
+
+    expect(output.files['/writing/hello/index.html']).toContain('Explicit link');
+    expect(output.files['/writing/hello/index.html']).not.toContain('>Hidden</a>');
+
+    const clientDataLeak = rawOutput({
+      'writing/hello.html': [
+        '<article><a href="/writing/hidden/">Explicit link</a></article>',
+        '<aside data-route="writing/hidden">Leaked client data</aside>',
+      ].join(''),
+    });
+    expect(() => bridgeAndAuditQuartzOutput(clientDataLeak, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-discovery-leak' }),
+    );
+  });
+
+  it('rejects ephemeral workspace and engine paths from text or binary output', () => {
+    const textLeak = rawOutput({
+      'index.html': '<html>/tmp/pages build/workspace/content</html>',
+    });
+    textLeak.forbiddenOutputText = ['/tmp/pages build/workspace'];
+    expect(() => bridgeAndAuditQuartzOutput(textLeak, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-output-invalid' }),
+    );
+
+    const binaryLeak = rawOutput();
+    binaryLeak.files['static/debug.bin'] = bytes('/tmp/pages%20build/workspace');
+    binaryLeak.forbiddenOutputText = ['/tmp/pages build/workspace'];
+    expect(() => bridgeAndAuditQuartzOutput(binaryLeak, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-output-invalid' }),
+    );
   });
 
   it('rejects missing planned routes and remote executable resources', () => {
@@ -88,6 +146,28 @@ describe('Quartz output route bridge and auditor', () => {
       'writing/hello.html': '<script src="https://tracker.example/a.js"></script>',
     });
     expect(() => bridgeAndAuditQuartzOutput(remote, staging())).toThrow('remote executable');
+  });
+
+  it('rejects broken same-origin links after route normalization', () => {
+    const broken = rawOutput({
+      'writing/hello.html': '<article><a href="/missing/">Missing</a></article>',
+    });
+
+    expect(() => bridgeAndAuditQuartzOutput(broken, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-route-mismatch' }),
+    );
+  });
+
+  it('normalizes trailing slashes for Quartz-generated tag pages', () => {
+    const raw = rawOutput({
+      'tags/index.html': '<article><a href="/tags/smoke">Smoke</a></article>',
+      'tags/smoke.html': '<article>Tagged pages</article>',
+    });
+
+    const output = bridgeAndAuditQuartzOutput(raw, staging());
+
+    expect(output.files['/tags/index.html']).toContain('href="/tags/smoke/"');
+    expect(output.files['/tags/smoke/index.html']).toBeDefined();
   });
 
   it('rejects remote runtime loads from emitted JS/CSS', () => {
@@ -104,6 +184,19 @@ describe('Quartz output route bridge and auditor', () => {
     expect(() => bridgeAndAuditQuartzOutput(remoteFont, staging())).toThrow(
       expect.objectContaining({ code: 'quartz-unexpected-network' }),
     );
+  });
+
+  it('removes metadata for the disabled Quartz OG image output', () => {
+    const output = bridgeAndAuditQuartzOutput(rawOutput({
+      'index.html': [
+        '<html><head>',
+        '<meta property="og:image" content="https://example.com/static/og-image.png"/>',
+        '<meta name="twitter:image" content="https://example.com/static/og-image.png"/>',
+        '</head><body>Home</body></html>',
+      ].join(''),
+    }), staging());
+
+    expect(output.files['/index.html']).not.toContain('og-image.png');
   });
 
   it('rejects private canaries in either text or binary output', () => {
@@ -124,6 +217,7 @@ function rawOutput(overrides: Record<string, string> = {}): {
   files: Record<string, Uint8Array>;
   sourceDigest: string;
   engineVersion: string;
+  forbiddenOutputText?: readonly string[];
 } {
   const textFiles: Record<string, string> = {
     'index.html': '<html>Home</html>',

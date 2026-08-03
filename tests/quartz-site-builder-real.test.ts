@@ -26,6 +26,22 @@ describe('real Quartz SiteBuilder integration', () => {
 
       expect(preview.files['/writing/hello/index.html']).toContain('Hello Quartz');
       expect(preview.files['/writing/hidden/index.html']).toContain('Hidden Quartz');
+      expect(preview.files['/writing/hidden/index.html']).toMatch(
+        /<meta\b[^>]*name=["']robots["'][^>]*content=["'][^"']*noindex/iu,
+      );
+      expect(preview.files['/writing/hello/index.html']).toContain(
+        '<link rel="canonical" href="https://example.com/writing/hello/"/>',
+      );
+      expect(preview.files['/writing/中文 空格/index.html']).toContain(
+        '<link rel="canonical" href="https://example.com/writing/%E4%B8%AD%E6%96%87%20%E7%A9%BA%E6%A0%BC/"/>',
+      );
+      expect(preview.files['/index.html']).not.toContain('og-image.png');
+      expect(preview.files['/writing/hello/index.html']).toMatch(
+        /<link\b[^>]*href="\/index-[a-f0-9]+\.css"/iu,
+      );
+      expect(preview.files['/writing/hello/index.html']).toContain(
+        'fetch("/static/contentIndex.json")',
+      );
       expect(preview.files['/writing/中文 空格/index.html']).toContain('Unicode Quartz');
       expect(preview.files['/writing/CaseSensitive/index.html']).toContain('Case Quartz');
       expect(preview.files['/writing/casesensitive/index.html']).toContain('Lower Case Quartz');
@@ -35,6 +51,9 @@ describe('real Quartz SiteBuilder integration', () => {
       );
       expect(preview.files['/writing/hidden-section/child/index.html']).toContain(
         'Public section child',
+      );
+      expect(preview.files['/writing/hidden-section/child/index.html']).toContain(
+        'href="/writing/">Notes</a>',
       );
       expect(preview.files['/writing/old-case/index.html']).toContain('/writing/CaseSensitive/');
       const contentIndex = JSON.parse(

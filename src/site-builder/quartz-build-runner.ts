@@ -32,6 +32,8 @@ export interface QuartzRawBuildOutput {
   files: Readonly<Record<string, Uint8Array>>;
   sourceDigest: string;
   engineVersion: string;
+  /** Ephemeral absolute paths that must never appear in collected output. */
+  forbiddenOutputText?: readonly string[];
 }
 
 export class QuartzBuildError extends Error {
@@ -136,6 +138,7 @@ export class QuartzBuildRunner {
         files: Object.freeze(await collectOutput(outputDirectory)),
         sourceDigest: staging.sourceDigest,
         engineVersion: engine.engineVersion,
+        forbiddenOutputText: Object.freeze([workspace, engineDirectory]),
       };
     } finally {
       await rm(workspace, { recursive: true, force: true });
