@@ -88,8 +88,10 @@ describe('Pages Publish application', () => {
         issues: [],
       },
     };
+    const dispose = vi.fn(async () => undefined);
     const siteBuilder: SiteBuilder = {
       build: async () => preview,
+      dispose,
     };
     const application = new PagesPublishApplication(vault, undefined, {
       siteBuilder,
@@ -103,6 +105,7 @@ describe('Pages Publish application', () => {
 
     await expect(application.preparePreview()).resolves.toBe(preview);
     await application.shutdown();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it('checks a configured custom-domain status only through an explicit host boundary', async () => {

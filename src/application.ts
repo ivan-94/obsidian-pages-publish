@@ -175,6 +175,8 @@ export interface InitialSetupEnvironmentBoundary {
   getStatus(): PublicationEnvironmentStatus;
   prepare(): Promise<PublicationEnvironmentStatus>;
   repair(): Promise<PublicationEnvironmentStatus>;
+  cancel?(): boolean;
+  subscribe?(listener: () => void): () => void;
 }
 
 export type InitialSetupEnvironmentStatus =
@@ -237,6 +239,7 @@ export class PagesPublishApplication {
   private readonly siteBuilder: SiteBuilder;
   private readonly globalUiListeners = new Set<() => void>();
   private unsubscribePublisherUi: (() => void) | undefined;
+  private unsubscribeSetupEnvironment: (() => void) | undefined;
   private activeScans = 0;
   private latestScan: SiteScanResult | undefined;
   private pendingPublicationChanges: number | 'unknown' | undefined;
@@ -271,6 +274,9 @@ export class PagesPublishApplication {
     this.setupConnection = options.setupConnection;
     this.oauthCallback = options.oauthCallback;
     this.setupEnvironment = options.setupEnvironment;
+    this.unsubscribeSetupEnvironment = this.setupEnvironment?.subscribe?.(
+      () => this.notifyGlobalUiChange(),
+    );
     this.deploymentFacts = options.deploymentFacts;
     this.customDomainStatus = options.customDomainStatus;
     this.maintenance = options.maintenance;
@@ -674,6 +680,12 @@ export class PagesPublishApplication {
     }
   }
 
+  cancelInitialSetupEnvironment(): boolean {
+    const cancelled = this.setupEnvironment?.cancel?.() ?? false;
+    if (cancelled) this.notifyGlobalUiChange();
+    return cancelled;
+  }
+
   isInitialSetupAvailable(): boolean {
     return this.setup !== undefined && this.setupConnection !== undefined;
   }
@@ -1073,12 +1085,16 @@ export class PagesPublishApplication {
   }
 
   async shutdown(): Promise<void> {
+    this.setupEnvironment?.cancel?.();
+    this.unsubscribeSetupEnvironment?.();
+    this.unsubscribeSetupEnvironment = undefined;
     this.unsubscribePublisherUi?.();
     this.unsubscribePublisherUi = undefined;
     this.globalUiListeners.clear();
     this.currentArticleListeners.clear();
     this.preparedPublishSnapshot = undefined;
     this.scanCoordinator.dispose();
+    await this.siteBuilder.dispose?.();
     await this.previewServer.stop();
   }
 

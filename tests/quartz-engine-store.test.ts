@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, mkdir, readFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -32,20 +32,37 @@ describe('Quartz engine store', () => {
         '5.0.0',
       );
     });
+    const checkDiskCapacity = vi.fn(async () => undefined);
+    const checkEnvironmentSize = vi.fn(async () => undefined);
     const store = new QuartzEngineStore({
       rootDirectory,
       download: async () => archive,
       installDependencies,
       smoke,
+      checkDiskCapacity,
+      checkEnvironmentSize,
     });
 
-    const runtime = await store.ensureReady(manifest, runtimeTools());
+    const progress: string[] = [];
+    const runtime = await store.ensureReady(
+      manifest,
+      runtimeTools(),
+      undefined,
+      (stage) => progress.push(stage),
+    );
 
     expect(runtime.engineVersion).toBe(manifest.engineVersion);
     expect(runtime.platform).toBe('darwin-arm64');
     expect(runtime.usingFallback).toBe(false);
     expect(installDependencies).toHaveBeenCalledOnce();
     expect(smoke).toHaveBeenCalledOnce();
+    expect(checkDiskCapacity).toHaveBeenCalledOnce();
+    expect(checkEnvironmentSize).toHaveBeenCalledOnce();
+    expect(progress).toEqual([
+      'downloading-engine',
+      'installing-engine',
+      'smoke-testing',
+    ]);
     await expect(
       access(join(runtime.engineDirectory, 'node_modules', 'sharp')),
     ).rejects.toMatchObject({ code: 'ENOENT' });
@@ -127,6 +144,45 @@ describe('Quartz engine store', () => {
     expect(active.engineVersion).toBe(oldManifest.engineVersion);
   });
 
+  it('does not turn cancellation into a successful fallback', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-cancel-'));
+    const oldLockfile = Buffer.from('{"lockfileVersion":3,"packages":{},"old":true}');
+    const oldArchive = sourceArchive(oldLockfile);
+    const oldManifest = engineManifest(
+      oldArchive,
+      oldLockfile,
+      'pages-publish-quartz-5.0.0.3',
+    );
+    await new QuartzEngineStore({
+      rootDirectory,
+      download: async () => oldArchive,
+      installDependencies: async () => undefined,
+      smoke: async () => undefined,
+    }).ensureReady(oldManifest, runtimeTools());
+    const newLockfile = Buffer.from('{"lockfileVersion":3,"packages":{},"new":true}');
+    const newArchive = sourceArchive(newLockfile);
+    const newManifest = engineManifest(
+      newArchive,
+      newLockfile,
+      'pages-publish-quartz-5.0.0.4',
+    );
+    const controller = new AbortController();
+    controller.abort();
+    const updatingStore = new QuartzEngineStore({
+      rootDirectory,
+      download: async (_url, signal) => {
+        signal?.throwIfAborted();
+        return newArchive;
+      },
+      installDependencies: async () => undefined,
+      smoke: async () => undefined,
+    });
+
+    await expect(
+      updatingStore.ensureReady(newManifest, runtimeTools(), controller.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('forces a verified engine reinstall during Repair', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-repair-'));
     const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
@@ -146,6 +202,44 @@ describe('Quartz engine store', () => {
 
     expect(download).toHaveBeenCalledTimes(2);
     expect(installDependencies).toHaveBeenCalledTimes(2);
+    await expect(readdir(join(rootDirectory, 'engines', 'darwin-arm64'))).resolves.not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^\.replaced-/)]),
+    );
+  });
+
+  it('retains only the active engine and its previous verified fallback across upgrades', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-retention-'));
+    const install = async (suffix: number): Promise<string> => {
+      const lockfile = Buffer.from(`{"lockfileVersion":3,"packages":{},"v":${suffix}}`);
+      const archive = sourceArchive(lockfile);
+      const manifest = engineManifest(
+        archive,
+        lockfile,
+        `pages-publish-quartz-5.0.0.${suffix}`,
+      );
+      return (await new QuartzEngineStore({
+        rootDirectory,
+        download: async () => archive,
+        installDependencies: async () => undefined,
+        smoke: async () => undefined,
+      }).ensureReady(manifest, runtimeTools())).engineDirectory;
+    };
+
+    const first = await install(11);
+    const second = await install(12);
+    const unknownDirectory = join(
+      rootDirectory,
+      'engines',
+      'darwin-arm64',
+      'unrecognised-directory',
+    );
+    await mkdir(unknownDirectory, { recursive: true });
+    const third = await install(13);
+
+    await expect(access(first)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(second)).resolves.toBeUndefined();
+    await expect(access(third)).resolves.toBeUndefined();
+    await expect(access(unknownDirectory)).resolves.toBeUndefined();
   });
 
   it.each([

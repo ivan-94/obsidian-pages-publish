@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { rethrowAbort } from './quartz-environment-error';
 
 const execFileAsync = promisify(execFile);
 const SYSTEM_COMMAND_PATH = '/usr/bin:/bin';
@@ -68,7 +69,8 @@ export async function installLockedNpmProject(
         signal: request.signal,
       },
     );
-  } catch {
+  } catch (error) {
+    rethrowAbort(error);
     throw new LockedNpmInstallError(
       'The locked Quartz production dependencies could not be installed.',
     );

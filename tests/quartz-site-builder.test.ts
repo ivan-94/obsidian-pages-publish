@@ -103,6 +103,40 @@ describe('Quartz site builder', () => {
     })).rejects.toMatchObject({ name: 'AbortError' });
     expect(runs).toBe(0);
   });
+
+  it('aborts an active build and drains the queue when disposed', async () => {
+    const vaultRoot = await fixtureVault();
+    let entered!: () => void;
+    const runnerEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const builder = new QuartzSiteBuilder({
+      environment: { ensureReady: async () => readyEngine() },
+      runner: {
+        run: async (_engine, _staging, signal): Promise<QuartzRawBuildOutput> => {
+          entered();
+          await new Promise<void>((_resolve, reject) => {
+            signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('Build disposed.', 'AbortError')),
+              { once: true },
+            );
+          });
+          throw new Error('unreachable');
+        },
+      },
+    });
+
+    const build = builder.build({ vaultRoot, renderMode: 'local' });
+    await runnerEntered;
+    const disposed = builder.dispose();
+
+    await expect(build).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(disposed).resolves.toBeUndefined();
+    await expect(builder.build({ vaultRoot, renderMode: 'local' })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
 });
 
 async function fixtureVault(): Promise<string> {

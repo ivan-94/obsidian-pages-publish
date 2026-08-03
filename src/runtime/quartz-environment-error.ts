@@ -1,4 +1,5 @@
 export type QuartzEnvironmentErrorCode =
+  | 'publication-environment-disk-insufficient'
   | 'node-runtime-incompatible'
   | 'quartz-engine-unavailable'
   | 'quartz-engine-download-failed'

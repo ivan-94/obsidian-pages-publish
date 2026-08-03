@@ -52,4 +52,5 @@ export interface SiteBuildRequest {
  */
 export interface SiteBuilder {
   build(request: SiteBuildRequest): Promise<LocalPreview>;
+  dispose?(): Promise<void>;
 }

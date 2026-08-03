@@ -18,7 +18,7 @@ import {
 } from './quartz-staging-compiler';
 
 export interface QuartzEnvironmentBoundary {
-  ensureReady(): Promise<ReadyQuartzEngine>;
+  ensureReady(signal?: AbortSignal): Promise<ReadyQuartzEngine>;
 }
 
 export interface QuartzRunnerBoundary {
@@ -31,6 +31,7 @@ export interface QuartzRunnerBoundary {
 
 export class QuartzSiteBuilder implements SiteBuilder {
   private buildTail: Promise<unknown> = Promise.resolve();
+  private readonly lifecycleController = new AbortController();
 
   constructor(private readonly dependencies: {
     environment: QuartzEnvironmentBoundary;
@@ -38,16 +39,24 @@ export class QuartzSiteBuilder implements SiteBuilder {
   }) {}
 
   build(request: SiteBuildRequest): Promise<LocalPreview> {
+    const signal = request.signal === undefined
+      ? this.lifecycleController.signal
+      : AbortSignal.any([request.signal, this.lifecycleController.signal]);
     const operation = this.buildTail
       .catch(() => undefined)
-      .then(() => this.buildExclusive(request));
+      .then(() => this.buildExclusive({ ...request, signal }));
     this.buildTail = operation;
     return operation;
   }
 
+  async dispose(): Promise<void> {
+    this.lifecycleController.abort();
+    await this.buildTail.catch(() => undefined);
+  }
+
   private async buildExclusive(request: SiteBuildRequest): Promise<LocalPreview> {
     request.signal?.throwIfAborted();
-    const engine = await this.dependencies.environment.ensureReady();
+    const engine = await this.dependencies.environment.ensureReady(request.signal);
     request.signal?.throwIfAborted();
     const staging = await compileQuartzStaging(request.vaultRoot, {
       ...(request.webpDecoder === undefined ? {} : { webpDecoder: request.webpDecoder }),

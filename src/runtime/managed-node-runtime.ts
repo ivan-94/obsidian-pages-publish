@@ -15,6 +15,12 @@ import { promisify } from 'node:util';
 import type { SupportedPlatformIdentity } from '../plugin/platform';
 import type { QuartzEngineRuntimeTools } from './quartz-engine-store';
 import { extractTrustedNodeRuntimeTarGz } from './safe-tar-extractor';
+import {
+  assertPublicationEnvironmentDiskCapacity,
+  assertPublicationEnvironmentWithinBudget,
+} from './environment-disk-budget';
+import type { QuartzEnvironmentProgressReporter } from './quartz-environment-progress';
+import { rethrowAbort } from './quartz-environment-error';
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +34,7 @@ export interface ManagedNodeManifest {
 
 export interface ManagedNodeVerificationRequest extends QuartzEngineRuntimeTools {
   runtimeDirectory: string;
+  signal?: AbortSignal;
 }
 
 export interface ManagedNodeRuntimeDependencies {
@@ -36,6 +43,8 @@ export interface ManagedNodeRuntimeDependencies {
   verify?: (request: ManagedNodeVerificationRequest) => Promise<void>;
   /** Test/update-channel trust boundary; production uses the exact built-in manifest. */
   trustManifest?: (manifest: Readonly<ManagedNodeManifest>) => boolean;
+  checkDiskCapacity?: (rootDirectory: string) => Promise<void>;
+  checkEnvironmentSize?: (rootDirectory: string) => Promise<void>;
 }
 
 export function builtinManagedNodeManifest(
@@ -61,30 +70,38 @@ export class ManagedNodeRuntimeStore {
   ensureReady(
     inputManifest: Readonly<ManagedNodeManifest>,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<QuartzEngineRuntimeTools> {
     if (this.activeOperation) return this.activeOperation;
-    return this.start(inputManifest, false, signal);
+    return this.start(inputManifest, false, signal, reportProgress);
   }
 
   repair(
     inputManifest: Readonly<ManagedNodeManifest>,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<QuartzEngineRuntimeTools> {
     const active = this.activeOperation;
     if (active) {
       return active
         .catch(() => undefined)
-        .then(() => this.repair(inputManifest, signal));
+        .then(() => this.repair(inputManifest, signal, reportProgress));
     }
-    return this.start(inputManifest, true, signal);
+    return this.start(inputManifest, true, signal, reportProgress);
   }
 
   private start(
     inputManifest: Readonly<ManagedNodeManifest>,
     force: boolean,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<QuartzEngineRuntimeTools> {
-    const operation = this.ensureReadyExclusive(inputManifest, force, signal);
+    const operation = this.ensureReadyExclusive(
+      inputManifest,
+      force,
+      signal,
+      reportProgress,
+    );
     this.activeOperation = operation;
     void operation.finally(() => {
       if (this.activeOperation === operation) this.activeOperation = undefined;
@@ -96,6 +113,7 @@ export class ManagedNodeRuntimeStore {
     inputManifest: Readonly<ManagedNodeManifest>,
     force: boolean,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<QuartzEngineRuntimeTools> {
     const manifest = validateManifest(
       inputManifest,
@@ -111,40 +129,66 @@ export class ManagedNodeRuntimeStore {
     if (!force && await runtimeMatches(runtimeDirectory, manifest)) return tools;
 
     await mkdir(platformDirectory, { recursive: true });
+    await (this.dependencies.checkDiskCapacity
+      ?? assertPublicationEnvironmentDiskCapacity)(this.dependencies.rootDirectory);
     const temporaryDirectory = await mkdtemp(join(platformDirectory, '.install-'));
     let moved = false;
+    let replacedDirectory: string | undefined;
     try {
+      reportProgress?.('downloading-runtime');
       const archive = await this.dependencies.download(manifest.sourceUrl, signal);
+      signal?.throwIfAborted();
       const actualSha256 = createHash('sha256').update(archive).digest('hex');
       if (actualSha256 !== manifest.sourceSha256) {
         throw new Error('The managed Node runtime checksum did not match.');
       }
+      reportProgress?.('installing-runtime');
       await extractTrustedNodeRuntimeTarGz(archive, temporaryDirectory, {
         maxCompressedBytes: 64 * 1024 * 1024,
         maxExpandedBytes: 512 * 1024 * 1024,
       });
+      signal?.throwIfAborted();
       const temporaryTools = runtimeTools(temporaryDirectory, manifest);
       await chmod(temporaryTools.nodeExecutable, 0o755);
       await (this.dependencies.verify ?? verifyManagedNode)({
         ...temporaryTools,
         runtimeDirectory: temporaryDirectory,
+        signal,
       });
       await writeFile(
         join(temporaryDirectory, '.pages-publish-verified.json'),
         `${JSON.stringify(manifest)}\n`,
         { flag: 'wx', mode: 0o600 },
       );
+      await (this.dependencies.checkEnvironmentSize
+        ?? assertPublicationEnvironmentWithinBudget)(this.dependencies.rootDirectory);
       if (await pathExists(runtimeDirectory)) {
-        await rename(
-          runtimeDirectory,
-          join(platformDirectory, `.invalid-node-${manifest.version}-${randomUUID()}`),
+        replacedDirectory = join(
+          platformDirectory,
+          `.replaced-node-${manifest.version}-${randomUUID()}`,
         );
+        await rename(runtimeDirectory, replacedDirectory);
       }
-      await rename(temporaryDirectory, runtimeDirectory);
+      try {
+        await rename(temporaryDirectory, runtimeDirectory);
+      } catch (error) {
+        if (replacedDirectory !== undefined) {
+          await rename(replacedDirectory, runtimeDirectory);
+          replacedDirectory = undefined;
+        }
+        throw error;
+      }
       moved = true;
+      if (replacedDirectory !== undefined) {
+        await rm(replacedDirectory, { recursive: true, force: true });
+        replacedDirectory = undefined;
+      }
       return tools;
     } finally {
       if (!moved) await rm(temporaryDirectory, { recursive: true, force: true });
+      if (moved && replacedDirectory !== undefined) {
+        await rm(replacedDirectory, { recursive: true, force: true });
+      }
     }
   }
 }
@@ -219,16 +263,18 @@ async function verifyManagedNode(request: ManagedNodeVerificationRequest): Promi
     const node = await execFileAsync(request.nodeExecutable, ['--version'], {
       env: environment,
       maxBuffer: 64 * 1024,
+      signal: request.signal,
     });
     const npm = await execFileAsync(
       request.nodeExecutable,
       [request.npmCliPath, '--version'],
-      { env: environment, maxBuffer: 64 * 1024 },
+      { env: environment, maxBuffer: 64 * 1024, signal: request.signal },
     );
     if (node.stdout.trim() !== `v${request.nodeVersion}` || npm.stdout.trim() !== request.npmVersion) {
       throw new Error('version mismatch');
     }
-  } catch {
+  } catch (error) {
+    rethrowAbort(error);
     throw new Error('The managed Node runtime smoke check failed.');
   }
 }

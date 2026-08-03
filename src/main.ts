@@ -128,8 +128,12 @@ export default class PagesPublishPlugin extends Plugin {
       }),
     });
     const environmentDirectory = publicationEnvironmentDirectory();
-    const download = async (url: string): Promise<Uint8Array> => {
-      const response = await requestUrl({ url, method: 'GET', throw: false });
+    const download = async (url: string, signal?: AbortSignal): Promise<Uint8Array> => {
+      signal?.throwIfAborted();
+      const response = await abortable(
+        requestUrl({ url, method: 'GET', throw: false }),
+        signal,
+      );
       if (response.status < 200 || response.status >= 300) {
         throw new Error('The publication environment download failed.');
       }
@@ -137,6 +141,7 @@ export default class PagesPublishPlugin extends Plugin {
       if (content.byteLength === 0 || content.byteLength > 64 * 1024 * 1024) {
         throw new Error('The publication environment download exceeded its size limit.');
       }
+      signal?.throwIfAborted();
       return content;
     };
     const runtimeStore = new ManagedNodeRuntimeStore({
@@ -154,21 +159,33 @@ export default class PagesPublishPlugin extends Plugin {
     });
     const publicationEnvironment = new QuartzPublicationEnvironment({
       platform,
-      ensureRuntime: async () => await embeddedRuntime()
+      ensureRuntime: async (signal, reportProgress) => await embeddedRuntime()
         ?? asManagedPublicationRuntime(
-          await runtimeStore.ensureReady(builtinManagedNodeManifest(platform)),
+          await runtimeStore.ensureReady(
+            builtinManagedNodeManifest(platform),
+            signal,
+            reportProgress,
+          ),
         ),
-      repairRuntime: async () => await embeddedRuntime()
+      repairRuntime: async (signal, reportProgress) => await embeddedRuntime()
         ?? asManagedPublicationRuntime(
-          await runtimeStore.repair(builtinManagedNodeManifest(platform)),
+          await runtimeStore.repair(
+            builtinManagedNodeManifest(platform),
+            signal,
+            reportProgress,
+          ),
         ),
-      ensureEngine: (runtime) => engineStore.ensureReady(
+      ensureEngine: (runtime, signal, reportProgress) => engineStore.ensureReady(
         builtinQuartzEngineManifest(platform),
         runtime,
+        signal,
+        reportProgress,
       ),
-      repairEngine: (runtime) => engineStore.repair(
+      repairEngine: (runtime, signal, reportProgress) => engineStore.repair(
         builtinQuartzEngineManifest(platform),
         runtime,
+        signal,
+        reportProgress,
       ),
     });
     const siteBuilder = new QuartzSiteBuilder({
@@ -556,6 +573,22 @@ export default class PagesPublishPlugin extends Plugin {
       new Notice('请在 Obsidian 设置中打开此插件的设置。');
     }
   }
+}
+
+async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw abortError();
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
+  });
+}
+
+function abortError(): DOMException {
+  return new DOMException('The publication environment download was aborted.', 'AbortError');
 }
 
 function errorMessage(error: unknown): string {

@@ -82,6 +82,31 @@ describe('locked npm installer', () => {
       code: 'ENOENT',
     });
   });
+
+  it('preserves AbortError when an npm install is cancelled', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'pages-quartz-npm-'));
+    directories.push(sourceDirectory);
+    const lockfile = '{"lockfileVersion":3}\n';
+    await writeFile(join(sourceDirectory, 'package-lock.json'), lockfile, 'utf8');
+    await writeFile(
+      join(sourceDirectory, 'fixture-npm.mjs'),
+      "await new Promise((resolve) => setTimeout(resolve, 30_000))\n",
+      'utf8',
+    );
+    const controller = new AbortController();
+    const installing = installLockedNpmProject({
+      sourceDirectory,
+      nodeExecutable: process.execPath,
+      npmCliPath: join(sourceDirectory, 'fixture-npm.mjs'),
+      cacheDirectory: join(sourceDirectory, '.npm-cache'),
+      lockfileSha256: sha256(lockfile),
+      signal: controller.signal,
+    });
+
+    queueMicrotask(() => controller.abort());
+
+    await expect(installing).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });
 
 function sha256(value: string): string {

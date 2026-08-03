@@ -49,6 +49,11 @@ export interface PublicationEnvironmentStatus {
   stage:
     | 'idle'
     | 'checking-system'
+    | 'downloading-runtime'
+    | 'installing-runtime'
+    | 'downloading-engine'
+    | 'installing-engine'
+    | 'smoke-testing'
     | 'fetching-release'
     | 'verifying-runtime'
     | 'verifying-engine'

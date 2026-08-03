@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -43,6 +43,21 @@ describe('Quartz build runner', () => {
       });
     },
   );
+
+  it('terminates the child and removes its workspace when cancelled', async () => {
+    const engineDirectory = await fakeEngine([
+      'await new Promise((resolve) => setTimeout(resolve, 30_000))',
+    ]);
+    const buildRoot = await mkdtemp(join(tmpdir(), 'pages-quartz-builds-'));
+    const runner = new QuartzBuildRunner({ rootDirectory: buildRoot });
+    const controller = new AbortController();
+    const build = runner.run(readyEngine(engineDirectory), staging(), controller.signal);
+
+    queueMicrotask(() => controller.abort());
+
+    await expect(build).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(readdir(join(buildRoot, 'builds'))).resolves.toEqual([]);
+  });
 });
 
 async function fakeEngine(extraSource: readonly string[] = []): Promise<string> {

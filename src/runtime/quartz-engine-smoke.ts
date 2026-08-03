@@ -17,6 +17,7 @@ export function createQuartzEngineSmoke(rootDirectory: string) {
         usingFallback: false,
       },
       staging,
+      request.signal,
     );
     const output = bridgeAndAuditQuartzOutput(raw, staging);
     if (!output.files['/index.html'] || !output.files['/smoke/index.html']) {

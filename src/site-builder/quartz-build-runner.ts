@@ -14,6 +14,7 @@ import { dirname, join, posix, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { ReadyQuartzEngine } from '../runtime/quartz-engine-store';
 import { siteCanonicalOrigin } from '../site/discovery';
+import { rethrowAbort } from '../runtime/quartz-environment-error';
 import { createControlledQuartzConfig } from './quartz-config';
 import type { QuartzStagingCompilation } from './quartz-staging-compiler';
 
@@ -119,6 +120,7 @@ export class QuartzBuildRunner {
           },
         );
       } catch (error) {
+        rethrowAbort(error);
         throw new QuartzBuildError(
           'The verified Quartz engine could not build the staged site.',
           error,

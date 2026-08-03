@@ -325,6 +325,27 @@ describe('publish-center table accessibility', () => {
       .toHaveLength(1);
   });
 
+  it('shows the active runtime download phase and lets the user cancel it', async () => {
+    const cancelInitialSetupEnvironment = vi.fn(() => true);
+    const view = new PagesPublishView({} as never, {
+      isPublicationAvailable: () => false,
+      getLaunchTarget: async () => 'setup',
+      getInitialSetupEnvironment: () => ({ stage: 'downloading-runtime' }),
+      cancelInitialSetupEnvironment,
+      getInitialSetupConnection: vi.fn(),
+      isInitialSetupAvailable: () => true,
+      canConnectInitialSetupApiToken: () => false,
+    } as never);
+
+    await view.onOpen();
+
+    const content = view.contentEl as unknown as ElementModel;
+    expect(descendants(content, 'li').map((item) => item.text))
+      .toContain('● 下载固定 Node.js 22 运行时');
+    await clickButton(content, '取消环境准备');
+    expect(cancelInitialSetupEnvironment).toHaveBeenCalledOnce();
+  });
+
   it('shows truthful environment stages and a safe details disclosure', async () => {
     const view = new PagesPublishView({} as never, {
       isPublicationAvailable: () => false,

@@ -1166,13 +1166,23 @@ export class PagesPublishView extends ItemView {
           ? `✓ ${environmentRuntime.source === 'obsidian' ? 'Obsidian Node.js' : 'Node.js'} ${environmentRuntime.version}`
           : environment.stage === 'checking-system'
             ? '● 查找兼容的 Node.js 运行时'
+            : environment.stage === 'downloading-runtime'
+              ? '● 下载固定 Node.js 22 运行时'
+              : environment.stage === 'installing-runtime'
+                ? '● 校验并安装 Node.js 22 运行时'
             : '○ 查找兼容的 Node.js 运行时',
       });
       stages.createEl('li', {
         text: environmentEngine
           ? `✓ Pages 发布引擎 ${environmentEngine.version}`
-          : environment.stage === 'verifying-engine' || environment.stage === 'installing'
-            ? '● 正在准备 Pages 发布引擎'
+          : environment.stage === 'downloading-engine'
+            ? '● 下载固定 Quartz 5 源码'
+            : environment.stage === 'installing-engine'
+              ? '● 按 lockfile 安装 Quartz 依赖'
+              : environment.stage === 'smoke-testing'
+                ? '● 执行 Quartz 离线 smoke build'
+                : environment.stage === 'verifying-engine' || environment.stage === 'installing'
+                  ? '● 正在准备 Pages 发布引擎'
             : '○ 准备 Pages 发布引擎',
       });
       stages.createEl('li', {
@@ -1197,6 +1207,16 @@ export class PagesPublishView extends ItemView {
               await this.application.repairInitialSetupEnvironment();
             } catch (error) {
               new Notice(`无法准备本地发布环境：${errorMessage(error)}`);
+            }
+            await this.render();
+          });
+      }
+      if (isEnvironmentPreparingStage(environment.stage)) {
+        new ButtonComponent(container)
+          .setButtonText('取消环境准备')
+          .onClick(async () => {
+            if (this.application.cancelInitialSetupEnvironment()) {
+              new Notice('正在取消本地发布环境准备。');
             }
             await this.render();
           });
@@ -2028,6 +2048,19 @@ function publicationStageLabel(stage: 'prepare' | 'build' | 'upload' | 'activate
 
 function publicationStageNumber(stage: 'prepare' | 'build' | 'upload' | 'activate'): number {
   return ['prepare', 'build', 'upload', 'activate'].indexOf(stage) + 1;
+}
+
+function isEnvironmentPreparingStage(stage: string): boolean {
+  return [
+    'checking-system',
+    'downloading-runtime',
+    'installing-runtime',
+    'verifying-engine',
+    'downloading-engine',
+    'installing-engine',
+    'smoke-testing',
+    'installing',
+  ].includes(stage);
 }
 
 function visibilityLabel(value: PublishCenterArticle['visibility']): string {

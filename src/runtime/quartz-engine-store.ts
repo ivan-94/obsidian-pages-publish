@@ -4,6 +4,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   rename,
   rm,
   writeFile,
@@ -28,6 +29,11 @@ import {
   pruneDisabledQuartzPackages,
   quartzEngineSecurityDispositions,
 } from './quartz-engine-security-policy';
+import {
+  assertPublicationEnvironmentDiskCapacity,
+  assertPublicationEnvironmentWithinBudget,
+} from './environment-disk-budget';
+import type { QuartzEnvironmentProgressReporter } from './quartz-environment-progress';
 
 export interface QuartzEngineRuntimeTools {
   nodeExecutable: string;
@@ -57,6 +63,7 @@ export interface QuartzEngineSmokeRequest {
   engineDirectory: string;
   manifest: Readonly<QuartzEngineManifest>;
   runtime: QuartzEngineRuntimeTools;
+  signal?: AbortSignal;
 }
 
 export interface QuartzEngineStoreDependencies {
@@ -64,6 +71,8 @@ export interface QuartzEngineStoreDependencies {
   download: (url: string, signal?: AbortSignal) => Promise<Uint8Array>;
   installDependencies?: (request: LockedNpmInstallRequest) => Promise<void>;
   smoke: (request: QuartzEngineSmokeRequest) => Promise<void>;
+  checkDiskCapacity?: (rootDirectory: string) => Promise<void>;
+  checkEnvironmentSize?: (rootDirectory: string) => Promise<void>;
 }
 
 export class QuartzEngineStore {
@@ -75,23 +84,25 @@ export class QuartzEngineStore {
     manifest: QuartzEngineManifest,
     runtime: QuartzEngineRuntimeTools,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<ReadyQuartzEngine> {
     if (this.activeOperation) return this.activeOperation;
-    return this.start(manifest, runtime, false, signal);
+    return this.start(manifest, runtime, false, signal, reportProgress);
   }
 
   repair(
     manifest: QuartzEngineManifest,
     runtime: QuartzEngineRuntimeTools,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<ReadyQuartzEngine> {
     const active = this.activeOperation;
     if (active) {
       return active
         .catch(() => undefined)
-        .then(() => this.repair(manifest, runtime, signal));
+        .then(() => this.repair(manifest, runtime, signal, reportProgress));
     }
-    return this.start(manifest, runtime, true, signal);
+    return this.start(manifest, runtime, true, signal, reportProgress);
   }
 
   private start(
@@ -99,8 +110,15 @@ export class QuartzEngineStore {
     runtime: QuartzEngineRuntimeTools,
     force: boolean,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<ReadyQuartzEngine> {
-    const operation = this.ensureReadyExclusive(manifest, runtime, force, signal);
+    const operation = this.ensureReadyExclusive(
+      manifest,
+      runtime,
+      force,
+      signal,
+      reportProgress,
+    );
     this.activeOperation = operation;
     void operation.finally(() => {
       if (this.activeOperation === operation) this.activeOperation = undefined;
@@ -113,19 +131,40 @@ export class QuartzEngineStore {
     runtime: QuartzEngineRuntimeTools,
     force: boolean,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<ReadyQuartzEngine> {
     const manifest = validateQuartzEngineManifest(inputManifest, inputManifest.platform);
     validateRuntime(runtime);
     const exactDirectory = this.engineDirectory(manifest.platform, manifest.engineVersion);
+    const activeBeforePreparation = await this.readActive(manifest.platform, runtime);
     if (!force && await installationMatches(exactDirectory, manifest)) {
       await this.activate(exactDirectory, manifest);
+      await this.pruneObsoleteVerifiedEngines(manifest.platform, [
+        exactDirectory,
+        ...(activeBeforePreparation === undefined
+          ? []
+          : [activeBeforePreparation.engineDirectory]),
+      ]);
       return readyEngine(exactDirectory, manifest, runtime, false);
     }
 
-    const fallback = await this.readActive(manifest.platform, runtime);
+    const fallback = activeBeforePreparation;
+    if (fallback !== undefined) {
+      await this.pruneObsoleteVerifiedEngines(
+        manifest.platform,
+        [fallback.engineDirectory],
+      );
+    }
     try {
-      return await this.install(manifest, runtime, exactDirectory, signal);
+      return await this.install(
+        manifest,
+        runtime,
+        exactDirectory,
+        signal,
+        reportProgress,
+      );
     } catch (error) {
+      rethrowAbort(error);
       if (fallback) return { ...fallback, usingFallback: true };
       throw error;
     }
@@ -136,6 +175,7 @@ export class QuartzEngineStore {
     runtime: QuartzEngineRuntimeTools,
     exactDirectory: string,
     signal?: AbortSignal,
+    reportProgress?: QuartzEnvironmentProgressReporter,
   ): Promise<ReadyQuartzEngine> {
     const platformDirectory = join(
       this.dependencies.rootDirectory,
@@ -143,11 +183,15 @@ export class QuartzEngineStore {
       manifest.platform,
     );
     await mkdir(platformDirectory, { recursive: true });
+    await (this.dependencies.checkDiskCapacity
+      ?? assertPublicationEnvironmentDiskCapacity)(this.dependencies.rootDirectory);
     const temporaryDirectory = await mkdtemp(join(platformDirectory, '.install-'));
     let moved = false;
+    let replacedDirectory: string | undefined;
     try {
       let archive: Uint8Array;
       try {
+        reportProgress?.('downloading-engine');
         archive = await this.dependencies.download(manifest.sourceUrl, signal);
       } catch (error) {
         rethrowAbort(error);
@@ -158,10 +202,12 @@ export class QuartzEngineStore {
         );
       }
       verifySha256(archive, manifest.sourceSha256);
+      signal?.throwIfAborted();
       try {
         await extractTrustedTarGz(archive, temporaryDirectory);
         await verifyQuartzPackage(temporaryDirectory, manifest.quartzVersion);
         await applyQuartzEngineCompatibilityPatch(temporaryDirectory);
+        signal?.throwIfAborted();
       } catch (error) {
         if (errorCode(error) === 'quartz-engine-integrity-failed') throw error;
         throw new QuartzEnvironmentError(
@@ -171,6 +217,7 @@ export class QuartzEngineStore {
         );
       }
       try {
+        reportProgress?.('installing-engine');
         await (this.dependencies.installDependencies ?? installLockedNpmProject)({
           sourceDirectory: temporaryDirectory,
           nodeExecutable: runtime.nodeExecutable,
@@ -181,9 +228,15 @@ export class QuartzEngineStore {
         });
         await pruneDisabledQuartzPackages(temporaryDirectory);
         await writeDependencyInventory(temporaryDirectory, manifest);
+        signal?.throwIfAborted();
+        await (this.dependencies.checkEnvironmentSize
+          ?? assertPublicationEnvironmentWithinBudget)(this.dependencies.rootDirectory);
       } catch (error) {
         rethrowAbort(error);
-        if (errorCode(error) === 'quartz-engine-install-failed') throw error;
+        if (
+          errorCode(error) === 'quartz-engine-install-failed'
+          || errorCode(error) === 'publication-environment-disk-insufficient'
+        ) throw error;
         throw new QuartzEnvironmentError(
           'quartz-engine-install-failed',
           'The locked Quartz dependency installation failed.',
@@ -191,10 +244,12 @@ export class QuartzEngineStore {
         );
       }
       try {
+        reportProgress?.('smoke-testing');
         await this.dependencies.smoke({
           engineDirectory: temporaryDirectory,
           manifest,
           runtime,
+          signal,
         });
       } catch (error) {
         rethrowAbort(error);
@@ -210,17 +265,33 @@ export class QuartzEngineStore {
         { flag: 'wx', mode: 0o600 },
       );
       if (await pathExists(exactDirectory)) {
-        await rename(
-          exactDirectory,
-          join(platformDirectory, `.invalid-${manifest.engineVersion}-${randomUUID()}`),
+        replacedDirectory = join(
+          platformDirectory,
+          `.replaced-${manifest.engineVersion}-${randomUUID()}`,
         );
+        await rename(exactDirectory, replacedDirectory);
       }
-      await rename(temporaryDirectory, exactDirectory);
+      try {
+        await rename(temporaryDirectory, exactDirectory);
+      } catch (error) {
+        if (replacedDirectory !== undefined) {
+          await rename(replacedDirectory, exactDirectory);
+          replacedDirectory = undefined;
+        }
+        throw error;
+      }
       moved = true;
       await this.activate(exactDirectory, manifest);
+      if (replacedDirectory !== undefined) {
+        await rm(replacedDirectory, { recursive: true, force: true });
+        replacedDirectory = undefined;
+      }
       return readyEngine(exactDirectory, manifest, runtime, false);
     } finally {
       if (!moved) await rm(temporaryDirectory, { recursive: true, force: true });
+      if (moved && replacedDirectory !== undefined) {
+        await rm(replacedDirectory, { recursive: true, force: true });
+      }
     }
   }
 
@@ -272,6 +343,42 @@ export class QuartzEngineStore {
 
   private activePath(platform: SupportedPlatformIdentity): string {
     return join(this.dependencies.rootDirectory, `active-${platform}.json`);
+  }
+
+  private async pruneObsoleteVerifiedEngines(
+    platform: SupportedPlatformIdentity,
+    retainedDirectories: readonly string[],
+  ): Promise<void> {
+    const platformDirectory = join(this.dependencies.rootDirectory, 'engines', platform);
+    const retained = new Set(retainedDirectories);
+    let entries;
+    try {
+      entries = await readdir(platformDirectory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const directory = join(platformDirectory, entry.name);
+      if (retained.has(directory)) continue;
+      let record: VerifiedEngineRecord;
+      try {
+        record = JSON.parse(
+          await readFile(join(directory, '.pages-publish-verified.json'), 'utf8'),
+        ) as VerifiedEngineRecord;
+      } catch {
+        // Unknown or incomplete directories are not trusted deletion targets.
+        continue;
+      }
+      if (
+        record.platform === platform
+        && record.engineVersion === entry.name
+        && await installationMatches(directory, record)
+      ) {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
   }
 }
 

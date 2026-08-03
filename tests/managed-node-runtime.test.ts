@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -32,6 +32,8 @@ describe('managed Node runtime', () => {
       sourceSha256: createHash('sha256').update(archive).digest('hex'),
     };
     const download = vi.fn(async () => archive);
+    const checkDiskCapacity = vi.fn(async () => undefined);
+    const checkEnvironmentSize = vi.fn(async () => undefined);
     const verify = vi.fn(async ({ nodeExecutable, npmCliPath }: ManagedNodeVerificationRequest) => {
       await expect(readFile(nodeExecutable, 'utf8')).resolves.toBe('node-binary');
       await expect(readFile(npmCliPath, 'utf8')).resolves.toBe('npm-cli');
@@ -41,15 +43,21 @@ describe('managed Node runtime', () => {
       download,
       verify,
       trustManifest: () => true,
+      checkDiskCapacity,
+      checkEnvironmentSize,
     });
 
-    const first = await store.ensureReady(manifest);
+    const progress: string[] = [];
+    const first = await store.ensureReady(manifest, undefined, (stage) => progress.push(stage));
     const second = await store.ensureReady(manifest);
 
     expect(first).toEqual(second);
     expect(first).toMatchObject({ nodeVersion: '22.23.1', npmVersion: '10.9.8' });
     expect(download).toHaveBeenCalledOnce();
     expect(verify).toHaveBeenCalledOnce();
+    expect(checkDiskCapacity).toHaveBeenCalledOnce();
+    expect(checkEnvironmentSize).toHaveBeenCalledOnce();
+    expect(progress).toEqual(['downloading-runtime', 'installing-runtime']);
   });
 
   it('rejects a runtime whose archive checksum does not match', async () => {
@@ -88,6 +96,9 @@ describe('managed Node runtime', () => {
 
     expect(download).toHaveBeenCalledTimes(2);
     expect(verify).toHaveBeenCalledTimes(2);
+    await expect(readdir(join(rootDirectory, 'runtimes', 'darwin-arm64'))).resolves.not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^\.replaced-/)]),
+    );
   });
 
   it.skipIf(!process.env.PAGES_PUBLISH_NODE_ARCHIVE)(
