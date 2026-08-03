@@ -11,6 +11,8 @@ import {
 import { scanSiteFromDirectory, type SiteScanResult } from '../src/content/site-scanner';
 import type { SiteConfigV1 } from '../src/config/site-config';
 import { loadSiteConfigFromDirectory } from '../src/config/site-config';
+import type { LocalPreview } from '../src/core/preview';
+import type { SiteBuilder } from '../src/site-builder/site-builder';
 import {
   SiteSetupService,
   type SetupDraft,
@@ -54,6 +56,40 @@ describe('Pages Publish application', () => {
     );
 
     await expect(application.getLaunchTarget()).resolves.toBe('publish-center');
+  });
+
+  it('builds previews through an injected site-builder boundary', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    const preview: LocalPreview = {
+      siteName: 'Quartz boundary',
+      pages: [],
+      articles: [],
+      files: { '/index.html': '<h1>Quartz boundary</h1>' },
+      assets: {},
+      routePlan: {
+        articles: [],
+        sections: [],
+        systemRoutes: ['/', '/404/', '/privacy/', '/sitemap.xml'],
+        redirects: [],
+        issues: [],
+      },
+    };
+    const siteBuilder: SiteBuilder = {
+      build: async () => preview,
+    };
+    const application = new PagesPublishApplication(vault, undefined, {
+      siteBuilder,
+      scan: async () => ({
+        configRevision: 'revision',
+        digest: 'stable-digest',
+        candidates: [],
+        issues: [],
+      }),
+    });
+
+    await expect(application.preparePreview()).resolves.toBe(preview);
+    await application.shutdown();
   });
 
   it('checks a configured custom-domain status only through an explicit host boundary', async () => {

@@ -26,10 +26,11 @@ import {
   type SiteConfigV1,
 } from './config/site-config';
 import {
+  legacySiteBuilder,
   prepareArticlePreviewFromDirectory,
-  prepareLocalPreviewFromDirectory,
   type LocalPreview,
 } from './core/preview';
+import type { SiteBuilder } from './site-builder/site-builder';
 import {
   LocalPreviewServer,
   type PreviewServerStatus,
@@ -232,6 +233,7 @@ export class PagesPublishApplication {
   private readonly customDomainStatus: ConfiguredCustomDomainStatusBoundary | undefined;
   private readonly maintenance: PagesPublishMaintenanceService | undefined;
   private readonly diagnosticLog: DiagnosticLogBoundary | undefined;
+  private readonly siteBuilder: SiteBuilder;
   private readonly globalUiListeners = new Set<() => void>();
   private unsubscribePublisherUi: (() => void) | undefined;
   private activeScans = 0;
@@ -261,6 +263,7 @@ export class PagesPublishApplication {
       customDomainStatus?: ConfiguredCustomDomainStatusBoundary;
       maintenance?: PagesPublishMaintenanceService;
       diagnosticLog?: DiagnosticLogBoundary;
+      siteBuilder?: SiteBuilder;
     } = {},
   ) {
     this.setup = options.setup;
@@ -271,6 +274,7 @@ export class PagesPublishApplication {
     this.customDomainStatus = options.customDomainStatus;
     this.maintenance = options.maintenance;
     this.diagnosticLog = options.diagnosticLog;
+    this.siteBuilder = options.siteBuilder ?? legacySiteBuilder;
     this.scanCoordinator = new ContentScanCoordinator(
       options.scan ??
         (async ({ signal }) =>
@@ -548,7 +552,8 @@ export class PagesPublishApplication {
         (issue) => issue.severity === 'blocker',
       );
       if (blockers.length > 0) throw new PublishingBlockedError(blockers);
-      const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot, {
+      const preview = await this.siteBuilder.build({
+        vaultRoot: this.vaultRoot,
         renderMode,
       });
       const after = await this.requestScan(trigger);
@@ -569,7 +574,8 @@ export class PagesPublishApplication {
   private async buildPublication(
     preparation: PublicationPreparation,
   ): Promise<PublicationSnapshot> {
-    const preview = await prepareLocalPreviewFromDirectory(this.vaultRoot, {
+    const preview = await this.siteBuilder.build({
+      vaultRoot: this.vaultRoot,
       renderMode: 'published',
     });
     const verified = await this.requestScan('publish');

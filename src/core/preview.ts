@@ -6,7 +6,6 @@ import {
   installLocalAssetRule,
   localAssetEnvironment,
   type LocalAssetPlan,
-  type PreviewAsset,
 } from '../content/local-assets';
 import type { WebpDecoderBoundary } from '../content/webp-decoder';
 import {
@@ -39,40 +38,20 @@ import {
   type PublicGraphEdge,
   type PublicDiscoveryPage,
 } from '../site/discovery';
-import type { PublicationVisibility } from '../publication/article-metadata';
+import type {
+  ArticleLocalPreview,
+  LocalPreview,
+  PreviewArticle,
+  PreviewPage,
+  SiteBuilder,
+} from '../site-builder/site-builder';
 
-export interface PreviewPage {
-  sourcePath: string;
-  title: string;
-  url: string;
-}
-
-/** Local-only article facts used by the publish center; never emitted to the site. */
-export interface PreviewArticle {
-  sourcePath: string;
-  title: string;
-  url?: string;
-  onlineUrl?: string;
-  visibility: PublicationVisibility;
-  sourceDigest: string;
-  /** Historical system facts retained even after a successful takedown. */
-  firstPublishedAt?: string;
-  lastPublishedAt?: string;
-}
-
-export interface LocalPreview {
-  siteName: string;
-  timeZone?: string;
-  pages: PreviewPage[];
-  articles: PreviewArticle[];
-  files: Record<string, string>;
-  assets: Record<string, PreviewAsset>;
-  routePlan: SiteRoutePlan;
-}
-
-export interface ArticleLocalPreview extends LocalPreview {
-  articlePath: string;
-}
+export type {
+  ArticleLocalPreview,
+  LocalPreview,
+  PreviewArticle,
+  PreviewPage,
+} from '../site-builder/site-builder';
 
 const markdown = new MarkdownIt({ html: true, linkify: true });
 installDefaultMarkdownRules(markdown);
@@ -366,6 +345,15 @@ export async function prepareLocalPreviewFromDirectory(
     routePlan,
   };
 }
+
+/** Compatibility implementation retained while Quartz is introduced. */
+export const legacySiteBuilder: SiteBuilder = {
+  build: ({ vaultRoot, renderMode, webpDecoder }) =>
+    prepareLocalPreviewFromDirectory(vaultRoot, {
+      renderMode,
+      ...(webpDecoder === undefined ? {} : { webpDecoder }),
+    }),
+};
 
 interface OrderedPreviewPage extends PreviewPage {
   date?: string;
