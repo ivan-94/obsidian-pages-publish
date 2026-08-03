@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, mkdir, readFile, readdir } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -181,6 +181,48 @@ describe('Quartz engine store', () => {
     await expect(
       updatingStore.ensureReady(newManifest, runtimeTools(), controller.signal),
     ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('removes the temporary engine only after the cancelled installer has stopped', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-cancel-cleanup-'));
+    const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
+    const archive = sourceArchive(lockfile);
+    const manifest = engineManifest(
+      archive,
+      lockfile,
+      'pages-publish-quartz-5.0.0.6',
+    );
+    const controller = new AbortController();
+    let markInstallStarted = (): void => undefined;
+    const installStarted = new Promise<void>((resolve) => {
+      markInstallStarted = resolve;
+    });
+    const store = new QuartzEngineStore({
+      rootDirectory,
+      download: async () => archive,
+      installDependencies: async ({ sourceDirectory, signal }) => {
+        markInstallStarted();
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            void writeFile(join(sourceDirectory, 'installer-stopped'), 'stopped').then(
+              () => reject(new DOMException('cancelled', 'AbortError')),
+              (error: Error) => reject(error),
+            );
+          }, { once: true });
+        });
+      },
+      smoke: async () => undefined,
+    });
+
+    const preparing = store.ensureReady(manifest, runtimeTools(), controller.signal);
+    const cancelled = expect(preparing).rejects.toMatchObject({ name: 'AbortError' });
+    await installStarted;
+    controller.abort();
+    await cancelled;
+
+    await expect(readdir(join(rootDirectory, 'engines', 'darwin-arm64'))).resolves.not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^\.install-/)]),
+    );
   });
 
   it('forces a verified engine reinstall during Repair', async () => {

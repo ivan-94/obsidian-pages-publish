@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { installLockedNpmProject } from '../src/runtime/npm-installer';
 
@@ -107,7 +108,57 @@ describe('locked npm installer', () => {
 
     await expect(installing).rejects.toMatchObject({ name: 'AbortError' });
   });
+
+  it('waits for the npm process group to stop before reporting cancellation', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'pages-quartz-npm-'));
+    directories.push(sourceDirectory);
+    const lockfile = '{"lockfileVersion":3}\n';
+    await writeFile(join(sourceDirectory, 'package-lock.json'), lockfile, 'utf8');
+    await writeFile(
+      join(sourceDirectory, 'fixture-npm.mjs'),
+      [
+        "import { writeFile } from 'node:fs/promises';",
+        "await writeFile('npm-ready', 'ready');",
+        "process.on('SIGTERM', () => {",
+        "  setTimeout(async () => {",
+        "    await writeFile('npm-stopped', 'stopped');",
+        "    process.exit(1);",
+        "  }, 100);",
+        "});",
+        "setInterval(() => undefined, 1_000);",
+      ].join('\n'),
+      'utf8',
+    );
+    const controller = new AbortController();
+    const installing = installLockedNpmProject({
+      sourceDirectory,
+      nodeExecutable: process.execPath,
+      npmCliPath: join(sourceDirectory, 'fixture-npm.mjs'),
+      cacheDirectory: join(sourceDirectory, '.npm-cache'),
+      lockfileSha256: sha256(lockfile),
+      signal: controller.signal,
+    });
+    const cancelled = expect(installing).rejects.toMatchObject({ name: 'AbortError' });
+
+    await waitForPath(join(sourceDirectory, 'npm-ready'));
+    controller.abort();
+
+    await cancelled;
+    await expect(readFile(join(sourceDirectory, 'npm-stopped'), 'utf8')).resolves.toBe('stopped');
+  });
 });
+
+async function waitForPath(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await sleep(10);
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
