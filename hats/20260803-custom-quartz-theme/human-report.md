@@ -3,7 +3,7 @@
 ## Scope
 
 - Source: [`guide.md`](./guide.md)
-- Candidate commit: `25318e6 feat: add external Quartz theme platform`
+- Candidate branch: `main`; base feature commit: `25318e6 feat: add external Quartz theme platform`
 - Scope: external Quartz theme installation/trust, Brutalist UI preview, recovery and accessibility acceptance.
 - Acceptance judgment belongs to the human tester.
 
@@ -35,11 +35,12 @@
   - Next: HAT-P0-002
 
 - [ ] HAT-P0-002 — 本地 `.tgz` 导入、身份和显式信任
-  - Status: IN PROGRESS
-  - Human result: opening Publish Center before installation showed the expected fail-closed message: `Configured theme is not installed or no longer verifies.`
-  - Evidence: [`human-artifacts/HAT-P0-002-preinstall-fail-closed.png`](./human-artifacts/HAT-P0-002-preinstall-fail-closed.png)
-  - Notes: this exposed a HAT fixture issue: `site.yml` activated an untrusted theme before the installation case began. The fixture now starts on Quartz default while retaining the local `.tgz` for import.
-  - Next: reload Obsidian, confirm Publish Center opens on Quartz default, then open settings → Pages Publish → 站点主题 and import the local `.tgz`.
+  - Status: RETEST READY
+  - Human result: two issues found during the installation preconditions.
+  - Evidence: [`preinstall fail-closed`](./human-artifacts/HAT-P0-002-preinstall-fail-closed.png), [`pathless File import failure`](./human-artifacts/HAT-P0-002-pathless-file.png)
+  - Notes: the fixture now starts on Quartz default. The second failure was a product bug: Obsidian 1.13.4 returned a standards-compliant pathless `File`, while the UI required non-standard `File.path`. The fixed candidate reads bounded `.tgz` bytes through `File.arrayBuffer()` and passes them through the existing integrity/copy/smoke pipeline.
+  - Verification: pathless selection + installer regression tests pass; full suite is 675 passed / 8 skipped; Test Vault plugin is byte-identical to the rebuilt release.
+  - Next: reload Obsidian and select the same `.tgz`; the executable-theme trust warning should replace the path error.
 
 - [x] HAT-P0-003 — 真实 Quartz 深度主题构建
   - Status: PASS (automated)
@@ -79,6 +80,7 @@
 ## Follow-ups
 
 - [ ] Record the human result for HAT-P0-002.
+- [ ] Retest HAT-P0-002 with the rebuilt pathless-file candidate.
 - [ ] Record visual and accessibility results for HAT-P1-001/002.
 - [ ] Publish the external theme package before HAT-P1-004.
 
@@ -96,6 +98,7 @@
 - [`human-report.md`](./human-report.md)
 - `test-vault/.obsidian/plugins/pages-publish/{main.js,manifest.json,styles.css}`
 - `test-vault/.obsidian/community-plugins.json`
+- [`human-artifacts/HAT-P0-002-pathless-file.png`](./human-artifacts/HAT-P0-002-pathless-file.png)
 
 ### Key decisions
 
@@ -107,6 +110,7 @@
 ### Verification evidence
 
 - `prepare.sh prepared` checks byte identity between the release and Vault plugin files.
+- `npm run lint && npm test && npm run package` passed after the pathless-file fix: 82 test files, 675 passed / 8 skipped.
 - Prior automated run: [`reports/20260803-185611/summary.md`](./reports/20260803-185611/summary.md).
 
 ### Open questions / risks

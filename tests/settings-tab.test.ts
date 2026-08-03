@@ -96,6 +96,7 @@ vi.mock('obsidian', () => ({
 
 import {
   PagesPublishSettingTab,
+  readLocalThemeSelection,
   trashHiddenSiteConfig,
   reloadSettingsDraft,
   settingsHeaderStatusText,
@@ -105,6 +106,19 @@ import {
 import { openSiteConfigForRepair } from '../src/plugin/site-config-repair-view';
 
 describe('settings custom-domain status check', () => {
+  it('reads a pathless Obsidian file selection as bounded theme archive bytes', async () => {
+    const archive = Uint8Array.of(31, 139, 8, 0);
+
+    await expect(readLocalThemeSelection({
+      name: 'brutalist.tgz',
+      size: archive.byteLength,
+      arrayBuffer: async () => Uint8Array.from(archive).buffer,
+    })).resolves.toEqual({
+      fileName: 'brutalist.tgz',
+      archive,
+    });
+  });
+
   it('opens the site configuration from a settings read-failure recovery action', async () => {
     const leaf = { setViewState: vi.fn(async () => undefined) };
     const revealLeaf = vi.fn(async () => undefined);

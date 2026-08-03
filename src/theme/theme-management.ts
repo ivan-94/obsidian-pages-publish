@@ -103,6 +103,22 @@ export class ThemeManagementService {
     return candidate(result.installed, result.reference);
   }
 
+  async importLocalArchive(
+    fileName: string,
+    archive: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<ThemeCandidate> {
+    const engine = await this.ensureEngine(signal);
+    const result = await this.installer.importLocalArchive(
+      this.vaultRoot,
+      fileName,
+      archive,
+      engine.quartzVersion,
+      signal,
+    );
+    return candidate(result.installed, result.reference);
+  }
+
   async confirmTrust(candidateInput: ThemeCandidate): Promise<void> {
     const engine = await this.ensureEngine();
     const installed = candidateInput.reference.source === 'npm'

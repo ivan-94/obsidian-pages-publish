@@ -30,6 +30,7 @@ import type {
   ThemeManagementService,
   ThemePanelState,
 } from '../theme/theme-management';
+import { MAX_LOCAL_THEME_BYTES } from '../theme/theme-installer';
 import type { ThemeOptionSchema } from '../theme/theme-options-schema';
 import type { JsonValue, SiteThemeReference } from '../theme/theme-contract';
 
@@ -733,14 +734,21 @@ export class PagesPublishSettingTab extends PluginSettingTab {
     localSetting.controlEl.appendChild(fileInput);
     fileInput.addEventListener('change', () => {
       const selected = fileInput.files?.[0];
-      const selectedPath = localDesktopFilePath(selected);
-      if (!selectedPath) {
-        new Notice('无法取得所选文件路径；请使用 Obsidian 桌面端本地文件选择器。');
+      if (!selected) {
+        new Notice('请选择本地 Quartz 主题 .tgz 包。');
         return;
       }
       void this.runThemeOperation(
         '正在导入本地主题',
-        (signal) => this.themeManagement!.importLocal(selectedPath, signal),
+        async (signal) => {
+          const selection = await readLocalThemeSelection(selected);
+          signal.throwIfAborted();
+          return this.themeManagement!.importLocalArchive(
+            selection.fileName,
+            selection.archive,
+            signal,
+          );
+        },
       ).then((candidate) => {
         if (!candidate) return;
         this.pendingThemeCandidate = candidate;
@@ -1433,10 +1441,26 @@ function themeOptionLabel(value: JsonValue): string {
   return JSON.stringify(value);
 }
 
-function localDesktopFilePath(file: File | undefined): string | undefined {
-  if (file === undefined) return undefined;
-  const path = (file as unknown as { path?: unknown }).path;
-  return typeof path === 'string' && path.length > 0 ? path : undefined;
+export interface LocalThemeSelection {
+  name: string;
+  size: number;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+export async function readLocalThemeSelection(
+  file: LocalThemeSelection,
+): Promise<{ fileName: string; archive: Uint8Array }> {
+  if (!file.name.toLowerCase().endsWith('.tgz')) {
+    throw new Error('本地主题必须使用 .tgz 扩展名。');
+  }
+  if (file.size <= 0 || file.size > MAX_LOCAL_THEME_BYTES) {
+    throw new Error(`本地主题大小必须在 1 到 ${MAX_LOCAL_THEME_BYTES} 字节之间。`);
+  }
+  const archive = new Uint8Array(await file.arrayBuffer());
+  if (archive.byteLength !== file.size) {
+    throw new Error('读取到的主题包大小与文件选择器报告不一致。');
+  }
+  return { fileName: file.name, archive };
 }
 
 function customDomainStatusDescription(status: ConfiguredCustomDomainStatus | undefined): string {

@@ -46,6 +46,30 @@ describe('theme installer workflows', () => {
       .resolves.toContain('@pages-publish-theme/brutalist');
   });
 
+  it('imports pathless browser file bytes without requiring a desktop absolute path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pages-theme-installer-'));
+    const vault = await mkdtemp(join(tmpdir(), 'pages-theme-vault-'));
+    roots.push(root, vault);
+    const archive = themePackageArchive();
+    const installer = new ThemeInstaller(
+      new ThemeStore({ rootDirectory: root, smoke: async () => undefined }),
+      new ThemeRegistryClient(async () => {
+        throw new Error('Registry must not be used for a local byte import.');
+      }),
+    );
+
+    const result = await installer.importLocalArchive(
+      vault,
+      'brutalist.tgz',
+      archive,
+      '5.0.0',
+    );
+
+    expect(result.reference.integrity).toBe(sha512Integrity(archive));
+    await expect(readFile(join(vault, ...result.reference.artifact.split('/'))))
+      .resolves.toEqual(Buffer.from(archive));
+  });
+
   it('rejects a symlinked local artifact and symlinked Vault theme directory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pages-theme-installer-'));
     const vault = await mkdtemp(join(tmpdir(), 'pages-theme-vault-'));

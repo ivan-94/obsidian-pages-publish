@@ -13,7 +13,7 @@ import {
   type InstalledTheme,
 } from './theme-store';
 
-const MAX_LOCAL_THEME_BYTES = 16 * 1024 * 1024;
+export const MAX_LOCAL_THEME_BYTES = 16 * 1024 * 1024;
 
 export interface InstalledNpmTheme {
   installed: InstalledTheme;
@@ -86,7 +86,36 @@ export class ThemeInstaller {
       );
     }
     const archive = await readFile(selectedFile);
+    return this.importLocalArchive(
+      vaultRoot,
+      basename(selectedFile),
+      archive,
+      supportedQuartzVersion,
+      signal,
+    );
+  }
+
+  async importLocalArchive(
+    vaultRoot: string,
+    fileName: string,
+    archiveInput: Uint8Array,
+    supportedQuartzVersion: string,
+    signal?: AbortSignal,
+  ): Promise<InstalledLocalTheme> {
     signal?.throwIfAborted();
+    if (!basename(fileName).toLowerCase().endsWith('.tgz')) {
+      throw new ThemeStoreError(
+        'local-theme-artifact-invalid',
+        'Selected local theme must use the .tgz extension.',
+      );
+    }
+    if (archiveInput.byteLength <= 0 || archiveInput.byteLength > MAX_LOCAL_THEME_BYTES) {
+      throw new ThemeStoreError(
+        'local-theme-artifact-invalid',
+        'Selected local theme must be a bounded non-empty .tgz file.',
+      );
+    }
+    const archive = Uint8Array.from(archiveInput);
     const integrity = `sha512-${createHash('sha512').update(archive).digest('base64')}`;
     const artifact = `.publish/themes/theme-${createHash('sha256').update(integrity).digest('hex').slice(0, 20)}.tgz`;
     const target = join(vaultRoot, ...artifact.split('/'));

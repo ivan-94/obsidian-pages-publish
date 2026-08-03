@@ -668,7 +668,8 @@ The proposed page-frame, component, responsive and accessibility design is defin
 - 已检查当前 Quartz 5 固定 engine：原生 theme 支持 typography/lightMode/darkMode，自定义样式入口为 `quartz/styles/custom.scss`。
 - 已检查 Quartz 5 plugin loader：支持 npm、Git 和 local source，并能加载 package components 与 frames；这些能力需要由 Pages Publish adapter 收窄后使用。
 - 已检查 `@quartz-themes/core@1.1.0`：支持完整 Obsidian theme CSS、variation、aspect、Style Settings 和字体，但缺包时会自行调用 npm install，因此不能直接接收未经验证的用户 theme id。
-- `npm run typecheck`、`npm run lint` 与完整测试通过：82 test files，673 passed / 8 environment-gated skipped。
+- `npm run typecheck`、`npm run lint` 与完整测试通过：82 test files，675 passed / 8 environment-gated skipped。
+- Obsidian 本地文件导入读取标准 `File.arrayBuffer()`，不依赖 Electron 私有绝对路径字段；读取前后均执行扩展名和 16 MiB 上限校验，之后继续走同一 integrity、Vault copy 与隔离 smoke 链路。
 - npm 首次信任候选会从持久化安装收据恢复 registry 发布者信息，并明确标注该信息不是信任根；精确 integrity 仍是工件身份。
 - 固定 Quartz 真实测试通过：默认主题与外部 `.tgz` 共 5 tests；外部主题相同 staging 连续两次 files/assets 完全相同。
 - release package 恰好只有 `main.js`、`manifest.json`、`styles.css`，未包含野兽派主题 payload。
