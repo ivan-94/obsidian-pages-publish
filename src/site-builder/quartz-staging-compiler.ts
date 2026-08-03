@@ -24,6 +24,7 @@ import {
   type SiteRoutePlan,
 } from '../routing/route-planner';
 import { quartzRouteForContentPath, quartzSlugRoute } from './quartz-route-bridge';
+import { quartzSectionListingMarkdown } from './quartz-listing';
 
 export interface QuartzRouteManifestArticle {
   sourcePath: string;
@@ -94,10 +95,15 @@ export async function compileQuartzStaging(
   const routesBySource = new Map(
     routePlan.articles.map((article) => [article.sourcePath, article]),
   );
+  const sectionIndexSources = new Set(
+    routePlan.sections.flatMap((section) =>
+      section.sourcePath === undefined ? [] : [section.sourcePath]),
+  );
   const sectionRoutes = new Set(routePlan.sections.map((section) => section.url));
   const contentFiles: Record<string, string> = {};
   const generatedAssets: Record<string, PreviewAsset> = {};
   const routeArticles: QuartzRouteManifestArticle[] = [];
+  const stagingPathsBySource = new Map<string, string>();
   const quartzRouteCounts = new Map<string, number>();
   for (const route of routePlan.articles) {
     const quartzRoute = quartzSlugRoute(route.url);
@@ -112,9 +118,12 @@ export async function compileQuartzStaging(
       ? 'unlisted'
       : snapshot.metadata.visibility.value;
     if (visibility === 'private') continue;
+    const kind = sectionIndexSources.has(sourcePath)
+      ? 'index'
+      : snapshot.metadata.kind.value;
     const defaultStagingPath = stagingPathForRoute(route.url, sectionRoutes);
     const stagingPath = (quartzRouteCounts.get(quartzSlugRoute(route.url)) ?? 0) > 1
-      && snapshot.metadata.kind.value !== 'index'
+      && kind !== 'index'
       ? collisionSafeStagingPath(sourcePath, route.url)
       : defaultStagingPath;
     contentFiles[stagingPath] = compileArticle(
@@ -126,12 +135,13 @@ export async function compileQuartzStaging(
       routePlan,
       generatedAssets,
     );
+    stagingPathsBySource.set(sourcePath, stagingPath);
     routeArticles.push({
       sourcePath,
       title: snapshot.metadata.title.value,
       url: route.url,
       visibility,
-      kind: snapshot.metadata.kind.value,
+      kind,
       quartzRoute: quartzRouteForContentPath(stagingPath),
       ...(snapshot.metadata.date === undefined
         ? {}
@@ -140,6 +150,15 @@ export async function compileQuartzStaging(
         ? {}
         : { order: snapshot.metadata.order.value }),
     });
+  }
+
+  for (const article of routeArticles) {
+    if (article.kind !== 'index') continue;
+    const stagingPath = stagingPathsBySource.get(article.sourcePath);
+    if (stagingPath === undefined) continue;
+    const listing = quartzSectionListingMarkdown(routeArticles, article.url);
+    if (listing.length === 0) continue;
+    contentFiles[stagingPath] = `${contentFiles[stagingPath]?.trimEnd()}\n\n${listing}\n`;
   }
 
   const assetEntries: Array<[string, PreviewAsset]> = Object.entries({

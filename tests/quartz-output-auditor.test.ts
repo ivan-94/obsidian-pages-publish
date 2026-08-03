@@ -24,15 +24,59 @@ describe('Quartz output route bridge and auditor', () => {
     expect(output.assets['/static/icon.png']?.contentType).toBe('image/png');
   });
 
-  it('rejects an unlisted route leaked into Quartz discovery artifacts', () => {
+  it('removes an unlisted route from the Quartz search index', () => {
     const raw = rawOutput();
     raw.files['static/contentIndex.json'] = bytes(
       '{"writing/hidden":{"title":"Hidden"}}',
     );
 
-    expect(() => bridgeAndAuditQuartzOutput(raw, staging())).toThrow(
-      QuartzOutputAuditError,
-    );
+    const output = bridgeAndAuditQuartzOutput(raw, staging());
+
+    expect(output.files['/static/contentIndex.json']).toBe('{}');
+  });
+
+  it('allows an unlisted custom section index only at its own direct route', () => {
+    const base = staging();
+    const input: Readonly<QuartzStagingCompilation> = {
+      ...base,
+      routePlan: {
+        ...base.routePlan,
+        sections: [{
+          directoryPath: 'Notes/Hidden',
+          url: '/writing/hidden/',
+          sourcePath: 'Notes/Hidden.md',
+          generated: false,
+        }],
+      },
+      routeManifest: {
+        ...base.routeManifest,
+        articles: base.routeManifest.articles.map((article) =>
+          article.sourcePath === 'Notes/Hidden.md'
+            ? { ...article, kind: 'index' as const }
+            : article),
+      },
+    };
+
+    const raw = rawOutput({
+      'sitemap.xml': [
+        '<urlset>',
+        '<url><loc>https://example.com/writing/hidden/</loc></url>',
+        '<url><loc>https://example.com/writing/hidden/child/</loc></url>',
+        '</urlset>',
+      ].join(''),
+    });
+    const output = bridgeAndAuditQuartzOutput(raw, input);
+
+    expect(output.files['/sitemap.xml']).not.toContain('/writing/hidden/</loc>');
+    expect(output.files['/sitemap.xml']).toContain('/writing/hidden/child/</loc>');
+  });
+
+  it('does not confuse an unlisted route with a longer public route prefix', () => {
+    const raw = rawOutput({
+      'index.html': '<a href="/writing/hidden-section/child/">Public child</a>',
+    });
+
+    expect(() => bridgeAndAuditQuartzOutput(raw, staging())).not.toThrow();
   });
 
   it('rejects missing planned routes and remote executable resources', () => {

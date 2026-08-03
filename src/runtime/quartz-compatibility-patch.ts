@@ -10,6 +10,16 @@ const serveCallPatch = [
   '        const { default: serveHandler } = await import("serve-handler")',
   serveCallNeedle,
 ].join('\n');
+const folderPageVersion = '0.1.0';
+const folderListNeedle = 'const pageListContent = PageList(listProps);';
+const folderListPatch = 'const pageListContent = null /* pages-publish-controlled-section-list */;';
+
+export const quartzEngineCompatibilityPatches = Object.freeze([
+  'controlled-workspace-sass-resolution',
+  'workspace-cache-import',
+  'lazy-disabled-serve-handler',
+  'route-manifest-controlled-folder-listing',
+]);
 
 export async function applyQuartzEngineCompatibilityPatch(
   engineDirectory: string,
@@ -38,4 +48,58 @@ export async function applyQuartzEngineCompatibilityPatch(
     .replace(`${serveImportNeedle}\n`, '')
     .replace(serveCallNeedle, serveCallPatch);
   await writeFile(handlersPath, patched, { mode: 0o600 });
+}
+
+export async function applyInstalledQuartzCompatibilityPatch(
+  engineDirectory: string,
+): Promise<void> {
+  const packageDirectory = join(
+    engineDirectory,
+    'node_modules',
+    '@quartz-community',
+    'folder-page',
+  );
+  const packageJson = JSON.parse(
+    await readFile(join(packageDirectory, 'package.json'), 'utf8'),
+  ) as { name?: unknown; version?: unknown };
+  if (
+    packageJson.name !== '@quartz-community/folder-page'
+    || packageJson.version !== folderPageVersion
+  ) {
+    throw new Error('The pinned Quartz folder-page patch no longer matches the installed package.');
+  }
+  const entryPath = join(packageDirectory, 'dist', 'index.js');
+  const source = await readFile(entryPath, 'utf8');
+  if (source.includes(folderListPatch) && !source.includes(folderListNeedle)) return;
+  if (source.split(folderListNeedle).length - 1 !== 1 || source.includes(folderListPatch)) {
+    throw new Error('The pinned Quartz folder-page patch no longer matches installed source.');
+  }
+  await writeFile(entryPath, source.replace(folderListNeedle, folderListPatch), { mode: 0o600 });
+}
+
+export async function quartzCompatibilityPatchesMatch(
+  engineDirectory: string,
+): Promise<boolean> {
+  try {
+    const handlers = await readFile(join(engineDirectory, 'quartz', 'cli', 'handlers.js'), 'utf8');
+    const folderPage = await readFile(
+      join(
+        engineDirectory,
+        'node_modules',
+        '@quartz-community',
+        'folder-page',
+        'dist',
+        'index.js',
+      ),
+      'utf8',
+    );
+    return handlers.includes(marker)
+      && handlers.includes(cacheImportPatch)
+      && handlers.includes(serveCallPatch)
+      && !handlers.includes(serveImportNeedle)
+      && folderPage.includes(folderListPatch)
+      && !folderPage.includes(folderListNeedle);
+  } catch {
+    return false;
+  }
 }

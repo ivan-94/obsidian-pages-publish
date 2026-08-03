@@ -344,6 +344,14 @@ function sourceArchive(lockfile: Uint8Array): Uint8Array {
       ].join('\n'),
     },
     { name: 'quartz-source/quartz/bootstrap-cli.mjs', body: 'export {}' },
+    {
+      name: 'quartz-source/node_modules/@quartz-community/folder-page/package.json',
+      body: '{"name":"@quartz-community/folder-page","version":"0.1.0"}',
+    },
+    {
+      name: 'quartz-source/node_modules/@quartz-community/folder-page/dist/index.js',
+      body: 'const pageListContent = PageList(listProps);',
+    },
   ]);
 }
 

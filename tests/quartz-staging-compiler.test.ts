@@ -135,6 +135,39 @@ describe('Quartz immutable staging compiler', () => {
     );
     expect(JSON.stringify(staging.contentFiles)).not.toContain('assets/cover.png');
   });
+
+  it('appends one route-manifest-controlled descendant listing to a custom index', async () => {
+    const vaultRoot = await fixtureVault();
+    await mkdir(join(vaultRoot, 'Notes', 'Guides'), { recursive: true });
+    await writeFile(
+      join(vaultRoot, 'Notes', 'Guides', '_index.md'),
+      '---\npublication:\n  visibility: public\n  title: Guides\n---\n# Guide intro',
+    );
+    await writeFile(
+      join(vaultRoot, 'Notes', 'Guides', 'second.md'),
+      '---\npublication:\n  visibility: public\n  title: Second\n  order: 20\n---\nSecond',
+    );
+    await writeFile(
+      join(vaultRoot, 'Notes', 'Guides', 'first.md'),
+      '---\npublication:\n  visibility: public\n  title: First\n  order: 10\n---\nFirst',
+    );
+    await writeFile(
+      join(vaultRoot, 'Notes', 'Guides', 'latest.md'),
+      '---\npublication:\n  visibility: public\n  title: Latest\n  date: 2026-08-03\n---\nLatest',
+    );
+    await writeFile(
+      join(vaultRoot, 'Notes', 'Guides', 'hidden.md'),
+      '---\npublication:\n  visibility: unlisted\n  title: Hidden\n  order: 1\n---\nHidden',
+    );
+
+    const staging = await compileQuartzStaging(vaultRoot);
+    const index = staging.contentFiles['writing/Guides/index.md'] ?? '';
+
+    expect(index).toContain('# Guide intro');
+    expect(index).not.toContain('Hidden');
+    expect(index.indexOf('[First]')).toBeLessThan(index.indexOf('[Second]'));
+    expect(index.indexOf('[Second]')).toBeLessThan(index.indexOf('[Latest]'));
+  });
 });
 
 async function fixtureVault(): Promise<string> {

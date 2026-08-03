@@ -30,9 +30,38 @@ describe('real Quartz SiteBuilder integration', () => {
       expect(preview.files['/writing/CaseSensitive/index.html']).toContain('Case Quartz');
       expect(preview.files['/writing/casesensitive/index.html']).toContain('Lower Case Quartz');
       expect(preview.files['/writing/guides/index.html']).toContain('Guides index');
+      expect(preview.files['/writing/hidden-section/index.html']).toContain(
+        'Unlisted Section',
+      );
+      expect(preview.files['/writing/hidden-section/child/index.html']).toContain(
+        'Public section child',
+      );
       expect(preview.files['/writing/old-case/index.html']).toContain('/writing/CaseSensitive/');
-      expect(preview.files['/static/contentIndex.json']).not.toContain('writing/hidden');
+      const contentIndex = JSON.parse(
+        preview.files['/static/contentIndex.json'] ?? '{}',
+      ) as Record<string, unknown>;
+      expect(contentIndex).not.toHaveProperty('writing/hidden');
+      expect(contentIndex).not.toHaveProperty('writing/hidden-section/index');
+      expect(contentIndex).toHaveProperty('writing/hidden-section/child');
       expect(JSON.stringify(preview.files)).not.toContain('private-vault-token');
+      const sectionArticle = /<article\b[^>]*>[\s\S]*?<\/article>/u.exec(
+        preview.files['/writing/index.html'] ?? '',
+      )?.[0] ?? '';
+      expect(sectionArticle.indexOf('Case Quartz')).toBeLessThan(
+        sectionArticle.indexOf('Hello Quartz'),
+      );
+      expect(sectionArticle).not.toContain('Hidden Quartz');
+      expect(sectionArticle).not.toContain('Guides index');
+      const homeArticle = /<article\b[^>]*>[\s\S]*?<\/article>/u.exec(
+        preview.files['/index.html'] ?? '',
+      )?.[0] ?? '';
+      expect(homeArticle.indexOf('Case Quartz')).toBeLessThan(
+        homeArticle.indexOf('Lower Case Quartz'),
+      );
+      expect(homeArticle.indexOf('Lower Case Quartz')).toBeLessThan(
+        homeArticle.indexOf('Hello Quartz'),
+      );
+      expect(homeArticle).not.toContain('Unlisted Section');
       expect(Object.keys(preview.files)).toEqual(Object.keys(repeated.files));
       expect(preview.files).toEqual(repeated.files);
       expect(preview.assets).toEqual(repeated.assets);
@@ -51,6 +80,7 @@ async function fixtureVault(): Promise<string> {
   await mkdir(join(root, '.publish'), { recursive: true });
   await mkdir(join(root, 'Notes'), { recursive: true });
   await mkdir(join(root, 'Notes', 'guides'), { recursive: true });
+  await mkdir(join(root, 'Notes', 'hidden-section'), { recursive: true });
   await writeFile(
     join(root, '.publish', 'site.yml'),
     [
@@ -80,6 +110,8 @@ async function fixtureVault(): Promise<string> {
       '  visibility: public',
       '  title: Hello Quartz',
       '  slug: hello',
+      '  order: 20',
+      '  date: 2024-01-01',
       '---',
       '# Hello Quartz',
       '',
@@ -105,15 +137,23 @@ async function fixtureVault(): Promise<string> {
   );
   await writeFile(
     join(root, 'Notes', 'Case.md'),
-    '---\npublication:\n  visibility: public\n  title: Case Quartz\n  slug: CaseSensitive\n  redirects: [/writing/old-case/]\n---\n# Case Quartz',
+    '---\npublication:\n  visibility: public\n  title: Case Quartz\n  slug: CaseSensitive\n  order: 10\n  date: 2026-01-01\n  redirects: [/writing/old-case/]\n---\n# Case Quartz',
   );
   await writeFile(
     join(root, 'Notes', 'CaseLower.md'),
-    '---\npublication:\n  visibility: public\n  title: Lower Case Quartz\n  slug: casesensitive\n---\n# Lower Case Quartz',
+    '---\npublication:\n  visibility: public\n  title: Lower Case Quartz\n  slug: casesensitive\n  date: 2025-01-01\n---\n# Lower Case Quartz',
   );
   await writeFile(
     join(root, 'Notes', 'guides', '_index.md'),
     '---\npublication:\n  visibility: public\n  title: Guides index\n---\n# Guides index',
+  );
+  await writeFile(
+    join(root, 'Notes', 'hidden-section', '_index.md'),
+    '---\npublication:\n  visibility: unlisted\n  title: Unlisted Section\n---\n# Unlisted Section',
+  );
+  await writeFile(
+    join(root, 'Notes', 'hidden-section', 'child.md'),
+    '---\npublication:\n  visibility: public\n  title: Public section child\n---\n# Public section child',
   );
   return root;
 }

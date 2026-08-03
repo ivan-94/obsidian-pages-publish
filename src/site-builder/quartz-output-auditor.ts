@@ -209,20 +209,34 @@ function sanitizeQuartzDiscoveryOutput(
   source: string,
   staging: Readonly<QuartzStagingCompilation>,
 ): string {
+  if (outputPath === '/sitemap.xml') {
+    return redactUnlistedSitemapEntries(source, staging);
+  }
   if (outputPath !== '/static/contentIndex.json') return source;
-  const tokens = staging.routeManifest.articles
-    .filter((article) => article.visibility === 'unlisted')
-    .flatMap((article) => [
-      article.url,
-      article.url.replace(/^\//u, '').replace(/\/$/u, ''),
-      article.sourcePath,
-      article.title,
-    ])
+  const unlisted = staging.routeManifest.articles
+    .filter((article) => article.visibility === 'unlisted');
+  const routeTokens = unlisted
+    .flatMap((article) => [article.url, article.quartzRoute])
+    .filter((token): token is string => token !== undefined)
+    .map(normalizeContentIndexSlug)
+    .filter((token) => token.length >= 2)
+    .sort((left, right) => right.length - left.length);
+  const textTokens = unlisted
+    .flatMap((article) => [article.sourcePath, article.title])
     .filter((token) => token.length >= 2)
     .sort((left, right) => right.length - left.length);
   try {
     const parsed: unknown = JSON.parse(source);
-    return JSON.stringify(redactDiscoveryValue(parsed, tokens));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('Unexpected content index shape.');
+    }
+    const pageEntries = Object.entries(parsed).filter(([slug]) =>
+      !unlisted.some((article) => contentIndexSlugMatchesArticle(slug, article)));
+    return JSON.stringify(redactDiscoveryValue(
+      Object.fromEntries(pageEntries),
+      routeTokens,
+      textTokens,
+    ));
   } catch {
     throw new QuartzOutputAuditError(
       'quartz-output-invalid',
@@ -231,17 +245,98 @@ function sanitizeQuartzDiscoveryOutput(
   }
 }
 
-function redactDiscoveryValue(value: unknown, tokens: readonly string[]): unknown {
+function contentIndexSlugMatchesArticle(
+  slug: string,
+  article: QuartzStagingCompilation['routeManifest']['articles'][number],
+): boolean {
+  const normalizedSlug = normalizeContentIndexSlug(slug);
+  const candidates = [article.url, article.quartzRoute]
+    .filter((route): route is string => route !== undefined)
+    .map(normalizeContentIndexSlug);
+  return candidates.some((candidate) =>
+    normalizedSlug === candidate
+    || (article.kind === 'index' && normalizedSlug === `${candidate}/index`));
+}
+
+function normalizeContentIndexSlug(route: string): string {
+  return route.replace(/^\/+|\/+$/gu, '');
+}
+
+function redactUnlistedSitemapEntries(
+  source: string,
+  staging: Readonly<QuartzStagingCompilation>,
+): string {
+  const routes = new Set(
+    staging.routeManifest.articles
+      .filter((article) => article.visibility === 'unlisted')
+      .map((article) => normalizeRoutePath(article.url)),
+  );
+  return source.replace(/<url>[^]*?<\/url>/gu, (entry) => {
+    const location = /<loc>([^<]+)<\/loc>/u.exec(entry)?.[1];
+    if (location === undefined) return entry;
+    try {
+      const pathname = new URL(decodeXmlText(location)).pathname;
+      return routes.has(normalizeRoutePath(decodeURIComponent(pathname))) ? '' : entry;
+    } catch {
+      throw new QuartzOutputAuditError(
+        'quartz-output-invalid',
+        'Quartz emitted an invalid sitemap location.',
+      );
+    }
+  });
+}
+
+function normalizeRoutePath(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return normalized === '/' ? normalized : normalized.replace(/\/+$/u, '');
+}
+
+function decodeXmlText(source: string): string {
+  return source
+    .replaceAll('&amp;', '&')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>');
+}
+
+function redactDiscoveryValue(
+  value: unknown,
+  routeTokens: readonly string[],
+  textTokens: readonly string[],
+): unknown {
   if (typeof value === 'string') {
-    return tokens.reduce((output, token) => output.replaceAll(token, ''), value);
+    const withoutRoutes = routeTokens.reduce(redactRouteToken, value);
+    return textTokens.reduce((output, token) => output.replaceAll(token, ''), withoutRoutes);
   }
-  if (Array.isArray(value)) return value.map((entry) => redactDiscoveryValue(entry, tokens));
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactDiscoveryValue(entry, routeTokens, textTokens));
+  }
   if (typeof value === 'object' && value !== null) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, redactDiscoveryValue(entry, tokens)]),
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactDiscoveryValue(entry, routeTokens, textTokens),
+      ]),
     );
   }
   return value;
+}
+
+function redactRouteToken(source: string, token: string): string {
+  let output = '';
+  let cursor = 0;
+  let offset = source.indexOf(token);
+  while (offset >= 0) {
+    const prefix = source.slice(0, offset);
+    const suffix = source.slice(offset + token.length);
+    if (routeTokenStartsHere(prefix) && routeTokenEndsHere(suffix)) {
+      output += source.slice(cursor, offset);
+      cursor = offset + token.length;
+    }
+    offset = source.indexOf(token, offset + token.length);
+  }
+  return output + source.slice(cursor);
 }
 
 interface RouteBridge {
@@ -365,21 +460,50 @@ function auditUnlistedDiscovery(
   );
   for (const article of staging.routeManifest.articles) {
     if (article.visibility !== 'unlisted') continue;
-    const tokens = [
-      article.url.replace(/^\//u, '').replace(/\/$/u, ''),
-      article.title,
-      article.sourcePath,
-    ].filter((token) => token.length >= 2);
+    const routeToken = article.url.replace(/^\//u, '').replace(/\/$/u, '');
+    const textTokens = [article.title, article.sourcePath]
+      .filter((token) => token.length >= 2);
     for (const path of discoveryPaths) {
-      const leakedToken = tokens.find((token) => files[path]?.includes(token));
+      if (path === routeOutputPath(article.url)) continue;
+      const source = files[path] ?? '';
+      const leakedToken = containsRouteToken(source, routeToken)
+        ? routeToken
+        : textTokens.find((token) => source.includes(token));
       if (leakedToken !== undefined) {
         throw new QuartzOutputAuditError(
           'quartz-discovery-leak',
-          `The unlisted route ${article.url} leaked into Quartz discovery output ${path}.`,
+          `The unlisted route ${article.url} leaked into Quartz discovery output ${path} through ${JSON.stringify(leakedToken)}.`,
         );
       }
     }
   }
+}
+
+function containsRouteToken(source: string, token: string): boolean {
+  if (token.length < 2) return false;
+  let offset = source.indexOf(token);
+  while (offset >= 0) {
+    const prefix = source.slice(0, offset);
+    const suffix = source.slice(offset + token.length);
+    if (routeTokenStartsHere(prefix) && routeTokenEndsHere(suffix)) return true;
+    offset = source.indexOf(token, offset + token.length);
+  }
+  return false;
+}
+
+function routeTokenStartsHere(prefix: string): boolean {
+  if (prefix.length === 0) return true;
+  return /[\s"'<>#?/.=:(]/u.test(prefix.at(-1) ?? '');
+}
+
+function routeTokenEndsHere(suffix: string): boolean {
+  if (suffix.length === 0) return true;
+  if (suffix[0] !== '/') return isRouteDelimiter(suffix[0]);
+  return suffix.length === 1 || isRouteDelimiter(suffix[1]);
+}
+
+function isRouteDelimiter(character: string | undefined): boolean {
+  return character === undefined || /[\s"'<>#?]/u.test(character);
 }
 
 function redirectDocument(target: string): string {

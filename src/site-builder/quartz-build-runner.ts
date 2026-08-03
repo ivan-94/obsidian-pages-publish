@@ -16,6 +16,11 @@ import type { ReadyQuartzEngine } from '../runtime/quartz-engine-store';
 import { siteCanonicalOrigin } from '../site/discovery';
 import { rethrowAbort } from '../runtime/quartz-environment-error';
 import { createControlledQuartzConfig } from './quartz-config';
+import {
+  markdownRouteLink,
+  quartzHomeEntries,
+  quartzSectionListingMarkdown,
+} from './quartz-listing';
 import type { QuartzStagingCompilation } from './quartz-staging-compiler';
 
 const execFileAsync = promisify(execFile);
@@ -201,14 +206,14 @@ function generatedSystemPages(
     (article) => article.visibility === 'public',
   );
   if (!occupiedRoutes.has('/')) {
-    const homeEntries = staging.config.site.homeLayout === 'latest'
-      ? publicArticles
-        .filter((article) => article.kind === 'article')
-        .sort(compareLatestArticle)
-        .map((article) => ({ title: article.title, url: article.url }))
-      : homeSectionEntries(staging, publicArticles);
+    const homeEntries = quartzHomeEntries(
+      staging.config.site.homeLayout,
+      staging.config.contentRoots,
+      staging.routePlan.sections,
+      publicArticles,
+    );
     const links = homeEntries
-      .map((entry) => `- [${entry.title}](${entry.url})`)
+      .map((entry) => markdownRouteLink(entry.title, entry.url))
       .join('\n');
     files['index.md'] = systemPage(
       staging.config.site.name,
@@ -238,11 +243,7 @@ function generatedSystemPages(
   }
   for (const section of staging.routePlan.sections) {
     if (section.url === '/' || section.sourcePath || occupiedRoutes.has(section.url)) continue;
-    const members = publicArticles
-      .filter((article) => article.url !== section.url && article.url.startsWith(section.url))
-      .sort(compareSectionArticle)
-      .map((article) => `- [${article.title}](${article.url})`)
-      .join('\n');
+    const members = quartzSectionListingMarkdown(publicArticles, section.url);
     const sectionPath = section.url.replace(/^\//u, '').replace(/\/$/u, '');
     files[`${sectionPath}/index.md`] = systemPage(
       section.directoryPath.split('/').at(-1) ?? staging.config.site.name,
@@ -251,62 +252,6 @@ function generatedSystemPages(
     );
   }
   return files;
-}
-
-type ManifestArticle = QuartzStagingCompilation['routeManifest']['articles'][number];
-
-function homeSectionEntries(
-  staging: Readonly<QuartzStagingCompilation>,
-  publicArticles: readonly ManifestArticle[],
-): Array<{ title: string; url: string }> {
-  const entries: Array<{ title: string; url: string }> = [];
-  for (const root of staging.config.contentRoots) {
-    const rootSection = staging.routePlan.sections.find(
-      (section) => section.directoryPath === root.path,
-    );
-    const directChildren = staging.routePlan.sections.filter((section) => {
-      const relative = posix.relative(root.path, section.directoryPath);
-      return relative !== ''
-        && relative !== '..'
-        && !relative.startsWith('../')
-        && !relative.includes('/');
-    });
-    for (const section of directChildren.length > 0
-      ? directChildren
-      : rootSection ? [rootSection] : []) {
-      if (!publicArticles.some((article) => article.url.startsWith(section.url))) continue;
-      const customIndex = publicArticles.find((article) => article.url === section.url);
-      entries.push({
-        title: customIndex?.title
-          ?? section.directoryPath.split('/').at(-1)
-          ?? section.directoryPath,
-        url: section.url,
-      });
-    }
-  }
-  return entries.sort((left, right) =>
-    left.title.localeCompare(right.title) || left.url.localeCompare(right.url));
-}
-
-function compareLatestArticle(left: ManifestArticle, right: ManifestArticle): number {
-  return dateSortValue(right.date) - dateSortValue(left.date)
-    || left.title.localeCompare(right.title)
-    || left.sourcePath.localeCompare(right.sourcePath);
-}
-
-function compareSectionArticle(left: ManifestArticle, right: ManifestArticle): number {
-  if (left.order !== undefined || right.order !== undefined) {
-    if (left.order === undefined) return 1;
-    if (right.order === undefined) return -1;
-    if (left.order !== right.order) return left.order - right.order;
-  }
-  return compareLatestArticle(left, right);
-}
-
-function dateSortValue(value: string | undefined): number {
-  if (!value) return Number.NEGATIVE_INFINITY;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
 function systemPage(title: string, permalink: string, body: string): string {

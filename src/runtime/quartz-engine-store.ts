@@ -18,7 +18,12 @@ import {
   type QuartzEngineManifest,
 } from './quartz-engine-manifest';
 import { extractTrustedTarGz } from './safe-tar-extractor';
-import { applyQuartzEngineCompatibilityPatch } from './quartz-compatibility-patch';
+import {
+  applyInstalledQuartzCompatibilityPatch,
+  applyQuartzEngineCompatibilityPatch,
+  quartzCompatibilityPatchesMatch,
+  quartzEngineCompatibilityPatches,
+} from './quartz-compatibility-patch';
 import {
   errorCode,
   QuartzEnvironmentError,
@@ -226,6 +231,7 @@ export class QuartzEngineStore {
           lockfileSha256: manifest.lockfileSha256,
           signal,
         });
+        await applyInstalledQuartzCompatibilityPatch(temporaryDirectory);
         await pruneDisabledQuartzPackages(temporaryDirectory);
         await writeDependencyInventory(temporaryDirectory, manifest);
         signal?.throwIfAborted();
@@ -460,6 +466,7 @@ async function writeDependencyInventory(
       lockfileSha256: manifest.lockfileSha256.toLowerCase(),
       packages,
       securityDispositions: quartzEngineSecurityDispositions,
+      compatibilityPatches: quartzEngineCompatibilityPatches,
     }, undefined, 2)}\n`,
     { flag: 'wx', mode: 0o600 },
   );
@@ -478,6 +485,7 @@ async function installationMatches(
     await access(join(directory, 'quartz', 'bootstrap-cli.mjs'));
     await access(join(directory, '.pages-publish-dependencies.json'));
     return await disabledQuartzPackagesAreAbsent(directory)
+      && await quartzCompatibilityPatchesMatch(directory)
       && record.engineVersion === expected.engineVersion
       && record.quartzVersion === expected.quartzVersion
       && record.platform === expected.platform

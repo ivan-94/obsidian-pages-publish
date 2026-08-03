@@ -2,7 +2,11 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { applyQuartzEngineCompatibilityPatch } from '../src/runtime/quartz-compatibility-patch';
+import {
+  applyInstalledQuartzCompatibilityPatch,
+  applyQuartzEngineCompatibilityPatch,
+  quartzCompatibilityPatchesMatch,
+} from '../src/runtime/quartz-compatibility-patch';
 
 describe('Quartz engine compatibility patch', () => {
   it('confines both Sass resolvers to the controlled workspace node_modules', async () => {
@@ -44,5 +48,67 @@ describe('Quartz engine compatibility patch', () => {
     await expect(applyQuartzEngineCompatibilityPatch(directory)).rejects.toThrow(
       'compatibility patch',
     );
+  });
+
+  it('removes the duplicate FolderPage listing from the pinned installed plugin', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pages-quartz-folder-patch-'));
+    const packageDirectory = join(
+      directory,
+      'node_modules',
+      '@quartz-community',
+      'folder-page',
+    );
+    await mkdir(join(packageDirectory, 'dist'), { recursive: true });
+    await writeFile(
+      join(packageDirectory, 'package.json'),
+      '{"name":"@quartz-community/folder-page","version":"0.1.0"}',
+    );
+    await writeFile(
+      join(packageDirectory, 'dist', 'index.js'),
+      'before\nconst pageListContent = PageList(listProps);\nafter',
+    );
+
+    await applyInstalledQuartzCompatibilityPatch(directory);
+
+    const patched = await readFile(join(packageDirectory, 'dist', 'index.js'), 'utf8');
+    expect(patched).toContain('pages-publish-controlled-section-list');
+    expect(patched).not.toContain('PageList(listProps)');
+  });
+
+  it('verifies both source and installed compatibility patches before cache reuse', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pages-quartz-all-patches-'));
+    await mkdir(join(directory, 'quartz', 'cli'), { recursive: true });
+    await writeFile(
+      join(directory, 'quartz', 'cli', 'handlers.js'),
+      [
+        'import serveHandler from "serve-handler"',
+        'cssImports: true,',
+        'cssImports: true,',
+        'await import(`../../${cacheFile}?update=${randomUUID()}`)',
+        '        await serveHandler(req, res, {',
+      ].join('\n'),
+    );
+    const packageDirectory = join(
+      directory,
+      'node_modules',
+      '@quartz-community',
+      'folder-page',
+    );
+    await mkdir(join(packageDirectory, 'dist'), { recursive: true });
+    await writeFile(
+      join(packageDirectory, 'package.json'),
+      '{"name":"@quartz-community/folder-page","version":"0.1.0"}',
+    );
+    await writeFile(
+      join(packageDirectory, 'dist', 'index.js'),
+      'const pageListContent = PageList(listProps);',
+    );
+
+    await applyQuartzEngineCompatibilityPatch(directory);
+    await applyInstalledQuartzCompatibilityPatch(directory);
+
+    await expect(quartzCompatibilityPatchesMatch(directory)).resolves.toBe(true);
+    await writeFile(join(packageDirectory, 'dist', 'index.js'), 'tampered');
+    await expect(quartzCompatibilityPatchesMatch(directory)).resolves.toBe(false);
   });
 });
