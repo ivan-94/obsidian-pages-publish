@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -15,11 +15,17 @@ import type { LockedNpmInstallRequest } from '../src/runtime/npm-installer';
 describe('Quartz engine store', () => {
   it('installs, smoke-checks, and atomically activates an exact engine', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-store-'));
-    const lockfile = Buffer.from('{"lockfileVersion":3}');
+    const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
     const archive = sourceArchive(lockfile);
     const manifest = engineManifest(archive, lockfile, 'pages-publish-quartz-5.0.0.1');
     const installDependencies = vi.fn(async ({ sourceDirectory }: LockedNpmInstallRequest) => {
-      await mkdir(join(sourceDirectory, 'node_modules'), { recursive: true });
+      await Promise.all([
+        mkdir(join(sourceDirectory, 'node_modules', 'sharp'), { recursive: true }),
+        mkdir(join(sourceDirectory, 'node_modules', 'serve-handler'), { recursive: true }),
+        mkdir(join(sourceDirectory, 'node_modules', '@img', 'sharp-libvips-test'), {
+          recursive: true,
+        }),
+      ]);
     });
     const smoke = vi.fn(async ({ engineDirectory }: QuartzEngineSmokeRequest) => {
       await expect(readFile(join(engineDirectory, 'package.json'), 'utf8')).resolves.toContain(
@@ -40,6 +46,12 @@ describe('Quartz engine store', () => {
     expect(runtime.usingFallback).toBe(false);
     expect(installDependencies).toHaveBeenCalledOnce();
     expect(smoke).toHaveBeenCalledOnce();
+    await expect(
+      access(join(runtime.engineDirectory, 'node_modules', 'sharp')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(join(runtime.engineDirectory, '.pages-publish-dependencies.json'), 'utf8'),
+    ).resolves.toContain('"securityDispositions"');
     const active = JSON.parse(
       await readFile(join(rootDirectory, 'active-darwin-arm64.json'), 'utf8'),
     ) as { engineVersion: string };
@@ -48,7 +60,7 @@ describe('Quartz engine store', () => {
 
   it('reuses the exact verified installation without network access', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-cache-'));
-    const lockfile = Buffer.from('{"lockfileVersion":3}');
+    const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
     const archive = sourceArchive(lockfile);
     const manifest = engineManifest(archive, lockfile, 'pages-publish-quartz-5.0.0.2');
     const first = new QuartzEngineStore({
@@ -75,7 +87,7 @@ describe('Quartz engine store', () => {
 
   it('keeps and returns the last verified engine when an update fails', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-fallback-'));
-    const oldLockfile = Buffer.from('{"lockfileVersion":3,"old":true}');
+    const oldLockfile = Buffer.from('{"lockfileVersion":3,"packages":{},"old":true}');
     const oldArchive = sourceArchive(oldLockfile);
     const oldManifest = engineManifest(
       oldArchive,
@@ -89,7 +101,7 @@ describe('Quartz engine store', () => {
       smoke: async () => undefined,
     });
     await store.ensureReady(oldManifest, runtimeTools());
-    const newLockfile = Buffer.from('{"lockfileVersion":3,"new":true}');
+    const newLockfile = Buffer.from('{"lockfileVersion":3,"packages":{},"new":true}');
     const newArchive = sourceArchive(newLockfile);
     const newManifest = engineManifest(
       newArchive,
@@ -113,6 +125,84 @@ describe('Quartz engine store', () => {
       await readFile(join(rootDirectory, 'active-darwin-arm64.json'), 'utf8'),
     ) as { engineVersion: string };
     expect(active.engineVersion).toBe(oldManifest.engineVersion);
+  });
+
+  it('forces a verified engine reinstall during Repair', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-repair-'));
+    const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
+    const archive = sourceArchive(lockfile);
+    const manifest = engineManifest(archive, lockfile, 'pages-publish-quartz-5.0.0.5');
+    const download = vi.fn(async () => archive);
+    const installDependencies = vi.fn(async () => undefined);
+    const store = new QuartzEngineStore({
+      rootDirectory,
+      download,
+      installDependencies,
+      smoke: async () => undefined,
+    });
+
+    await store.ensureReady(manifest, runtimeTools());
+    await store.repair(manifest, runtimeTools());
+
+    expect(download).toHaveBeenCalledTimes(2);
+    expect(installDependencies).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      label: 'download',
+      expectedCode: 'quartz-engine-download-failed',
+      dependencies: { download: async () => { throw new Error('offline'); } },
+    },
+    {
+      label: 'integrity',
+      expectedCode: 'quartz-engine-integrity-failed',
+      dependencies: { download: async () => new Uint8Array([1, 2, 3]) },
+    },
+    {
+      label: 'install',
+      expectedCode: 'quartz-engine-install-failed',
+      dependencies: { installDependencies: async () => { throw new Error('npm failed'); } },
+    },
+    {
+      label: 'smoke',
+      expectedCode: 'quartz-engine-smoke-failed',
+      dependencies: { smoke: async () => { throw new Error('smoke failed'); } },
+    },
+  ])('reports a stable $label failure code', async ({ expectedCode, dependencies }) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-errors-'));
+    const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
+    const archive = sourceArchive(lockfile);
+    const manifest = engineManifest(archive, lockfile, 'pages-publish-quartz-5.0.0.6');
+    const store = new QuartzEngineStore({
+      rootDirectory,
+      download: async () => archive,
+      installDependencies: async () => undefined,
+      smoke: async () => undefined,
+      ...dependencies,
+    });
+
+    await expect(store.ensureReady(manifest, runtimeTools())).rejects.toMatchObject({
+      code: expectedCode,
+    });
+  });
+
+  it('rejects an incompatible runtime with a stable error code', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-runtime-'));
+    const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
+    const archive = sourceArchive(lockfile);
+    const manifest = engineManifest(archive, lockfile, 'pages-publish-quartz-5.0.0.7');
+    const store = new QuartzEngineStore({
+      rootDirectory,
+      download: async () => archive,
+      installDependencies: async () => undefined,
+      smoke: async () => undefined,
+    });
+
+    await expect(store.ensureReady(manifest, {
+      ...runtimeTools(),
+      nodeVersion: '20.19.0',
+    })).rejects.toMatchObject({ code: 'node-runtime-incompatible' });
   });
 });
 
@@ -152,9 +242,11 @@ function sourceArchive(lockfile: Uint8Array): Uint8Array {
     {
       name: 'quartz-source/quartz/cli/handlers.js',
       body: [
+        'import serveHandler from "serve-handler"',
         'sassPlugin({ cssImports: true, })',
         'sassPlugin({ cssImports: true, })',
         'await import(`../../${cacheFile}?update=${randomUUID()}`)',
+        '        await serveHandler(req, res, {',
       ].join('\n'),
     },
     { name: 'quartz-source/quartz/bootstrap-cli.mjs', body: 'export {}' },

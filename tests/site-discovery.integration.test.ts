@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { prepareLocalPreviewFromDirectory } from '../src/core/preview';
+import { prepareLocalPreviewFromDirectory } from './support/legacy-preview';
 
 describe('public site discovery output', () => {
   const vaults: string[] = [];

@@ -34,6 +34,75 @@ describe('Quartz site builder', () => {
     expect(preview.files['/writing/hello/index.html']).toContain('Quartz article');
     expect(preview.assets['/static/icon.png']).toBeDefined();
   });
+
+  it('serializes builds for the same Vault-facing builder instance', async () => {
+    const vaultRoot = await fixtureVault();
+    const engine = readyEngine();
+    let releaseFirst!: () => void;
+    let enteredFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve;
+    });
+    let calls = 0;
+    let active = 0;
+    let maximumActive = 0;
+    const builder = new QuartzSiteBuilder({
+      environment: { ensureReady: async () => engine },
+      runner: {
+        run: async (_engine, staging): Promise<QuartzRawBuildOutput> => {
+          calls += 1;
+          active += 1;
+          maximumActive = Math.max(maximumActive, active);
+          if (calls === 1) {
+            enteredFirst();
+            await firstGate;
+          }
+          active -= 1;
+          return {
+            files: rawFiles(),
+            sourceDigest: staging.sourceDigest,
+            engineVersion: engine.engineVersion,
+          };
+        },
+      },
+    });
+
+    const first = builder.build({ vaultRoot, renderMode: 'local' });
+    await firstEntered;
+    const second = builder.build({ vaultRoot, renderMode: 'published' });
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(calls).toBe(2);
+    expect(maximumActive).toBe(1);
+  });
+
+  it('honors cancellation before staging or Quartz execution', async () => {
+    const vaultRoot = await fixtureVault();
+    const controller = new AbortController();
+    controller.abort();
+    let runs = 0;
+    const builder = new QuartzSiteBuilder({
+      environment: { ensureReady: async () => readyEngine() },
+      runner: {
+        run: async (): Promise<QuartzRawBuildOutput> => {
+          runs += 1;
+          throw new Error('must not run');
+        },
+      },
+    });
+
+    await expect(builder.build({
+      vaultRoot,
+      renderMode: 'local',
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(runs).toBe(0);
+  });
 });
 
 async function fixtureVault(): Promise<string> {

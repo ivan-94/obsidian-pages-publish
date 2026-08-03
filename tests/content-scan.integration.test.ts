@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { scanSiteFromDirectory } from '../src/content/site-scanner';
-import { prepareLocalPreviewFromDirectory } from '../src/core/preview';
+import { prepareLocalPreviewFromDirectory } from './support/legacy-preview';
 import { fixtureWebpDecoder, pngChunk, validPng } from './image-fixtures';
 
 describe('site content scanner', () => {

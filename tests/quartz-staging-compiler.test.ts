@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { compileQuartzStaging } from '../src/site-builder/quartz-staging-compiler';
+import { validPng } from './image-fixtures';
 
 describe('Quartz immutable staging compiler', () => {
   it('exposes only selected content with controlled frontmatter and exact routes', async () => {
@@ -23,8 +24,20 @@ describe('Quartz immutable staging compiler', () => {
     expect(JSON.stringify(staging)).not.toContain('Private secret');
     expect(JSON.stringify(staging)).not.toContain('private-body-token');
     expect(staging.routeManifest.articles).toEqual([
-      { sourcePath: 'Notes/Public.md', url: '/writing/hello/', visibility: 'public' },
-      { sourcePath: 'Notes/Unlisted.md', url: '/writing/hidden/', visibility: 'unlisted' },
+      expect.objectContaining({
+        sourcePath: 'Notes/Public.md',
+        title: 'Public title',
+        url: '/writing/hello/',
+        visibility: 'public',
+        kind: 'article',
+      }),
+      expect.objectContaining({
+        sourcePath: 'Notes/Unlisted.md',
+        title: 'Unlisted title',
+        url: '/writing/hidden/',
+        visibility: 'unlisted',
+        kind: 'article',
+      }),
     ]);
     expect(Object.isFrozen(staging)).toBe(true);
   });
@@ -37,6 +50,90 @@ describe('Quartz immutable staging compiler', () => {
 
     expect(JSON.stringify(staging)).not.toContain('vault-only-token');
     expect(Object.keys(staging.assetFiles)).toEqual([]);
+  });
+
+  it('sanitizes comments and HTML, expands only discoverable embeds, and emits safe Mermaid assets', async () => {
+    const vaultRoot = await fixtureVault();
+    await writeFile(
+      join(vaultRoot, 'Notes', 'Embedded.md'),
+      [
+        '---',
+        'publication:',
+        '  visibility: public',
+        '  title: Public embedded title',
+        '  slug: embedded',
+        '---',
+        'public-embedded-body-token',
+        '',
+      ].join('\n'),
+    );
+    const publicPath = join(vaultRoot, 'Notes', 'Public.md');
+    await writeFile(
+      publicPath,
+      `${await readFile(publicPath, 'utf8')}\n%%comment-canary%%\n<iframe src="https://attacker.invalid">raw-active-token</iframe>\n![[Embedded]]\n![[Unlisted]]\n\`\`\`mermaid\ngraph TD\n  A --> B\n\`\`\`\n`,
+    );
+
+    const staging = await compileQuartzStaging(vaultRoot);
+    const publicSource = staging.contentFiles['writing/hello.md'] ?? '';
+
+    expect(publicSource).not.toContain('comment-canary');
+    expect(publicSource).not.toContain('<iframe');
+    expect(publicSource).toContain('public-embedded-body-token');
+    expect(publicSource).not.toContain('Direct-link content.');
+    expect(publicSource).toContain('![Mermaid diagram](/assets/pages-publish/mermaid-');
+    expect(Object.entries(staging.assetFiles)).toEqual([
+      expect.arrayContaining([
+        expect.stringMatching(/^assets\/pages-publish\/mermaid-[a-f0-9]{64}\.svg$/u),
+        expect.objectContaining({ contentType: 'image/svg+xml' }),
+      ]),
+    ]);
+  });
+
+  it('stages the focused private article as local-only unlisted without exposing it from public notes', async () => {
+    const vaultRoot = await fixtureVault();
+
+    const staging = await compileQuartzStaging(vaultRoot, {
+      previewSourcePath: 'Notes/Private.md',
+    });
+
+    expect(staging.contentFiles['writing/private-secret.md']).toContain('unlisted: true');
+    expect(staging.contentFiles['writing/private-secret.md']).toContain('private-body-token');
+    expect(staging.contentFiles['writing/hello.md']).not.toContain('/writing/private-secret/');
+    expect(staging.routeManifest.articles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourcePath: 'Notes/Private.md',
+        title: 'Private secret',
+        url: '/writing/private-secret/',
+        visibility: 'unlisted',
+        kind: 'article',
+      }),
+    ]));
+  });
+
+  it('maps publication.cover only to a verified hashed staging asset', async () => {
+    const vaultRoot = await fixtureVault();
+    await mkdir(join(vaultRoot, 'assets'), { recursive: true });
+    await writeFile(
+      join(vaultRoot, 'assets', 'cover.png'),
+      validPng,
+    );
+    const publicPath = join(vaultRoot, 'Notes', 'Public.md');
+    await writeFile(
+      publicPath,
+      (await readFile(publicPath, 'utf8')).replace(
+        '  slug: hello',
+        '  slug: hello\n  cover: assets/cover.png',
+      ),
+    );
+
+    const staging = await compileQuartzStaging(vaultRoot);
+    const [assetPath] = Object.keys(staging.assetFiles);
+
+    expect(assetPath).toMatch(/^assets\/[a-f0-9]{64}\.png$/u);
+    expect(staging.contentFiles['writing/hello.md']).toContain(
+      `cover: /${assetPath}`,
+    );
+    expect(JSON.stringify(staging.contentFiles)).not.toContain('assets/cover.png');
   });
 });
 

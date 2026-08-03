@@ -43,6 +43,7 @@ export interface SiteBuildRequest {
   webpDecoder?: WebpDecoderBoundary;
   /** Local article preview may stage one private note as unlisted without publishing it. */
   focusSourcePath?: string;
+  signal?: AbortSignal;
 }
 
 /**

@@ -34,6 +34,8 @@ export interface ManagedNodeRuntimeDependencies {
   rootDirectory: string;
   download: (url: string, signal?: AbortSignal) => Promise<Uint8Array>;
   verify?: (request: ManagedNodeVerificationRequest) => Promise<void>;
+  /** Test/update-channel trust boundary; production uses the exact built-in manifest. */
+  trustManifest?: (manifest: Readonly<ManagedNodeManifest>) => boolean;
 }
 
 export function builtinManagedNodeManifest(
@@ -61,7 +63,28 @@ export class ManagedNodeRuntimeStore {
     signal?: AbortSignal,
   ): Promise<QuartzEngineRuntimeTools> {
     if (this.activeOperation) return this.activeOperation;
-    const operation = this.ensureReadyExclusive(inputManifest, signal);
+    return this.start(inputManifest, false, signal);
+  }
+
+  repair(
+    inputManifest: Readonly<ManagedNodeManifest>,
+    signal?: AbortSignal,
+  ): Promise<QuartzEngineRuntimeTools> {
+    const active = this.activeOperation;
+    if (active) {
+      return active
+        .catch(() => undefined)
+        .then(() => this.repair(inputManifest, signal));
+    }
+    return this.start(inputManifest, true, signal);
+  }
+
+  private start(
+    inputManifest: Readonly<ManagedNodeManifest>,
+    force: boolean,
+    signal?: AbortSignal,
+  ): Promise<QuartzEngineRuntimeTools> {
+    const operation = this.ensureReadyExclusive(inputManifest, force, signal);
     this.activeOperation = operation;
     void operation.finally(() => {
       if (this.activeOperation === operation) this.activeOperation = undefined;
@@ -71,9 +94,13 @@ export class ManagedNodeRuntimeStore {
 
   private async ensureReadyExclusive(
     inputManifest: Readonly<ManagedNodeManifest>,
+    force: boolean,
     signal?: AbortSignal,
   ): Promise<QuartzEngineRuntimeTools> {
-    const manifest = validateManifest(inputManifest);
+    const manifest = validateManifest(
+      inputManifest,
+      this.dependencies.trustManifest,
+    );
     const platformDirectory = join(
       this.dependencies.rootDirectory,
       'runtimes',
@@ -81,7 +108,7 @@ export class ManagedNodeRuntimeStore {
     );
     const runtimeDirectory = join(platformDirectory, `node-${manifest.version}`);
     const tools = runtimeTools(runtimeDirectory, manifest);
-    if (await runtimeMatches(runtimeDirectory, manifest)) return tools;
+    if (!force && await runtimeMatches(runtimeDirectory, manifest)) return tools;
 
     await mkdir(platformDirectory, { recursive: true });
     const temporaryDirectory = await mkdtemp(join(platformDirectory, '.install-'));
@@ -122,13 +149,19 @@ export class ManagedNodeRuntimeStore {
   }
 }
 
-function validateManifest(manifest: Readonly<ManagedNodeManifest>): Readonly<ManagedNodeManifest> {
+function validateManifest(
+  manifest: Readonly<ManagedNodeManifest>,
+  trustManifest?: (manifest: Readonly<ManagedNodeManifest>) => boolean,
+): Readonly<ManagedNodeManifest> {
   const expected = builtinManagedNodeManifest(manifest.platform);
   if (
-    manifest.version !== expected.version
-    || manifest.npmVersion !== expected.npmVersion
-    || manifest.sourceUrl !== expected.sourceUrl
-    || !/^[a-f0-9]{64}$/u.test(manifest.sourceSha256)
+    !/^[a-f0-9]{64}$/u.test(manifest.sourceSha256)
+    || (trustManifest === undefined
+      ? manifest.version !== expected.version
+        || manifest.npmVersion !== expected.npmVersion
+        || manifest.sourceUrl !== expected.sourceUrl
+        || manifest.sourceSha256 !== expected.sourceSha256
+      : !trustManifest(manifest))
   ) {
     throw new Error('The managed Node runtime manifest is not trusted.');
   }
@@ -151,6 +184,7 @@ function runtimeTools(
       'npm-cli.js',
     ),
     npmVersion: manifest.npmVersion,
+    source: 'managed',
   };
 }
 

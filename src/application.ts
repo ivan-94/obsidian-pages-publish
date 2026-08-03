@@ -25,10 +25,7 @@ import {
   type EditableSiteConfig,
   type SiteConfigV1,
 } from './config/site-config';
-import {
-  legacySiteBuilder,
-  type LocalPreview,
-} from './core/preview';
+import type { LocalPreview } from './core/preview';
 import type { SiteBuilder } from './site-builder/site-builder';
 import {
   LocalPreviewServer,
@@ -78,6 +75,11 @@ import {
 } from './plugin/global-ui-state';
 
 const CONNECTION_REFRESH_AFTER_IDLE_MS = 5 * 60 * 1000;
+const unavailableSiteBuilder: SiteBuilder = {
+  build: async () => {
+    throw new Error('A verified site builder is required before preview or publication.');
+  },
+};
 import { collectDirectoryRouteSources } from './routing/directory-route-sources';
 import {
   normalizeRouteUrlPath,
@@ -273,7 +275,7 @@ export class PagesPublishApplication {
     this.customDomainStatus = options.customDomainStatus;
     this.maintenance = options.maintenance;
     this.diagnosticLog = options.diagnosticLog;
-    this.siteBuilder = options.siteBuilder ?? legacySiteBuilder;
+    this.siteBuilder = options.siteBuilder ?? unavailableSiteBuilder;
     this.scanCoordinator = new ContentScanCoordinator(
       options.scan ??
         (async ({ signal }) =>

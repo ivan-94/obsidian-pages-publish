@@ -18,7 +18,8 @@ import { createControlledQuartzConfig } from './quartz-config';
 import type { QuartzStagingCompilation } from './quartz-staging-compiler';
 
 const execFileAsync = promisify(execFile);
-const maximumOutputFiles = 100_000;
+const maximumOutputFiles = 20_000;
+const maximumOutputFileBytes = 25 * 1024 * 1024;
 const maximumOutputBytes = 250 * 1024 * 1024;
 
 export interface QuartzRawBuildOutput {
@@ -38,7 +39,10 @@ export class QuartzBuildError extends Error {
 }
 
 export class QuartzBuildRunner {
-  constructor(private readonly input: { rootDirectory: string }) {}
+  constructor(private readonly input: {
+    rootDirectory: string;
+    deniedReadRoots?: readonly string[];
+  }) {}
 
   async run(
     engine: ReadyQuartzEngine,
@@ -72,27 +76,35 @@ export class QuartzBuildRunner {
         }),
         { flag: 'wx', mode: 0o600 },
       );
+      const nodeArguments = [
+        '--permission',
+        `--allow-fs-read=${workspace}`,
+        `--allow-fs-read=${engineDirectory}`,
+        `--allow-fs-write=${workspace}`,
+        '--allow-addons',
+        '--allow-child-process',
+        '--allow-worker',
+        join(engineDirectory, 'quartz', 'bootstrap-cli.mjs'),
+        'build',
+        '--directory',
+        contentDirectory,
+        '--output',
+        outputDirectory,
+        '--concurrency',
+        '1',
+      ];
+      const sandbox = await sandboxedQuartzCommand(
+        workspace,
+        engineDirectory,
+        engine.nodeExecutable,
+        nodeArguments,
+        this.input.deniedReadRoots ?? [],
+      );
 
       try {
         await execFileAsync(
-          engine.nodeExecutable,
-          [
-            '--permission',
-            `--allow-fs-read=${workspace}`,
-            `--allow-fs-read=${engineDirectory}`,
-            `--allow-fs-write=${workspace}`,
-            '--allow-addons',
-            '--allow-child-process',
-            '--allow-worker',
-            join(engineDirectory, 'quartz', 'bootstrap-cli.mjs'),
-            'build',
-            '--directory',
-            contentDirectory,
-            '--output',
-            outputDirectory,
-            '--concurrency',
-            '1',
-          ],
+          sandbox.executable,
+          sandbox.arguments,
           {
             cwd: workspace,
             env: {
@@ -124,6 +136,41 @@ export class QuartzBuildRunner {
   }
 }
 
+async function sandboxedQuartzCommand(
+  workspace: string,
+  engineDirectory: string,
+  nodeExecutable: string,
+  nodeArguments: readonly string[],
+  deniedReadRoots: readonly string[],
+): Promise<{ executable: string; arguments: string[] }> {
+  if (process.platform !== 'darwin') {
+    return { executable: nodeExecutable, arguments: [...nodeArguments] };
+  }
+  const profilePath = join(workspace, 'pages-publish.sb');
+  const profile = [
+    '(version 1)',
+    '(allow default)',
+    '(deny network*)',
+    '(deny file-write*)',
+    `(allow file-write* (subpath ${sandboxLiteral(workspace)}))`,
+    ...deniedReadRoots.map((path) =>
+      `(deny file-read* (subpath ${sandboxLiteral(resolve(path))}))`),
+    `(allow file-read* (subpath ${sandboxLiteral(engineDirectory)}))`,
+    `(allow file-read* (subpath ${sandboxLiteral(workspace)}))`,
+    `(allow file-read* (subpath ${sandboxLiteral(resolve(dirname(nodeExecutable), '..'))}))`,
+    '',
+  ].join('\n');
+  await writeFile(profilePath, profile, { flag: 'wx', mode: 0o600 });
+  return {
+    executable: '/usr/bin/sandbox-exec',
+    arguments: ['-f', profilePath, nodeExecutable, ...nodeArguments],
+  };
+}
+
+function sandboxLiteral(value: string): string {
+  return JSON.stringify(value);
+}
+
 async function materializeStaging(
   contentDirectory: string,
   staging: Readonly<QuartzStagingCompilation>,
@@ -152,17 +199,19 @@ function generatedSystemPages(
     (article) => article.visibility === 'public',
   );
   if (!occupiedRoutes.has('/')) {
-    const links = publicArticles
-      .map((article) => {
-        const source = staging.contentFiles[article.sourcePath] ?? '';
-        const title = /^title:\s*(.+)$/mu.exec(source)?.[1] ?? article.sourcePath;
-        return `- [${title}](${article.url})`;
-      })
+    const homeEntries = staging.config.site.homeLayout === 'latest'
+      ? publicArticles
+        .filter((article) => article.kind === 'article')
+        .sort(compareLatestArticle)
+        .map((article) => ({ title: article.title, url: article.url }))
+      : homeSectionEntries(staging, publicArticles);
+    const links = homeEntries
+      .map((entry) => `- [${entry.title}](${entry.url})`)
       .join('\n');
     files['index.md'] = systemPage(
       staging.config.site.name,
       '/',
-      staging.config.site.description ?? links,
+      [staging.config.site.description, links].filter(Boolean).join('\n\n'),
     );
   }
   files['404.md'] = systemPage('页面未找到', '/404/', '请求的页面不存在。');
@@ -185,22 +234,77 @@ function generatedSystemPages(
       '使用页面侧栏中的 Quartz 图谱浏览已公开内容之间的关系。',
     );
   }
-  let sectionIndex = 0;
   for (const section of staging.routePlan.sections) {
-    if (section.sourcePath || occupiedRoutes.has(section.url)) continue;
+    if (section.url === '/' || section.sourcePath || occupiedRoutes.has(section.url)) continue;
     const members = publicArticles
       .filter((article) => article.url !== section.url && article.url.startsWith(section.url))
-      .map((article) => `- [${article.sourcePath}](${article.url})`)
+      .sort(compareSectionArticle)
+      .map((article) => `- [${article.title}](${article.url})`)
       .join('\n');
     const sectionPath = section.url.replace(/^\//u, '').replace(/\/$/u, '');
-    files[`${sectionPath || `section-${sectionIndex}`}.md`] = systemPage(
+    files[`${sectionPath}/index.md`] = systemPage(
       section.directoryPath.split('/').at(-1) ?? staging.config.site.name,
       section.url,
       members,
     );
-    sectionIndex += 1;
   }
   return files;
+}
+
+type ManifestArticle = QuartzStagingCompilation['routeManifest']['articles'][number];
+
+function homeSectionEntries(
+  staging: Readonly<QuartzStagingCompilation>,
+  publicArticles: readonly ManifestArticle[],
+): Array<{ title: string; url: string }> {
+  const entries: Array<{ title: string; url: string }> = [];
+  for (const root of staging.config.contentRoots) {
+    const rootSection = staging.routePlan.sections.find(
+      (section) => section.directoryPath === root.path,
+    );
+    const directChildren = staging.routePlan.sections.filter((section) => {
+      const relative = posix.relative(root.path, section.directoryPath);
+      return relative !== ''
+        && relative !== '..'
+        && !relative.startsWith('../')
+        && !relative.includes('/');
+    });
+    for (const section of directChildren.length > 0
+      ? directChildren
+      : rootSection ? [rootSection] : []) {
+      if (!publicArticles.some((article) => article.url.startsWith(section.url))) continue;
+      const customIndex = publicArticles.find((article) => article.url === section.url);
+      entries.push({
+        title: customIndex?.title
+          ?? section.directoryPath.split('/').at(-1)
+          ?? section.directoryPath,
+        url: section.url,
+      });
+    }
+  }
+  return entries.sort((left, right) =>
+    left.title.localeCompare(right.title) || left.url.localeCompare(right.url));
+}
+
+function compareLatestArticle(left: ManifestArticle, right: ManifestArticle): number {
+  return dateSortValue(right.date) - dateSortValue(left.date)
+    || left.title.localeCompare(right.title)
+    || left.sourcePath.localeCompare(right.sourcePath);
+}
+
+function compareSectionArticle(left: ManifestArticle, right: ManifestArticle): number {
+  if (left.order !== undefined || right.order !== undefined) {
+    if (left.order === undefined) return 1;
+    if (right.order === undefined) return -1;
+    if (left.order !== right.order) return left.order - right.order;
+  }
+  return compareLatestArticle(left, right);
+}
+
+function dateSortValue(value: string | undefined): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
 function systemPage(title: string, permalink: string, body: string): string {
@@ -268,6 +372,9 @@ async function collectOutput(outputDirectory: string): Promise<Record<string, Ui
         throw new QuartzBuildError('Quartz output contains an unsupported file type.');
       }
       const content = new Uint8Array(await readFile(absolutePath));
+      if (content.byteLength > maximumOutputFileBytes) {
+        throw new QuartzBuildError('A Quartz output file exceeds the publication resource budget.');
+      }
       totalBytes += content.byteLength;
       if (Object.keys(files).length >= maximumOutputFiles || totalBytes > maximumOutputBytes) {
         throw new QuartzBuildError('Quartz output exceeds the publication resource budget.');

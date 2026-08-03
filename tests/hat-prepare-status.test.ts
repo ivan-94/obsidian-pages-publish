@@ -131,7 +131,7 @@ describe('S17 HAT prepare status', () => {
     expect(result.code).toBe(1);
     expect(result.stdout).toContain('status=not-run');
     expect(result.stderr).toContain('Refusing to initialise an unrecognised test Vault');
-  });
+  }, 10_000);
 });
 
 function hatEnvironment(vault: string, candidate: string): NodeJS.ProcessEnv {

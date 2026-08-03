@@ -38,12 +38,50 @@ describe('Quartz publication environment', () => {
       ensureEngine: async () => readyEngine(),
     });
 
-    await expect(environment.prepare()).rejects.toThrow('offline');
+    await expect(environment.prepare()).rejects.toMatchObject({
+      code: 'quartz-engine-unavailable',
+    });
     expect(environment.getStatus()).toMatchObject({
       stage: 'failed',
       nextAction: 'repair',
       detailsAvailable: true,
     });
+  });
+
+  it('queues Repair behind preparation and forces both managed stores to repair', async () => {
+    let releasePreparation!: () => void;
+    const preparationGate = new Promise<void>((resolve) => {
+      releasePreparation = resolve;
+    });
+    const runtime = {
+      nodeExecutable: '/runtime/node',
+      nodeVersion: '22.23.1',
+      npmCliPath: '/runtime/npm-cli.js',
+      npmVersion: '10.9.8',
+    };
+    const ensureRuntime = vi.fn(async () => {
+      await preparationGate;
+      return runtime;
+    });
+    const repairRuntime = vi.fn(async () => runtime);
+    const repairEngine = vi.fn(async () => readyEngine());
+    const environment = new QuartzPublicationEnvironment({
+      platform: 'darwin-arm64',
+      ensureRuntime,
+      ensureEngine: async () => readyEngine(),
+      repairRuntime,
+      repairEngine,
+    });
+
+    const preparation = environment.prepare();
+    const repair = environment.repair();
+    expect(repairRuntime).not.toHaveBeenCalled();
+    releasePreparation();
+
+    await expect(preparation).resolves.toMatchObject({ stage: 'ready' });
+    await expect(repair).resolves.toMatchObject({ stage: 'ready' });
+    expect(repairRuntime).toHaveBeenCalledOnce();
+    expect(repairEngine).toHaveBeenCalledOnce();
   });
 });
 

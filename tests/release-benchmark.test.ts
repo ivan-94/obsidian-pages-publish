@@ -4,9 +4,14 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { afterEach, describe, expect, it } from 'vitest';
 import { scanSiteFromDirectory } from '../src/content/site-scanner';
-import { prepareLocalPreviewFromDirectory } from '../src/core/preview';
+import type { ReadyQuartzEngine } from '../src/runtime/quartz-engine-store';
+import { QuartzBuildRunner } from '../src/site-builder/quartz-build-runner';
+import { QuartzSiteBuilder } from '../src/site-builder/quartz-site-builder';
 
-describe('release candidate large Vault smoke', () => {
+const engineDirectory = process.env.PAGES_PUBLISH_QUARTZ_ENGINE;
+const nodeExecutable = process.env.PAGES_PUBLISH_NODE22;
+
+describe.skipIf(!engineDirectory || !nodeExecutable)('release candidate large Vault smoke', () => {
   const vaults: string[] = [];
 
   afterEach(async () => {
@@ -38,7 +43,12 @@ describe('release candidate large Vault smoke', () => {
     const scan = await scanSiteFromDirectory(vault);
     const scanDurationMs = performance.now() - scanStarted;
     const previewStarted = performance.now();
-    const preview = await prepareLocalPreviewFromDirectory(vault);
+    const buildRoot = await mkdtemp(join(tmpdir(), 'pages-publish-release-build-'));
+    vaults.push(buildRoot);
+    const preview = await new QuartzSiteBuilder({
+      environment: { ensureReady: async () => readyEngine() },
+      runner: new QuartzBuildRunner({ rootDirectory: buildRoot, deniedReadRoots: [vault] }),
+    }).build({ vaultRoot: vault, renderMode: 'published' });
     const previewDurationMs = performance.now() - previewStarted;
     const heapDeltaMiB = (process.memoryUsage().heapUsed - heapBefore) / 1024 / 1024;
 
@@ -51,7 +61,7 @@ describe('release candidate large Vault smoke', () => {
     process.stdout.write(
       `release-baseline candidates=360 scan_ms=${Math.round(scanDurationMs)} preview_ms=${Math.round(previewDurationMs)} heap_delta_mib=${heapDeltaMiB.toFixed(1)}\n`,
     );
-  }, 30_000);
+  }, 120_000);
 });
 
 async function writeArticle(
@@ -65,6 +75,20 @@ async function writeArticle(
     `---\npublication:\n  visibility: ${visibility}\n---\n# ${visibility} Article ${index}\n\nRelease benchmark content.${privateBody}\n`,
     'utf8',
   );
+}
+
+function readyEngine(): ReadyQuartzEngine {
+  return {
+    engineDirectory: engineDirectory!,
+    engineVersion: 'pages-publish-quartz-5.0.0.1',
+    quartzVersion: '5.0.0',
+    platform: 'darwin-arm64',
+    nodeExecutable: nodeExecutable!,
+    nodeVersion: '22.23.1',
+    npmCliPath: '/unused/npm-cli.js',
+    npmVersion: '10.9.8',
+    usingFallback: false,
+  };
 }
 
 function siteConfig(): string {

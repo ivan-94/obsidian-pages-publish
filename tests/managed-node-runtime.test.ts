@@ -36,7 +36,12 @@ describe('managed Node runtime', () => {
       await expect(readFile(nodeExecutable, 'utf8')).resolves.toBe('node-binary');
       await expect(readFile(npmCliPath, 'utf8')).resolves.toBe('npm-cli');
     });
-    const store = new ManagedNodeRuntimeStore({ rootDirectory, download, verify });
+    const store = new ManagedNodeRuntimeStore({
+      rootDirectory,
+      download,
+      verify,
+      trustManifest: () => true,
+    });
 
     const first = await store.ensureReady(manifest);
     const second = await store.ensureReady(manifest);
@@ -60,6 +65,29 @@ describe('managed Node runtime', () => {
       store.ensureReady(builtinManagedNodeManifest('darwin-arm64')),
     ).rejects.toThrow('checksum');
     expect(verify).not.toHaveBeenCalled();
+  });
+
+  it('forces a verified managed runtime reinstall during Repair', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-node-repair-'));
+    const archive = nodeArchive();
+    const manifest = {
+      ...builtinManagedNodeManifest('darwin-arm64'),
+      sourceSha256: createHash('sha256').update(archive).digest('hex'),
+    };
+    const download = vi.fn(async () => archive);
+    const verify = vi.fn(async () => undefined);
+    const store = new ManagedNodeRuntimeStore({
+      rootDirectory,
+      download,
+      verify,
+      trustManifest: () => true,
+    });
+
+    await store.ensureReady(manifest);
+    await store.repair(manifest);
+
+    expect(download).toHaveBeenCalledTimes(2);
+    expect(verify).toHaveBeenCalledTimes(2);
   });
 
   it.skipIf(!process.env.PAGES_PUBLISH_NODE_ARCHIVE)(

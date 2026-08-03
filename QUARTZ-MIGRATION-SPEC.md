@@ -1,6 +1,6 @@
 # Pages Publish Quartz 5 改造规格
 
-> 文档状态：Draft / 改造实现基线
+> 文档状态：实现完成 / 候选发布 HAT 待执行
 >
 > 适用产品：Pages Publish Obsidian Community Plugin
 >
@@ -680,20 +680,18 @@ HAT 至少包含：
 - 插件升级不得自动删除上一已验证引擎；新引擎安装或 smoke 失败继续使用旧引擎。
 - 若新插件代码与旧引擎不兼容，必须在发布前声明兼容矩阵，不能在运行时猜测。
 
-## 19. 实现前仍需固化的参数
+## 19. 已固化的实现参数
 
-以下是必须在进入生产实现或候选发布前填写的参数，不改变本规格的架构决策：
+1. Quartz 固定为 `5.0.0`、commit `74b3fc9efd0caafea3dbcd846ddf1f06855b6d2a`，source archive SHA-256 为 `69380b2e3acf3590ad144304e4e97be621562b1ab14512c2537ad348d707c3aa`，上游 lockfile SHA-256 为 `bca1aff728d3257b8ca6989f9a4d9913836ab1f1a034505d3e3c481b3dab3e05`。
+2. v1 的 trust origin 是随三文件插件发布、编译进 `main.js` 的不可变 manifest；运行时不下载或接受第二份 manifest。归档来自 GitHub 固定 commit URL，并按内置 SHA-256 校验。v1 不使用 detached signature；trust rotation 只能随经过现有插件发布链的新版本发生。
+3. managed runtime 固定 npm `10.9.8`；兼容内嵌 runtime 要求 npm `>=10.9.2`。`npm ci` 只使用 `https://registry.npmjs.org/`、隔离 user/global npmrc 和隔离 cache，不继承用户 npm 配置。
+4. managed Node 固定为 Node `22.23.1` 官方 `nodejs.org` 归档；darwin-arm64 SHA-256 为 `ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953`，darwin-x64 为 `b8da981b8a0b1241b70249204916da76c63573ddf5814dbd2d1e41069105cb81`。内嵌 Node 支持范围为 `>=22.0.0`。
+5. 共享 runtime/engine/cache 位于 `~/Library/Application Support/pages-publish/environment`；每个 Vault 的临时构建位于以 Vault 路径 SHA-256 标识的 `vault-state/<identity>/quartz`。arm64 实测 Node 约 187 MiB、裁剪后 engine 约 249 MiB、首次 npm cache 约 85 MiB。
+6. Route Bridge 位于 Output Collector/Auditor 边界：使用稳定内部 staging slug 避免 Quartz 小写/空格归一化冲突，收集后恢复 Route Planner canonical 文件路径和引用。Pinned source patch 只处理 Quartz workspace Sass 路径、动态 cache import 与禁用 serve 依赖的懒加载，不改变产品 URL 规则。
+7. 单次下载上限为 64 MiB；首次完整安装实测 50.86 秒。自动重试次数为 0，失败后保留 active engine，由用户显式 Repair 重试。候选发布 HAT 门槛暂定为 120 秒、总环境占用不超过 1.5 GiB、开始前至少 2 GiB 可用空间；磁盘阈值的 UI 前置检查仍是候选发布项。
+8. 300 public + 30 unlisted + 30 private 的真实 Quartz 构建实测扫描 167 ms、构建 3.14 秒、heap 增量 32.2 MiB。候选门槛暂定构建不超过 10 秒、heap 增量不超过 256 MiB；最终门槛需在 HAT 指定机器复测。
 
-1. 首个固定 Quartz 5 版本、Git commit/source archive URL 和 SHA-256。
-2. 受信 engine manifest 的发布 origin、签名格式、公钥和轮换策略。
-3. 固定 npm 版本及 registry 策略。
-4. Node 22 的精确支持范围和 managed runtime 发行来源。
-5. macOS arm64/x64 缓存目录和最大磁盘预算。
-6. Quartz Route Bridge 使用公开插件 hook 还是最小 pinned patch。
-7. 首次安装大小、超时、重试次数和最低剩余磁盘阈值。
-8. 360 篇 Vault 的受控机器性能门槛。
-
-这些参数未固化前可以开发和测试 adapter，但不得声称生产供应链已完成验收。
+供应链审计对上游 lockfile 报告的两个 high 已有运行时处置：未启用的 OG image/favicon 插件及 `sharp`/libvips 在 smoke 前从已安装 engine 删除；只服务 Quartz serve 模式的 `serve-handler` 改为懒加载并删除，其传递依赖 `brace-expansion` 不进入受控 build runtime。处置项和 advisory ID 写入 `.pages-publish-dependencies.json`，缓存复用也会验证这些包继续缺席。
 
 ## Source Manifest
 
@@ -704,11 +702,11 @@ HAT 至少包含：
 - [`DESIGN.md`](./DESIGN.md)：Obsidian 插件 UI 的主题、可访问性和交互约束；与生成站点主题区分。
 - [`TASK.md`](./TASK.md)：S04–S09、S12–S17 的实现状态、测试证据和遗留风险，尤其是 S09 引擎来源/签名未决项与 S17 三文件包约束。
 - [`src/core/preview.ts`](./src/core/preview.ts)：当前自研站点构建、手写页面和 `LocalPreview` façade。
-- [`src/site/default-theme.ts`](./src/site/default-theme.ts)：待移除的当前生成站点主题。
+- [`tests/support/legacy-default-theme.ts`](./tests/support/legacy-default-theme.ts)：只供迁移特征测试保留的旧主题基线；生产源码已删除。
 - [`src/config/site-config.ts`](./src/config/site-config.ts)：`site.yml` v1 配置契约。
 - [`src/routing/route-planner.ts`](./src/routing/route-planner.ts)：现有 canonical URL、栏目、系统页、redirect 和冲突契约。
 - [`src/content/note-references.ts`](./src/content/note-references.ts)、[`src/content/local-assets.ts`](./src/content/local-assets.ts) 与 [`src/content/raw-html.ts`](./src/content/raw-html.ts)：必须保留的引用、资源和原始 HTML 安全语义。
-- [`src/runtime/environment-manager.ts`](./src/runtime/environment-manager.ts) 与 [`src/plugin/bundled-environment.ts`](./src/plugin/bundled-environment.ts)：已有环境抽象和当前未实现真实独立引擎安装的生产接线。
+- [`src/runtime/quartz-engine-store.ts`](./src/runtime/quartz-engine-store.ts)、[`src/runtime/managed-node-runtime.ts`](./src/runtime/managed-node-runtime.ts) 与 [`src/plugin/quartz-publication-environment.ts`](./src/plugin/quartz-publication-environment.ts)：固定运行时、动态安装、修复、回退与生产环境接线。
 - [`src/publication/publish-center.ts`](./src/publication/publish-center.ts)、[`src/publication/publish-orchestrator.ts`](./src/publication/publish-orchestrator.ts) 与 [`src/application.ts`](./src/application.ts)：不可变快照和四阶段发布边界。
 - [`src/cloudflare/pages-deployment.ts`](./src/cloudflare/pages-deployment.ts)：必须保持的 Cloudflare Direct Upload 输出与限制。
 - [Quartz Configuration](https://quartz.jzhao.xyz/configuration)、[Private Pages](https://quartz.jzhao.xyz/features/private-pages)、[Folder and Tag Listings](https://quartz.jzhao.xyz/features/folder-and-tag-listings) 与 [ObsidianFlavoredMarkdown](https://quartz.jzhao.xyz/plugins/ObsidianFlavoredMarkdown)：Quartz 5 官方配置、过滤、页面和 Obsidian 语法依据。
@@ -732,15 +730,17 @@ HAT 至少包含：
 
 ### Verification evidence
 
-- 2026-08-03 对照当前仓库 `PRODUCT-SPEC.md`、`DESIGN.md`、`TASK.md` 及上述核心实现文件完成只读架构检查。
-- 2026-08-03 对照 Quartz 5 官方文档与 `v5` 源码确认 Node 22、插件化配置、默认网络相关能力、raw HTML 管线和非 Markdown Assets emitter 风险。
-- 本步骤只新增规格文件，未执行实现测试；实现阶段必须按 AC-QZ-12 和第 17 节补齐自动化与 HAT 证据。
+- 2026-08-03 对照当前仓库 `PRODUCT-SPEC.md`、`DESIGN.md`、`TASK.md`、本规格和核心实现完成逐项架构审计。
+- `npm test`：64 个 test files 通过、4 个按真实环境变量跳过；586 tests 通过、5 个跳过。
+- 使用固定 source archive 与 Node 22.23.1 执行 `tests/quartz-engine-store-real.test.ts`：真实 `npm ci`、安全裁剪、smoke、原子激活和断网缓存复用通过，耗时 50.86 秒。
+- 使用裁剪后的固定 engine 执行 `tests/quartz-real-smoke.test.ts`、`tests/quartz-site-builder-real.test.ts` 与 `tests/release-benchmark.test.ts`：真实构建、Vault sandbox、Unicode/空格/大小写/冲突 route、redirect、可见性、确定性和 360 篇基准全部通过。
+- `npm run typecheck`、`npm run lint`、`npm run package` 和 `git diff --check` 通过；release staging 只有 `main.js`、`manifest.json`、`styles.css` 三个文件。
+- `npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org/`：插件生产依赖 0 finding。Quartz lock 的两个 high 按本节安全裁剪策略处置并进入引擎依赖清单。
 
 ### Open questions / risks
 
-- 生产 engine manifest 的可信 origin、签名根和 key rotation 尚未选定。
-- Quartz v5 原生依赖会增加首次安装耗时和本地磁盘占用，需要受控 HAT 固化阈值。
-- 保持现有大小写、空格、Unicode 和尾斜杠 URL 可能需要最小 Quartz core patch；必须随 Quartz 版本锁定并单独回归。
-- 动态 `npm ci` 会执行依赖安装生命周期，需要通过锁文件、隔离目录、最小环境、来源校验、依赖审计和 smoke 限制供应链风险。
-- Quartz 默认布局的 Search/Graph 形态与当前独立系统页不同，需要受控 Page Type/Emitter 保持既有路由。
-- 旧主题视觉验收将失效，Quartz 新基线必须重新完成 HAT 后才能发布。
+- 尚未执行干净 Obsidian 安装、浅色/深色/窄屏/键盘、Cloudflare 首发/更新/失败恢复等人工 HAT；因此当前状态是实现完成，不是候选发布验收完成。
+- 首次安装剩余磁盘前置检查和细粒度下载进度尚未进入 UI；现有 UI 只能观察环境准备阶段、失败和 Repair。
+- Quartz v5 上游 lock 当前仍包含两个 high advisory；本实现通过受控配置、代码可达性裁剪、物理删除、smoke 和缓存复核处置。升级 engine 时必须重新审计，不能自动沿用处置结论。
+- 1.5 GiB 磁盘和 10 秒/256 MiB 性能门槛仍需在 HAT 指定机器复测后才能成为发布门禁。
+- 旧主题视觉验收已经失效，Quartz 新基线必须重新完成 HAT 后才能发布。

@@ -8,7 +8,10 @@ import type {
   SiteBuildRequest,
 } from './site-builder';
 import { QuartzBuildRunner, type QuartzRawBuildOutput } from './quartz-build-runner';
-import { bridgeAndAuditQuartzOutput } from './quartz-output-auditor';
+import {
+  bridgeAndAuditQuartzOutput,
+  createQuartzOutputAuditPolicy,
+} from './quartz-output-auditor';
 import {
   compileQuartzStaging,
   type QuartzStagingCompilation,
@@ -27,22 +30,40 @@ export interface QuartzRunnerBoundary {
 }
 
 export class QuartzSiteBuilder implements SiteBuilder {
+  private buildTail: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly dependencies: {
     environment: QuartzEnvironmentBoundary;
     runner: QuartzRunnerBoundary | QuartzBuildRunner;
   }) {}
 
-  async build(request: SiteBuildRequest): Promise<LocalPreview> {
+  build(request: SiteBuildRequest): Promise<LocalPreview> {
+    const operation = this.buildTail
+      .catch(() => undefined)
+      .then(() => this.buildExclusive(request));
+    this.buildTail = operation;
+    return operation;
+  }
+
+  private async buildExclusive(request: SiteBuildRequest): Promise<LocalPreview> {
+    request.signal?.throwIfAborted();
     const engine = await this.dependencies.environment.ensureReady();
+    request.signal?.throwIfAborted();
     const staging = await compileQuartzStaging(request.vaultRoot, {
       ...(request.webpDecoder === undefined ? {} : { webpDecoder: request.webpDecoder }),
       ...(request.focusSourcePath === undefined
         ? {}
         : { previewSourcePath: request.focusSourcePath }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
-    const rawOutput = await this.dependencies.runner.run(engine, staging);
-    const output = bridgeAndAuditQuartzOutput(rawOutput, staging);
     const { snapshots } = await loadDirectoryRouteSources(request.vaultRoot, staging.config);
+    const auditPolicy = createQuartzOutputAuditPolicy(request.vaultRoot, snapshots, {
+      ...(request.focusSourcePath === undefined
+        ? {}
+        : { allowedPrivateSourcePath: request.focusSourcePath }),
+    });
+    const rawOutput = await this.dependencies.runner.run(engine, staging, request.signal);
+    const output = bridgeAndAuditQuartzOutput(rawOutput, staging, auditPolicy);
     const routesBySource = new Map(
       staging.routePlan.articles.map((article) => [article.sourcePath, article]),
     );

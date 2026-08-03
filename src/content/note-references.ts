@@ -89,6 +89,12 @@ export function createNoteReferenceResolver(
       targetResolution.status === 'resolved'
         ? targetResolution.sourcePath
         : undefined;
+    if (
+      targetPath
+      && snapshots.get(targetPath)?.metadata.visibility.value === 'private'
+    ) {
+      return { kind: 'text', text: explicitText || '不可用链接' };
+    }
     const url = targetPath ? routes.get(targetPath) : undefined;
     if (!targetPath || !url) {
       return { kind: 'text', text: explicitText || '不可用链接' };

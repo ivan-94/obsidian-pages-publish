@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PagesPublishApplication } from '../src/application';
+import { PagesPublishApplication as ProductionPagesPublishApplication } from '../src/application';
 import { DeploymentFactsCoordinator, FileSystemDeploymentStateStore } from '../src/publication/deployment-facts';
 import {
   BoundedDiagnosticLog,
@@ -13,10 +13,23 @@ import type { SiteConfigV1 } from '../src/config/site-config';
 import { loadSiteConfigFromDirectory } from '../src/config/site-config';
 import type { LocalPreview } from '../src/core/preview';
 import type { SiteBuilder } from '../src/site-builder/site-builder';
+import { legacySiteBuilder } from './support/legacy-preview';
 import {
   SiteSetupService,
   type SetupDraft,
 } from '../src/setup/site-setup';
+
+class PagesPublishApplication extends ProductionPagesPublishApplication {
+  constructor(
+    ...args: ConstructorParameters<typeof ProductionPagesPublishApplication>
+  ) {
+    const [vaultRoot, openExternal, options] = args;
+    super(vaultRoot, openExternal, {
+      ...options,
+      siteBuilder: options?.siteBuilder ?? legacySiteBuilder,
+    });
+  }
+}
 
 describe('Pages Publish application', () => {
   const vaults: string[] = [];

@@ -21,9 +21,31 @@ describe('Quartz build runner', () => {
     expect(output.files['static/app.js']).toBeDefined();
     expect(output.sourceDigest).toBe('frozen-source-digest');
   });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'denies Vault reads to native child processes as well as the Quartz Node process',
+    async () => {
+      const vaultRoot = await mkdtemp(join(tmpdir(), 'pages-denied-vault-'));
+      const secretPath = join(vaultRoot, 'private-canary.txt');
+      await writeFile(secretPath, 'must-not-be-readable');
+      const engineDirectory = await fakeEngine([
+        "import { execFileSync } from 'node:child_process'",
+        `execFileSync('/bin/cat', [${JSON.stringify(secretPath)}], { stdio: 'ignore' })`,
+      ]);
+      const buildRoot = await mkdtemp(join(tmpdir(), 'pages-quartz-builds-'));
+      const runner = new QuartzBuildRunner({
+        rootDirectory: buildRoot,
+        deniedReadRoots: [vaultRoot],
+      });
+
+      await expect(runner.run(readyEngine(engineDirectory), staging())).rejects.toMatchObject({
+        code: 'quartz-build-failed',
+      });
+    },
+  );
 });
 
-async function fakeEngine(): Promise<string> {
+async function fakeEngine(extraSource: readonly string[] = []): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'pages-fake-quartz-'));
   await mkdir(join(directory, 'quartz'), { recursive: true });
   await writeFile(
@@ -39,6 +61,7 @@ async function fakeEngine(): Promise<string> {
       "const value = (name) => process.argv[process.argv.indexOf(name) + 1]",
       "const content = value('--directory')",
       "const output = value('--output')",
+      ...extraSource,
       "const config = await readFile(join(process.cwd(), 'quartz.config.yaml'), 'utf8')",
       "if (!config.includes('analytics: null') || config.includes('googleFonts')) process.exit(8)",
       "const article = await readFile(join(content, 'Notes', 'Public.md'), 'utf8')",
@@ -88,8 +111,10 @@ function staging(): Readonly<QuartzStagingCompilation> {
     routeManifest: {
       articles: [{
         sourcePath: 'Notes/Public.md',
+        title: 'Public title',
         url: '/writing/hello/',
         visibility: 'public' as const,
+        kind: 'article' as const,
       }],
       redirects: [],
     },

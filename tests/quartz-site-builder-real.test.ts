@@ -18,15 +18,24 @@ describe('real Quartz SiteBuilder integration', () => {
       const engine = readyEngine();
       const builder = new QuartzSiteBuilder({
         environment: { ensureReady: async () => engine },
-        runner: new QuartzBuildRunner({ rootDirectory: buildRoot }),
+        runner: new QuartzBuildRunner({ rootDirectory: buildRoot, deniedReadRoots: [vaultRoot] }),
       });
 
       const preview = await builder.build({ vaultRoot, renderMode: 'published' });
+      const repeated = await builder.build({ vaultRoot, renderMode: 'published' });
 
       expect(preview.files['/writing/hello/index.html']).toContain('Hello Quartz');
       expect(preview.files['/writing/hidden/index.html']).toContain('Hidden Quartz');
+      expect(preview.files['/writing/中文 空格/index.html']).toContain('Unicode Quartz');
+      expect(preview.files['/writing/CaseSensitive/index.html']).toContain('Case Quartz');
+      expect(preview.files['/writing/casesensitive/index.html']).toContain('Lower Case Quartz');
+      expect(preview.files['/writing/guides/index.html']).toContain('Guides index');
+      expect(preview.files['/writing/old-case/index.html']).toContain('/writing/CaseSensitive/');
       expect(preview.files['/static/contentIndex.json']).not.toContain('writing/hidden');
       expect(JSON.stringify(preview.files)).not.toContain('private-vault-token');
+      expect(Object.keys(preview.files)).toEqual(Object.keys(repeated.files));
+      expect(preview.files).toEqual(repeated.files);
+      expect(preview.assets).toEqual(repeated.assets);
       const privateArticle = preview.articles.find(
         (article) => article.sourcePath.endsWith('Private.md'),
       );
@@ -41,6 +50,7 @@ async function fixtureVault(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'pages-real-quartz-vault-'));
   await mkdir(join(root, '.publish'), { recursive: true });
   await mkdir(join(root, 'Notes'), { recursive: true });
+  await mkdir(join(root, 'Notes', 'guides'), { recursive: true });
   await writeFile(
     join(root, '.publish', 'site.yml'),
     [
@@ -64,7 +74,22 @@ async function fixtureVault(): Promise<string> {
   );
   await writeFile(
     join(root, 'Notes', 'Hello.md'),
-    '---\npublication:\n  visibility: public\n  title: Hello Quartz\n  slug: hello\n---\n# Hello Quartz',
+    [
+      '---',
+      'publication:',
+      '  visibility: public',
+      '  title: Hello Quartz',
+      '  slug: hello',
+      '---',
+      '# Hello Quartz',
+      '',
+      'A direct-only link: [[Hidden]]. A private target: [[Private]].',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  A --> B',
+      '```',
+    ].join('\n'),
   );
   await writeFile(
     join(root, 'Notes', 'Hidden.md'),
@@ -73,6 +98,22 @@ async function fixtureVault(): Promise<string> {
   await writeFile(
     join(root, 'Notes', 'Private.md'),
     '---\npublication:\n  visibility: private\n  title: Private Quartz\n  slug: private\n---\nprivate-vault-token',
+  );
+  await writeFile(
+    join(root, 'Notes', 'Unicode.md'),
+    '---\npublication:\n  visibility: public\n  title: Unicode Quartz\n  slug: 中文 空格\n---\n# Unicode Quartz',
+  );
+  await writeFile(
+    join(root, 'Notes', 'Case.md'),
+    '---\npublication:\n  visibility: public\n  title: Case Quartz\n  slug: CaseSensitive\n  redirects: [/writing/old-case/]\n---\n# Case Quartz',
+  );
+  await writeFile(
+    join(root, 'Notes', 'CaseLower.md'),
+    '---\npublication:\n  visibility: public\n  title: Lower Case Quartz\n  slug: casesensitive\n---\n# Lower Case Quartz',
+  );
+  await writeFile(
+    join(root, 'Notes', 'guides', '_index.md'),
+    '---\npublication:\n  visibility: public\n  title: Guides index\n---\n# Guides index',
   );
   return root;
 }

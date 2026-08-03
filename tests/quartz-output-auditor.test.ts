@@ -45,6 +45,35 @@ describe('Quartz output route bridge and auditor', () => {
     });
     expect(() => bridgeAndAuditQuartzOutput(remote, staging())).toThrow('remote executable');
   });
+
+  it('rejects remote runtime loads from emitted JS/CSS', () => {
+    const remoteScript = rawOutput({
+      'static/prescript.js': 'import("https://cdn.example/runtime.js")',
+    });
+    expect(() => bridgeAndAuditQuartzOutput(remoteScript, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-unexpected-network' }),
+    );
+
+    const remoteFont = rawOutput({
+      'static/index.css': '@font-face{src:url(https://fonts.example/font.woff2)}',
+    });
+    expect(() => bridgeAndAuditQuartzOutput(remoteFont, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-unexpected-network' }),
+    );
+  });
+
+  it('rejects private canaries in either text or binary output', () => {
+    const textLeak = rawOutput({ 'index.html': '<html>private-canary-0123456789</html>' });
+    expect(() => bridgeAndAuditQuartzOutput(textLeak, staging(), {
+      forbiddenText: ['private-canary-0123456789'],
+    })).toThrow(expect.objectContaining({ code: 'quartz-private-leak' }));
+
+    const binaryLeak = rawOutput();
+    binaryLeak.files['static/leak.bin'] = bytes('private-canary-0123456789');
+    expect(() => bridgeAndAuditQuartzOutput(binaryLeak, staging(), {
+      forbiddenText: ['private-canary-0123456789'],
+    })).toThrow(expect.objectContaining({ code: 'quartz-private-leak' }));
+  });
 });
 
 function rawOutput(overrides: Record<string, string> = {}): {
@@ -104,8 +133,20 @@ function staging(): Readonly<QuartzStagingCompilation> {
     },
     routeManifest: {
       articles: [
-        { sourcePath: 'Notes/Hello.md', url: '/writing/hello/', visibility: 'public' },
-        { sourcePath: 'Notes/Hidden.md', url: '/writing/hidden/', visibility: 'unlisted' },
+        {
+          sourcePath: 'Notes/Hello.md',
+          title: 'Hello',
+          url: '/writing/hello/',
+          visibility: 'public',
+          kind: 'article',
+        },
+        {
+          sourcePath: 'Notes/Hidden.md',
+          title: 'Hidden',
+          url: '/writing/hidden/',
+          visibility: 'unlisted',
+          kind: 'article',
+        },
       ],
       redirects: [],
     },

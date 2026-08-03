@@ -18,12 +18,23 @@ import {
 } from './quartz-engine-manifest';
 import { extractTrustedTarGz } from './safe-tar-extractor';
 import { applyQuartzEngineCompatibilityPatch } from './quartz-compatibility-patch';
+import {
+  errorCode,
+  QuartzEnvironmentError,
+  rethrowAbort,
+} from './quartz-environment-error';
+import {
+  disabledQuartzPackagesAreAbsent,
+  pruneDisabledQuartzPackages,
+  quartzEngineSecurityDispositions,
+} from './quartz-engine-security-policy';
 
 export interface QuartzEngineRuntimeTools {
   nodeExecutable: string;
   nodeVersion: string;
   npmCliPath: string;
   npmVersion: string;
+  source?: 'obsidian' | 'managed';
 }
 
 export interface ReadyQuartzEngine extends QuartzEngineRuntimeTools {
@@ -66,7 +77,30 @@ export class QuartzEngineStore {
     signal?: AbortSignal,
   ): Promise<ReadyQuartzEngine> {
     if (this.activeOperation) return this.activeOperation;
-    const operation = this.ensureReadyExclusive(manifest, runtime, signal);
+    return this.start(manifest, runtime, false, signal);
+  }
+
+  repair(
+    manifest: QuartzEngineManifest,
+    runtime: QuartzEngineRuntimeTools,
+    signal?: AbortSignal,
+  ): Promise<ReadyQuartzEngine> {
+    const active = this.activeOperation;
+    if (active) {
+      return active
+        .catch(() => undefined)
+        .then(() => this.repair(manifest, runtime, signal));
+    }
+    return this.start(manifest, runtime, true, signal);
+  }
+
+  private start(
+    manifest: QuartzEngineManifest,
+    runtime: QuartzEngineRuntimeTools,
+    force: boolean,
+    signal?: AbortSignal,
+  ): Promise<ReadyQuartzEngine> {
+    const operation = this.ensureReadyExclusive(manifest, runtime, force, signal);
     this.activeOperation = operation;
     void operation.finally(() => {
       if (this.activeOperation === operation) this.activeOperation = undefined;
@@ -77,12 +111,13 @@ export class QuartzEngineStore {
   private async ensureReadyExclusive(
     inputManifest: QuartzEngineManifest,
     runtime: QuartzEngineRuntimeTools,
+    force: boolean,
     signal?: AbortSignal,
   ): Promise<ReadyQuartzEngine> {
     const manifest = validateQuartzEngineManifest(inputManifest, inputManifest.platform);
     validateRuntime(runtime);
     const exactDirectory = this.engineDirectory(manifest.platform, manifest.engineVersion);
-    if (await installationMatches(exactDirectory, manifest)) {
+    if (!force && await installationMatches(exactDirectory, manifest)) {
       await this.activate(exactDirectory, manifest);
       return readyEngine(exactDirectory, manifest, runtime, false);
     }
@@ -111,27 +146,64 @@ export class QuartzEngineStore {
     const temporaryDirectory = await mkdtemp(join(platformDirectory, '.install-'));
     let moved = false;
     try {
-      const archive = await this.dependencies.download(
-        manifest.sourceUrl,
-        signal,
-      );
+      let archive: Uint8Array;
+      try {
+        archive = await this.dependencies.download(manifest.sourceUrl, signal);
+      } catch (error) {
+        rethrowAbort(error);
+        throw new QuartzEnvironmentError(
+          'quartz-engine-download-failed',
+          'The pinned Quartz source archive could not be downloaded.',
+          error,
+        );
+      }
       verifySha256(archive, manifest.sourceSha256);
-      await extractTrustedTarGz(archive, temporaryDirectory);
-      await verifyQuartzPackage(temporaryDirectory, manifest.quartzVersion);
-      await applyQuartzEngineCompatibilityPatch(temporaryDirectory);
-      await (this.dependencies.installDependencies ?? installLockedNpmProject)({
-        sourceDirectory: temporaryDirectory,
-        nodeExecutable: runtime.nodeExecutable,
-        npmCliPath: runtime.npmCliPath,
-        cacheDirectory: join(this.dependencies.rootDirectory, 'npm-cache'),
-        lockfileSha256: manifest.lockfileSha256,
-        signal,
-      });
-      await this.dependencies.smoke({
-        engineDirectory: temporaryDirectory,
-        manifest,
-        runtime,
-      });
+      try {
+        await extractTrustedTarGz(archive, temporaryDirectory);
+        await verifyQuartzPackage(temporaryDirectory, manifest.quartzVersion);
+        await applyQuartzEngineCompatibilityPatch(temporaryDirectory);
+      } catch (error) {
+        if (errorCode(error) === 'quartz-engine-integrity-failed') throw error;
+        throw new QuartzEnvironmentError(
+          'quartz-engine-integrity-failed',
+          'The pinned Quartz source archive did not match the trusted engine.',
+          error,
+        );
+      }
+      try {
+        await (this.dependencies.installDependencies ?? installLockedNpmProject)({
+          sourceDirectory: temporaryDirectory,
+          nodeExecutable: runtime.nodeExecutable,
+          npmCliPath: runtime.npmCliPath,
+          cacheDirectory: join(this.dependencies.rootDirectory, 'npm-cache'),
+          lockfileSha256: manifest.lockfileSha256,
+          signal,
+        });
+        await pruneDisabledQuartzPackages(temporaryDirectory);
+        await writeDependencyInventory(temporaryDirectory, manifest);
+      } catch (error) {
+        rethrowAbort(error);
+        if (errorCode(error) === 'quartz-engine-install-failed') throw error;
+        throw new QuartzEnvironmentError(
+          'quartz-engine-install-failed',
+          'The locked Quartz dependency installation failed.',
+          error,
+        );
+      }
+      try {
+        await this.dependencies.smoke({
+          engineDirectory: temporaryDirectory,
+          manifest,
+          runtime,
+        });
+      } catch (error) {
+        rethrowAbort(error);
+        throw new QuartzEnvironmentError(
+          'quartz-engine-smoke-failed',
+          'The installed Quartz engine failed its offline smoke build.',
+          error,
+        );
+      }
       await writeFile(
         join(temporaryDirectory, '.pages-publish-verified.json'),
         `${JSON.stringify(recordFromManifest(manifest))}\n`,
@@ -205,10 +277,16 @@ export class QuartzEngineStore {
 
 function validateRuntime(runtime: QuartzEngineRuntimeTools): void {
   if (!compatibleNodeVersion(runtime.nodeVersion) || !isMinimumNpm(runtime.npmVersion, 10, 9, 2)) {
-    throw new Error('The Quartz engine requires Node 22 and npm 10.9.2 or newer.');
+    throw new QuartzEnvironmentError(
+      'node-runtime-incompatible',
+      'The Quartz engine requires Node 22 and npm 10.9.2 or newer.',
+    );
   }
   if (runtime.nodeExecutable.length === 0 || runtime.npmCliPath.length === 0) {
-    throw new Error('The Quartz engine runtime tools are incomplete.');
+    throw new QuartzEnvironmentError(
+      'node-runtime-incompatible',
+      'The Quartz engine runtime tools are incomplete.',
+    );
   }
 }
 
@@ -239,6 +317,47 @@ async function verifyQuartzPackage(directory: string, expectedVersion: string): 
   }
 }
 
+interface LockedPackageRecord {
+  name?: unknown;
+  version?: unknown;
+  integrity?: unknown;
+  resolved?: unknown;
+}
+
+async function writeDependencyInventory(
+  directory: string,
+  manifest: Readonly<QuartzEngineManifest>,
+): Promise<void> {
+  const lockfile = JSON.parse(await readFile(join(directory, 'package-lock.json'), 'utf8')) as {
+    lockfileVersion?: unknown;
+    packages?: Record<string, LockedPackageRecord>;
+  };
+  if (lockfile.lockfileVersion !== 3 || !lockfile.packages) {
+    throw new Error('The Quartz package lock cannot produce a dependency inventory.');
+  }
+  const packages = Object.entries(lockfile.packages)
+    .map(([path, value]) => ({
+      path,
+      ...(typeof value.name === 'string' ? { name: value.name } : {}),
+      ...(typeof value.version === 'string' ? { version: value.version } : {}),
+      ...(typeof value.integrity === 'string' ? { integrity: value.integrity } : {}),
+      ...(typeof value.resolved === 'string' ? { resolved: value.resolved } : {}),
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  await writeFile(
+    join(directory, '.pages-publish-dependencies.json'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      engineVersion: manifest.engineVersion,
+      quartzVersion: manifest.quartzVersion,
+      lockfileSha256: manifest.lockfileSha256.toLowerCase(),
+      packages,
+      securityDispositions: quartzEngineSecurityDispositions,
+    }, undefined, 2)}\n`,
+    { flag: 'wx', mode: 0o600 },
+  );
+}
+
 async function installationMatches(
   directory: string,
   expected: VerifiedEngineRecord,
@@ -250,7 +369,9 @@ async function installationMatches(
     await access(join(directory, 'package.json'));
     await access(join(directory, 'package-lock.json'));
     await access(join(directory, 'quartz', 'bootstrap-cli.mjs'));
-    return record.engineVersion === expected.engineVersion
+    await access(join(directory, '.pages-publish-dependencies.json'));
+    return await disabledQuartzPackagesAreAbsent(directory)
+      && record.engineVersion === expected.engineVersion
       && record.quartzVersion === expected.quartzVersion
       && record.platform === expected.platform
       && record.sourceSha256 === expected.sourceSha256
@@ -289,7 +410,10 @@ function readyEngine(
 function verifySha256(content: Uint8Array, expected: string): void {
   const actual = createHash('sha256').update(content).digest('hex');
   if (actual !== expected.toLowerCase()) {
-    throw new Error('The Quartz source archive checksum did not match the engine manifest.');
+    throw new QuartzEnvironmentError(
+      'quartz-engine-integrity-failed',
+      'The Quartz source archive checksum did not match the engine manifest.',
+    );
   }
 }
 

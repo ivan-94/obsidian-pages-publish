@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { scanSiteFromDirectory } from '../src/content/site-scanner';
-import { prepareLocalPreviewFromDirectory } from '../src/core/preview';
+import { prepareLocalPreviewFromDirectory } from './support/legacy-preview';
 
 describe('built-in default site', () => {
   const vaults: string[] = [];

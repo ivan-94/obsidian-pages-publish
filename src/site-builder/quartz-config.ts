@@ -59,10 +59,6 @@ export function createControlledQuartzConfig(input: ControlledQuartzConfigInput)
         excludedProperties: [],
         hidePropertiesView: true,
       }, 5, layout('beforeBody', 15)),
-      plugin('@quartz-community/created-modified-date', true, {
-        defaultDateType: 'modified',
-        priority: ['frontmatter'],
-      }, 10),
       plugin('@quartz-community/syntax-highlighting', true, {
         theme: { light: 'github-light', dark: 'github-dark' },
         keepBackground: false,
@@ -86,9 +82,10 @@ export function createControlledQuartzConfig(input: ControlledQuartzConfigInput)
       plugin('@quartz-community/unlisted-pages', true),
       plugin('@quartz-community/content-index', true, {
         enableSiteMap: true,
-        enableRSS: true,
+        enableRSS: false,
       }),
       plugin('@quartz-community/content-page', true),
+      plugin('@quartz-community/folder-page', true),
       plugin('@quartz-community/tag-page', true),
       plugin('@quartz-community/explorer', true, undefined, undefined, layout('left', 50)),
       plugin('@quartz-community/graph', input.graph, undefined, undefined, layout('right', 10)),
@@ -110,7 +107,6 @@ export function createControlledQuartzConfig(input: ControlledQuartzConfigInput)
         ...layout('beforeBody', 5),
         condition: 'not-index',
       }),
-      plugin('@quartz-community/footer', true, { links: {} }, undefined, layout('footer', 50)),
     ],
   });
 }

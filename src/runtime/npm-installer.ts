@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const SYSTEM_COMMAND_PATH = '/usr/bin:/bin';
 
 export interface LockedNpmInstallRequest {
   sourceDirectory: string;
@@ -34,8 +35,12 @@ export async function installLockedNpmProject(
   }
 
   await mkdir(request.cacheDirectory, { recursive: true });
-  const isolatedNpmConfig = join(request.cacheDirectory, '.pages-publish-empty-npmrc');
-  await writeFile(isolatedNpmConfig, '', { mode: 0o600 });
+  const isolatedUserConfig = join(request.cacheDirectory, '.pages-publish-user-npmrc');
+  const isolatedGlobalConfig = join(request.cacheDirectory, '.pages-publish-global-npmrc');
+  await Promise.all([
+    writeFile(isolatedUserConfig, '', { mode: 0o600 }),
+    writeFile(isolatedGlobalConfig, '', { mode: 0o600 }),
+  ]);
 
   try {
     await execFileAsync(
@@ -44,17 +49,20 @@ export async function installLockedNpmProject(
       {
         cwd: request.sourceDirectory,
         env: {
-          PATH: dirname(request.nodeExecutable),
+          // npm lifecycle scripts invoke POSIX tools (notably `sh`). Keep the
+          // managed Node first while exposing only the macOS system command
+          // directories instead of inheriting the user's mutable PATH.
+          PATH: `${dirname(request.nodeExecutable)}:${SYSTEM_COMMAND_PATH}`,
           TMPDIR: tmpdir(),
           npm_config_audit: 'false',
           npm_config_cache: request.cacheDirectory,
           npm_config_fund: 'false',
           npm_config_global: 'false',
-          npm_config_globalconfig: isolatedNpmConfig,
+          npm_config_globalconfig: isolatedGlobalConfig,
           npm_config_registry: 'https://registry.npmjs.org/',
           npm_config_replace_registry_host: 'never',
           npm_config_update_notifier: 'false',
-          npm_config_userconfig: isolatedNpmConfig,
+          npm_config_userconfig: isolatedUserConfig,
         },
         maxBuffer: 1024 * 1024,
         signal: request.signal,

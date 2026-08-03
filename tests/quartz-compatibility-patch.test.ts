@@ -11,6 +11,7 @@ describe('Quartz engine compatibility patch', () => {
     await writeFile(
       join(directory, 'quartz', 'cli', 'handlers.js'),
       [
+        'import serveHandler from "serve-handler"',
         'sassPlugin({',
         '  type: "css-text",',
         '  cssImports: true,',
@@ -21,6 +22,7 @@ describe('Quartz engine compatibility patch', () => {
         '  type: "css",',
         '  cssImports: true,',
         '}),',
+        '        await serveHandler(req, res, {',
       ].join('\n'),
     );
 
@@ -30,6 +32,8 @@ describe('Quartz engine compatibility patch', () => {
     expect(patched.match(/loadPaths:/gu)).toHaveLength(2);
     expect(patched).toContain('path.join(process.cwd(), "node_modules")');
     expect(patched).toContain('import(`${path.resolve(cacheFile)}?update=${randomUUID()}`)');
+    expect(patched).not.toContain('import serveHandler from "serve-handler"');
+    expect(patched).toContain('await import("serve-handler")');
   });
 
   it('fails closed when the pinned upstream source shape changes', async () => {

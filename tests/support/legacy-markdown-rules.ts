@@ -1,5 +1,5 @@
 import type { MarkdownIt, Token } from 'markdown-it';
-import { renderSafeMermaid } from '../content/mermaid';
+import { renderSafeMermaid } from '../../src/content/mermaid';
 
 export function installDefaultMarkdownRules(markdown: MarkdownIt): void {
   markdown.renderer.rules.pages_task_checkbox = (tokens, index) =>

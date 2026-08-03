@@ -4,11 +4,14 @@ import type {
   QuartzEngineRuntimeTools,
   ReadyQuartzEngine,
 } from '../runtime/quartz-engine-store';
+import { errorCode, QuartzEnvironmentError } from '../runtime/quartz-environment-error';
 
 export interface QuartzPublicationEnvironmentDependencies {
   platform: SupportedPlatformIdentity;
   ensureRuntime(): Promise<QuartzEngineRuntimeTools>;
   ensureEngine(runtime: QuartzEngineRuntimeTools): Promise<ReadyQuartzEngine>;
+  repairRuntime?(): Promise<QuartzEngineRuntimeTools>;
+  repairEngine?(runtime: QuartzEngineRuntimeTools): Promise<ReadyQuartzEngine>;
 }
 
 export class QuartzPublicationEnvironment {
@@ -32,15 +35,23 @@ export class QuartzPublicationEnvironment {
   }
 
   async repair(): Promise<PublicationEnvironmentStatus> {
+    const active = this.active;
+    if (active) await active.catch(() => undefined);
     this.ready = undefined;
-    await this.ensureReady();
+    const operation = this.prepareExclusive(true);
+    this.active = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.active === operation) this.active = undefined;
+    }
     return this.getStatus();
   }
 
   ensureReady(): Promise<ReadyQuartzEngine> {
     if (this.ready) return Promise.resolve(this.ready);
     if (this.active) return this.active;
-    const operation = this.prepareExclusive();
+    const operation = this.prepareExclusive(false);
     this.active = operation;
     void operation.finally(() => {
       if (this.active === operation) this.active = undefined;
@@ -48,22 +59,26 @@ export class QuartzPublicationEnvironment {
     return operation;
   }
 
-  private async prepareExclusive(): Promise<ReadyQuartzEngine> {
+  private async prepareExclusive(force: boolean): Promise<ReadyQuartzEngine> {
     try {
       this.status = { stage: 'checking-system' };
-      const runtime = await this.dependencies.ensureRuntime();
+      const runtime = force && this.dependencies.repairRuntime
+        ? await this.dependencies.repairRuntime()
+        : await this.dependencies.ensureRuntime();
       this.status = {
         stage: 'verifying-engine',
-        runtime: { source: 'managed', version: runtime.nodeVersion },
+        runtime: { source: runtime.source ?? 'managed', version: runtime.nodeVersion },
       };
-      const engine = await this.dependencies.ensureEngine(runtime);
+      const engine = force && this.dependencies.repairEngine
+        ? await this.dependencies.repairEngine(runtime)
+        : await this.dependencies.ensureEngine(runtime);
       if (engine.platform !== this.dependencies.platform) {
         throw new Error('The verified Quartz engine targets a different platform.');
       }
       this.ready = engine;
       this.status = {
         stage: 'ready',
-        runtime: { source: 'managed', version: runtime.nodeVersion },
+        runtime: { source: runtime.source ?? 'managed', version: runtime.nodeVersion },
         engine: { version: engine.engineVersion },
         ...(engine.usingFallback
           ? { impact: 'Quartz 更新失败，当前继续使用上一个已验证版本。' }
@@ -77,7 +92,14 @@ export class QuartzPublicationEnvironment {
         nextAction: 'repair',
         detailsAvailable: true,
       };
-      throw error;
+      if (errorCode(error)?.startsWith('quartz-engine-') || errorCode(error) === 'node-runtime-incompatible') {
+        throw error;
+      }
+      throw new QuartzEnvironmentError(
+        'quartz-engine-unavailable',
+        'No verified Quartz publication engine is available.',
+        error,
+      );
     }
   }
 }

@@ -44,6 +44,19 @@ export function degradeUnsupportedSyntax(source: string): string {
   return output + source.slice(cursor);
 }
 
+/** Removes Obsidian comments from immutable publication staging. */
+export function removeUnsupportedSyntax(source: string): string {
+  const ranges = findObsidianCommentRanges(source);
+  if (ranges.length === 0) return source;
+  let output = '';
+  let cursor = 0;
+  for (const range of ranges) {
+    output += source.slice(cursor, range.start);
+    cursor = range.end;
+  }
+  return output + source.slice(cursor);
+}
+
 export function inspectUnsupportedSyntax(
   snapshots: Map<string, ArticleSourceSnapshot>,
 ): UnsupportedSyntaxIssue[] {

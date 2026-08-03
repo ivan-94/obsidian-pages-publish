@@ -57,6 +57,10 @@ import {
 import { builtinQuartzEngineManifest } from './runtime/builtin-quartz-manifest';
 import { QuartzEngineStore } from './runtime/quartz-engine-store';
 import { createQuartzEngineSmoke } from './runtime/quartz-engine-smoke';
+import {
+  asManagedPublicationRuntime,
+  inspectEmbeddedPublicationRuntime,
+} from './runtime/runtime-selector';
 import { QuartzBuildRunner } from './site-builder/quartz-build-runner';
 import { QuartzSiteBuilder } from './site-builder/quartz-site-builder';
 import { CloudflareDesktopOAuth } from './cloudflare/oauth-host';
@@ -144,10 +148,25 @@ export default class PagesPublishPlugin extends Plugin {
       download,
       smoke: createQuartzEngineSmoke(join(environmentDirectory, 'smoke')),
     });
+    const embeddedRuntime = () => inspectEmbeddedPublicationRuntime({
+      nodeExecutable: process.execPath,
+      nodeVersion: process.versions.node,
+    });
     const publicationEnvironment = new QuartzPublicationEnvironment({
       platform,
-      ensureRuntime: () => runtimeStore.ensureReady(builtinManagedNodeManifest(platform)),
+      ensureRuntime: async () => await embeddedRuntime()
+        ?? asManagedPublicationRuntime(
+          await runtimeStore.ensureReady(builtinManagedNodeManifest(platform)),
+        ),
+      repairRuntime: async () => await embeddedRuntime()
+        ?? asManagedPublicationRuntime(
+          await runtimeStore.repair(builtinManagedNodeManifest(platform)),
+        ),
       ensureEngine: (runtime) => engineStore.ensureReady(
+        builtinQuartzEngineManifest(platform),
+        runtime,
+      ),
+      repairEngine: (runtime) => engineStore.repair(
         builtinQuartzEngineManifest(platform),
         runtime,
       ),
@@ -156,6 +175,7 @@ export default class PagesPublishPlugin extends Plugin {
       environment: publicationEnvironment,
       runner: new QuartzBuildRunner({
         rootDirectory: join(localPluginStateDirectory(vaultRoot), 'quartz'),
+        deniedReadRoots: [vaultRoot],
       }),
     });
     const cloudflareProjects = new CloudflarePagesProjectApi(
