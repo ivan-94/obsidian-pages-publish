@@ -26,8 +26,11 @@ describe('locked npm installer', () => {
       [
         "import { writeFile } from 'node:fs/promises'",
         "import { join } from 'node:path'",
-        "const expected = ['ci', '--omit=dev', '--no-audit', '--no-fund']",
+        "const expected = ['ci', '--include=dev', '--no-audit', '--no-fund']",
         'if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(expected)) process.exit(9)',
+        "if (process.env.npm_config_registry !== 'https://registry.npmjs.org/') process.exit(10)",
+        "if (process.env.npm_config_replace_registry_host !== 'never') process.exit(11)",
+        "if (!process.env.npm_config_userconfig?.endsWith('.pages-publish-empty-npmrc')) process.exit(12)",
         "await writeFile(join(process.cwd(), 'npm-ci-ran'), 'verified', 'utf8')",
       ].join('\n'),
       'utf8',

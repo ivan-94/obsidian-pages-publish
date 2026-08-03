@@ -348,11 +348,15 @@ export async function prepareLocalPreviewFromDirectory(
 
 /** Compatibility implementation retained while Quartz is introduced. */
 export const legacySiteBuilder: SiteBuilder = {
-  build: ({ vaultRoot, renderMode, webpDecoder }) =>
-    prepareLocalPreviewFromDirectory(vaultRoot, {
-      renderMode,
-      ...(webpDecoder === undefined ? {} : { webpDecoder }),
-    }),
+  build: ({ vaultRoot, renderMode, webpDecoder, focusSourcePath }) =>
+    focusSourcePath === undefined
+      ? prepareLocalPreviewFromDirectory(vaultRoot, {
+        renderMode,
+        ...(webpDecoder === undefined ? {} : { webpDecoder }),
+      })
+      : prepareArticlePreviewFromDirectory(vaultRoot, focusSourcePath, {
+        ...(webpDecoder === undefined ? {} : { webpDecoder }),
+      }),
 };
 
 interface OrderedPreviewPage extends PreviewPage {

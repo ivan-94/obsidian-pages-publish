@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -33,10 +33,14 @@ export async function installLockedNpmProject(
     );
   }
 
+  await mkdir(request.cacheDirectory, { recursive: true });
+  const isolatedNpmConfig = join(request.cacheDirectory, '.pages-publish-empty-npmrc');
+  await writeFile(isolatedNpmConfig, '', { mode: 0o600 });
+
   try {
     await execFileAsync(
       request.nodeExecutable,
-      [request.npmCliPath, 'ci', '--omit=dev', '--no-audit', '--no-fund'],
+      [request.npmCliPath, 'ci', '--include=dev', '--no-audit', '--no-fund'],
       {
         cwd: request.sourceDirectory,
         env: {
@@ -46,7 +50,11 @@ export async function installLockedNpmProject(
           npm_config_cache: request.cacheDirectory,
           npm_config_fund: 'false',
           npm_config_global: 'false',
+          npm_config_globalconfig: isolatedNpmConfig,
+          npm_config_registry: 'https://registry.npmjs.org/',
+          npm_config_replace_registry_host: 'never',
           npm_config_update_notifier: 'false',
+          npm_config_userconfig: isolatedNpmConfig,
         },
         maxBuffer: 1024 * 1024,
         signal: request.signal,

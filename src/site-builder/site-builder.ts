@@ -41,6 +41,8 @@ export interface SiteBuildRequest {
   /** Production publication omits local-only review affordances. */
   renderMode: 'local' | 'published';
   webpDecoder?: WebpDecoderBoundary;
+  /** Local article preview may stage one private note as unlisted without publishing it. */
+  focusSourcePath?: string;
 }
 
 /**

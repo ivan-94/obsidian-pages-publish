@@ -20,3 +20,16 @@ export function localPluginStateDirectory(
     vaultIdentity,
   );
 }
+
+/** Shared, rebuildable runtime and Quartz cache; never stored inside a Vault. */
+export function publicationEnvironmentDirectory(
+  input: { homeDirectory?: string } = {},
+): string {
+  return join(
+    input.homeDirectory ?? homedir(),
+    'Library',
+    'Application Support',
+    'pages-publish',
+    'environment',
+  );
+}

@@ -148,6 +148,15 @@ function sourceArchive(lockfile: Uint8Array): Uint8Array {
     { name: 'quartz-source/package.json', body: '{"name":"@jackyzha0/quartz","version":"5.0.0"}' },
     { name: 'quartz-source/package-lock.json', body: Buffer.from(lockfile).toString('utf8') },
     { name: 'quartz-source/quartz/', type: 'directory' },
+    { name: 'quartz-source/quartz/cli/', type: 'directory' },
+    {
+      name: 'quartz-source/quartz/cli/handlers.js',
+      body: [
+        'sassPlugin({ cssImports: true, })',
+        'sassPlugin({ cssImports: true, })',
+        'await import(`../../${cacheFile}?update=${randomUUID()}`)',
+      ].join('\n'),
+    },
     { name: 'quartz-source/quartz/bootstrap-cli.mjs', body: 'export {}' },
   ]);
 }

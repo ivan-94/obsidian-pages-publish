@@ -186,7 +186,7 @@ interface QuartzEngineManifest {
 3. 下载固定 Quartz source archive 和随版本固定的 lockfile/manifest。
 4. 在解包前验证下载大小上限、SHA-256 和可用签名。
 5. 拒绝绝对路径、`..`、符号链接、设备文件和越界归档成员。
-6. 在隔离临时目录执行固定 npm 版本的 `npm ci --omit=dev`。
+6. 在隔离临时目录执行固定 npm 版本和固定 lockfile 的 `npm ci --include=dev`。Quartz v5 CLI 每次构建直接使用上游列在 `devDependencies` 中的 `esbuild`，因此不可使用 `--omit=dev`；这些依赖只进入 Vault 外的引擎缓存，不进入插件发布包。
 7. `npm ci` 必须使用 lockfile；lockfile 不匹配或 registry 完整性失败即安装失败。
 8. 安装过程不得写全局 package，不执行 `npx ...@latest`，不动态添加 Quartz community plugin。
 9. 执行引擎 smoke：版本、CLI 入口、最小离线构建和输出读取。

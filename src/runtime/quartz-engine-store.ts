@@ -17,6 +17,7 @@ import {
   type QuartzEngineManifest,
 } from './quartz-engine-manifest';
 import { extractTrustedTarGz } from './safe-tar-extractor';
+import { applyQuartzEngineCompatibilityPatch } from './quartz-compatibility-patch';
 
 export interface QuartzEngineRuntimeTools {
   nodeExecutable: string;
@@ -49,7 +50,7 @@ export interface QuartzEngineSmokeRequest {
 
 export interface QuartzEngineStoreDependencies {
   rootDirectory: string;
-  download?: (url: string, signal?: AbortSignal) => Promise<Uint8Array>;
+  download: (url: string, signal?: AbortSignal) => Promise<Uint8Array>;
   installDependencies?: (request: LockedNpmInstallRequest) => Promise<void>;
   smoke: (request: QuartzEngineSmokeRequest) => Promise<void>;
 }
@@ -110,13 +111,14 @@ export class QuartzEngineStore {
     const temporaryDirectory = await mkdtemp(join(platformDirectory, '.install-'));
     let moved = false;
     try {
-      const archive = await (this.dependencies.download ?? downloadBounded)(
+      const archive = await this.dependencies.download(
         manifest.sourceUrl,
         signal,
       );
       verifySha256(archive, manifest.sourceSha256);
       await extractTrustedTarGz(archive, temporaryDirectory);
       await verifyQuartzPackage(temporaryDirectory, manifest.quartzVersion);
+      await applyQuartzEngineCompatibilityPatch(temporaryDirectory);
       await (this.dependencies.installDependencies ?? installLockedNpmProject)({
         sourceDirectory: temporaryDirectory,
         nodeExecutable: runtime.nodeExecutable,
@@ -289,20 +291,6 @@ function verifySha256(content: Uint8Array, expected: string): void {
   if (actual !== expected.toLowerCase()) {
     throw new Error('The Quartz source archive checksum did not match the engine manifest.');
   }
-}
-
-async function downloadBounded(url: string, signal?: AbortSignal): Promise<Uint8Array> {
-  const response = await fetch(url, { redirect: 'follow', signal });
-  if (!response.ok) throw new Error('The Quartz source archive download failed.');
-  const declaredLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declaredLength) && declaredLength > 64 * 1024 * 1024) {
-    throw new Error('The Quartz source archive download exceeded its size limit.');
-  }
-  const content = new Uint8Array(await response.arrayBuffer());
-  if (content.byteLength > 64 * 1024 * 1024) {
-    throw new Error('The Quartz source archive download exceeded its size limit.');
-  }
-  return content;
 }
 
 async function pathExists(path: string): Promise<boolean> {

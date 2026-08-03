@@ -21,6 +21,24 @@ export async function extractTrustedTarGz(
   destination: string,
   limits: TrustedTarLimits = {},
 ): Promise<void> {
+  return extractTarGz(archive, destination, limits, false);
+}
+
+/** Extracts the official Node distribution while deliberately omitting its three CLI symlinks. */
+export async function extractTrustedNodeRuntimeTarGz(
+  archive: Uint8Array,
+  destination: string,
+  limits: TrustedTarLimits = {},
+): Promise<void> {
+  return extractTarGz(archive, destination, limits, true);
+}
+
+async function extractTarGz(
+  archive: Uint8Array,
+  destination: string,
+  limits: TrustedTarLimits,
+  nodeRuntimeArchive: boolean,
+): Promise<void> {
   const compressedLimit = limits.maxCompressedBytes ?? defaultCompressedLimit;
   const expandedLimit = limits.maxExpandedBytes ?? defaultExpandedLimit;
   if (archive.byteLength === 0 || archive.byteLength > compressedLimit) {
@@ -75,13 +93,8 @@ export async function extractTrustedTarGz(
     const memberPath = pax.path ?? longPath ?? headerPath;
     longPath = undefined;
     validateMemberPath(memberPath);
-    if (pax.linkpath !== undefined) {
-      throw unsafe(`The Quartz source archive contains an unsafe member: ${memberPath}`);
-    }
-    if (type !== '\0' && type !== '0' && type !== '5') {
-      throw unsafe(`The Quartz source archive contains an unsafe member: ${memberPath}`);
-    }
-
+    const headerLink = readNullTerminated(header.subarray(157, 257));
+    const linkTarget = pax.linkpath ?? (headerLink.length === 0 ? undefined : headerLink);
     const parts = memberPath.replace(/\/$/u, '').split('/');
     const currentRoot = parts[0];
     if (archiveRoot === undefined) archiveRoot = currentRoot;
@@ -89,6 +102,13 @@ export async function extractTrustedTarGz(
       throw unsafe('The Quartz source archive must have exactly one root directory.');
     }
     const relativeParts = parts.slice(1);
+    const relativePath = relativeParts.join('/');
+    if (type === '2' && nodeRuntimeArchive && isKnownNodeCliLink(relativePath, linkTarget)) {
+      continue;
+    }
+    if (linkTarget !== undefined || (type !== '\0' && type !== '0' && type !== '5')) {
+      throw unsafe(`The Quartz source archive contains an unsafe member: ${memberPath}`);
+    }
     if (relativeParts.length === 0) {
       if (type !== '5') {
         throw unsafe('The Quartz source archive root must be a directory.');
@@ -115,6 +135,15 @@ export async function extractTrustedTarGz(
   if (archiveRoot === undefined) {
     throw unsafe('The Quartz source archive did not contain an engine root.');
   }
+}
+
+function isKnownNodeCliLink(path: string, target: string | undefined): boolean {
+  const knownLinks: Record<string, string> = {
+    'bin/corepack': '../lib/node_modules/corepack/dist/corepack.js',
+    'bin/npm': '../lib/node_modules/npm/bin/npm-cli.js',
+    'bin/npx': '../lib/node_modules/npm/bin/npx-cli.js',
+  };
+  return target !== undefined && knownLinks[path] === target;
 }
 
 function validateMemberPath(path: string): void {

@@ -32,9 +32,12 @@ import {
 } from './plugin/maintenance-log-host';
 import { PagesPublishMaintenanceLogView } from './plugin/maintenance-log-view';
 import { PAGES_PUBLISH_CONFIG_REPAIR_VIEW_TYPE, PagesPublishSiteConfigRepairView } from './plugin/site-config-repair-view';
-import { localPluginStateDirectory } from './plugin/local-state-directory';
+import {
+  localPluginStateDirectory,
+  publicationEnvironmentDirectory,
+} from './plugin/local-state-directory';
 import { ObsidianPagesPublishHost } from './plugin/obsidian-host';
-import { isSupportedPlatform } from './plugin/platform';
+import { isSupportedPlatform, supportedPlatformIdentity } from './plugin/platform';
 import { articleMenuAvailability, pagesPublishAction } from './plugin/safe-actions';
 import { openPluginSettingsInHost } from './plugin/settings-navigation';
 import { PagesPublishSettingTab } from './plugin/settings-tab';
@@ -46,7 +49,16 @@ import {
 } from './plugin/current-article-view';
 import { PAGES_PUBLISH_VIEW_TYPE, PagesPublishView } from './plugin/view';
 import { SiteSetupService } from './setup/site-setup';
-import { BundledPublicationEnvironment } from './plugin/bundled-environment';
+import { QuartzPublicationEnvironment } from './plugin/quartz-publication-environment';
+import {
+  ManagedNodeRuntimeStore,
+  builtinManagedNodeManifest,
+} from './runtime/managed-node-runtime';
+import { builtinQuartzEngineManifest } from './runtime/builtin-quartz-manifest';
+import { QuartzEngineStore } from './runtime/quartz-engine-store';
+import { createQuartzEngineSmoke } from './runtime/quartz-engine-smoke';
+import { QuartzBuildRunner } from './site-builder/quartz-build-runner';
+import { QuartzSiteBuilder } from './site-builder/quartz-site-builder';
 import { CloudflareDesktopOAuth } from './cloudflare/oauth-host';
 import { cloudflareOAuthBuildConfig } from './cloudflare/oauth-build-config';
 import { CloudflareOAuthLoopbackServer } from './cloudflare/oauth-loopback';
@@ -64,6 +76,12 @@ export default class PagesPublishPlugin extends Plugin {
 
     const adapter = this.app.vault.adapter as FileSystemAdapter;
     const vaultRoot = adapter.getBasePath();
+    const platform = supportedPlatformIdentity(
+      process.platform,
+      process.arch,
+      isFileSystemVault,
+    );
+    if (!platform) return;
     const maintenanceDirectory = `${this.manifest.dir ?? `.obsidian/plugins/${this.manifest.id}`}/maintenance`;
     const diagnosticLog = new BoundedDiagnosticLog();
     const cloudflareHttp = new CloudflareV4HttpClient(
@@ -105,9 +123,40 @@ export default class PagesPublishPlugin extends Plugin {
         save: async (data) => this.saveData(data),
       }),
     });
-    const publicationEnvironment = new BundledPublicationEnvironment({
-      runtimeVersion: process.versions.node,
-      engineVersion: this.manifest.version,
+    const environmentDirectory = publicationEnvironmentDirectory();
+    const download = async (url: string): Promise<Uint8Array> => {
+      const response = await requestUrl({ url, method: 'GET', throw: false });
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error('The publication environment download failed.');
+      }
+      const content = new Uint8Array(response.arrayBuffer);
+      if (content.byteLength === 0 || content.byteLength > 64 * 1024 * 1024) {
+        throw new Error('The publication environment download exceeded its size limit.');
+      }
+      return content;
+    };
+    const runtimeStore = new ManagedNodeRuntimeStore({
+      rootDirectory: environmentDirectory,
+      download,
+    });
+    const engineStore = new QuartzEngineStore({
+      rootDirectory: environmentDirectory,
+      download,
+      smoke: createQuartzEngineSmoke(join(environmentDirectory, 'smoke')),
+    });
+    const publicationEnvironment = new QuartzPublicationEnvironment({
+      platform,
+      ensureRuntime: () => runtimeStore.ensureReady(builtinManagedNodeManifest(platform)),
+      ensureEngine: (runtime) => engineStore.ensureReady(
+        builtinQuartzEngineManifest(platform),
+        runtime,
+      ),
+    });
+    const siteBuilder = new QuartzSiteBuilder({
+      environment: publicationEnvironment,
+      runner: new QuartzBuildRunner({
+        rootDirectory: join(localPluginStateDirectory(vaultRoot), 'quartz'),
+      }),
     });
     const cloudflareProjects = new CloudflarePagesProjectApi(
       cloudflareHttp,
@@ -160,6 +209,7 @@ export default class PagesPublishPlugin extends Plugin {
         setupConnection: cloudflareConnection,
         oauthCallback,
         setupEnvironment: publicationEnvironment,
+        siteBuilder,
         deploymentAdapter: createVaultCloudflarePagesDeploymentAdapter({
           vaultRoot,
           connection: cloudflareConnection,

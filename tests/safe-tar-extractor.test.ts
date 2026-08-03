@@ -3,7 +3,10 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { extractTrustedTarGz } from '../src/runtime/safe-tar-extractor';
+import {
+  extractTrustedNodeRuntimeTarGz,
+  extractTrustedTarGz,
+} from '../src/runtime/safe-tar-extractor';
 
 describe('safe Quartz source extraction', () => {
   it('extracts regular files beneath the single archive root', async () => {
@@ -34,6 +37,25 @@ describe('safe Quartz source extraction', () => {
     await expect(extractTrustedTarGz(tarGz([member]), destination)).rejects.toThrow(
       'unsafe member',
     );
+  });
+
+  it('omits only the official Node CLI symlinks from a managed runtime', async () => {
+    const destination = await mkdtemp(join(tmpdir(), 'pages-node-extract-'));
+    const archive = tarGz([
+      { name: 'node-v22.23.1/', type: 'directory' },
+      { name: 'node-v22.23.1/bin/', type: 'directory' },
+      { name: 'node-v22.23.1/bin/node', body: 'binary' },
+      {
+        name: 'node-v22.23.1/bin/npm',
+        type: 'symlink',
+        link: '../lib/node_modules/npm/bin/npm-cli.js',
+      },
+    ]);
+
+    await extractTrustedNodeRuntimeTarGz(archive, destination);
+
+    await expect(readFile(join(destination, 'bin/node'), 'utf8')).resolves.toBe('binary');
+    await expect(readFile(join(destination, 'bin/npm'), 'utf8')).rejects.toThrow();
   });
 });
 

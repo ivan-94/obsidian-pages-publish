@@ -27,7 +27,6 @@ import {
 } from './config/site-config';
 import {
   legacySiteBuilder,
-  prepareArticlePreviewFromDirectory,
   type LocalPreview,
 } from './core/preview';
 import type { SiteBuilder } from './site-builder/site-builder';
@@ -329,12 +328,17 @@ export class PagesPublishApplication {
   async openArticlePreview(
     sourcePath: string,
   ): Promise<PreviewSession & { articleUrl: string }> {
-    const preview = await prepareArticlePreviewFromDirectory(
-      this.vaultRoot,
-      sourcePath,
-    );
+    const preview = await this.siteBuilder.build({
+      vaultRoot: this.vaultRoot,
+      renderMode: 'local',
+      focusSourcePath: sourcePath,
+    });
+    const articlePath = preview.articles.find(
+      (article) => article.sourcePath === sourcePath,
+    )?.url;
+    if (!articlePath) throw new Error('Article did not produce a Quartz preview route.');
     const session = await this.previewServer.start(preview.files, preview.assets);
-    const articleUrl = new URL(preview.articlePath.slice(1), session.url).toString();
+    const articleUrl = new URL(articlePath.slice(1), session.url).toString();
     this.openExternal(articleUrl);
     return { ...session, articleUrl };
   }

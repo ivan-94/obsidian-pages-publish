@@ -116,6 +116,21 @@ describe('local preview server', () => {
     expect(await response.text()).toContain('color-scheme');
   });
 
+  it('serves Quartz scripts and indexes with executable-safe media types', async () => {
+    const server = new LocalPreviewServer();
+    servers.push(server);
+    const session = await server.start({
+      '/app.js': 'window.quartz = true;',
+      '/static/contentIndex.json': '{"pages":[]}',
+    });
+
+    const script = await fetch(`${session.url}app.js`);
+    const index = await fetch(`${session.url}static/contentIndex.json`);
+
+    expect(script.headers.get('content-type')).toBe('text/javascript; charset=utf-8');
+    expect(index.headers.get('content-type')).toBe('application/json; charset=utf-8');
+  });
+
   it('serves the designed HTML error page with a 404 status for missing routes', async () => {
     const server = new LocalPreviewServer();
     servers.push(server);
