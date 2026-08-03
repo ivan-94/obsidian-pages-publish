@@ -165,6 +165,23 @@ describe('local preview server', () => {
     expect(await response.text()).toBe(sitemap);
   });
 
+  it('applies the controlled Cloudflare redirect manifest before HTML fallback', async () => {
+    const server = new LocalPreviewServer();
+    servers.push(server);
+    const session = await server.start({
+      '/_redirects': '/old/ /new/ 301\n',
+      '/old/index.html': '<meta http-equiv="refresh" content="0;url=/new/">',
+      '/new/index.html': '<h1>New</h1>',
+    });
+
+    const response = await fetch(`${session.url}old/`, { redirect: 'manual' });
+    const manifest = await fetch(`${session.url}_redirects`, { redirect: 'manual' });
+
+    expect(response.status).toBe(301);
+    expect(response.headers.get('location')).toBe('/new/');
+    expect(manifest.status).toBe(404);
+  });
+
   it('reports its running session and clears it after a safe stop', async () => {
     const server = new LocalPreviewServer();
     servers.push(server);

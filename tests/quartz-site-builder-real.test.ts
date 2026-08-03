@@ -36,6 +36,7 @@ describe('real Quartz SiteBuilder integration', () => {
         '<link rel="canonical" href="https://example.com/writing/%E4%B8%AD%E6%96%87%20%E7%A9%BA%E6%A0%BC/"/>',
       );
       expect(preview.files['/index.html']).not.toContain('og-image.png');
+      expect(preview.files['/404.html']).toBe(preview.files['/404/index.html']);
       expect(preview.files['/writing/hello/index.html']).toMatch(
         /<link\b[^>]*href="\/index-[a-f0-9]+\.css"/iu,
       );
@@ -56,6 +57,9 @@ describe('real Quartz SiteBuilder integration', () => {
         'href="/writing/">Notes</a>',
       );
       expect(preview.files['/writing/old-case/index.html']).toContain('/writing/CaseSensitive/');
+      expect(preview.files['/_redirects']).toContain(
+        '/writing/old-case/ /writing/CaseSensitive/ 301',
+      );
       const contentIndex = JSON.parse(
         preview.files['/static/contentIndex.json'] ?? '{}',
       ) as Record<string, unknown>;

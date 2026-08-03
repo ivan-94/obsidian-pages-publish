@@ -160,6 +160,15 @@ export function bridgeAndAuditQuartzOutput(
     }
     files[path] = redirectDocument(redirect.to);
   }
+  if (staging.routePlan.redirects.length > 0) {
+    if (files['/_redirects'] !== undefined || assets['/_redirects'] !== undefined) {
+      throw new QuartzOutputAuditError(
+        'quartz-route-mismatch',
+        'Quartz emitted a file that conflicts with the controlled redirect manifest.',
+      );
+    }
+    files['/_redirects'] = cloudflareRedirectManifest(staging.routePlan.redirects);
+  }
 
   const expectedRoutes = new Set([
     ...staging.routeManifest.articles.map((article) => article.url),
@@ -179,10 +188,21 @@ export function bridgeAndAuditQuartzOutput(
       );
     }
   }
+  const notFoundPage = files['/404/index.html'];
+  if (notFoundPage !== undefined) {
+    if (files['/404.html'] !== undefined || assets['/404.html'] !== undefined) {
+      throw new QuartzOutputAuditError(
+        'quartz-route-mismatch',
+        'Quartz emitted a file that conflicts with the Cloudflare 404 fallback.',
+      );
+    }
+    files['/404.html'] = notFoundPage;
+  }
 
   const allowedHtml = new Set(
     [...expectedRoutes].filter((route) => route.endsWith('/')).map(routeOutputPath),
   );
+  allowedHtml.add('/404.html');
   for (const redirect of staging.routePlan.redirects) allowedHtml.add(routeOutputPath(redirect.from));
   for (const path of Object.keys(files).filter((path) => path.endsWith('.html'))) {
     if (!allowedHtml.has(path) && !path.startsWith('/tags/')) {
@@ -699,6 +719,26 @@ function redirectDocument(target: string): string {
     '<meta name="robots" content="noindex">',
     '</head><body></body></html>',
   ].join('');
+}
+
+function cloudflareRedirectManifest(
+  redirects: readonly QuartzStagingCompilation['routePlan']['redirects'][number][],
+): string {
+  if (redirects.length > 2_000) {
+    throw new QuartzOutputAuditError(
+      'quartz-output-invalid',
+      'The site exceeds the Cloudflare Pages static redirect limit.',
+    );
+  }
+  const lines = redirects.map((redirect) =>
+    `${encodeURI(redirect.from)} ${encodeURI(redirect.to)} 301`);
+  if (lines.some((line) => line.length > 1_000)) {
+    throw new QuartzOutputAuditError(
+      'quartz-output-invalid',
+      'A Cloudflare Pages redirect exceeds the supported rule length.',
+    );
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 function remoteRuntimeResource(source: string, contentType: string): string | undefined {

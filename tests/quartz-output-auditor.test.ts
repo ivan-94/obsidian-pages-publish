@@ -36,6 +36,7 @@ describe('Quartz output route bridge and auditor', () => {
       '<meta name="robots" content="noindex"/>',
     );
     expect(output.files['/privacy/index.html']).toBeDefined();
+    expect(output.files['/404.html']).toBe(output.files['/404/index.html']);
     expect(output.files['/search/index.html']).toBeDefined();
     expect(output.files['/graph/index.html']).toBeDefined();
     expect(output.files['/tags/index.html']).toBeDefined();
@@ -168,6 +169,45 @@ describe('Quartz output route bridge and auditor', () => {
 
     expect(output.files['/tags/index.html']).toContain('href="/tags/smoke/"');
     expect(output.files['/tags/smoke/index.html']).toBeDefined();
+  });
+
+  it('emits a bounded Cloudflare Pages permanent redirect manifest', () => {
+    const base = staging();
+    const withRedirects: Readonly<QuartzStagingCompilation> = {
+      ...base,
+      routePlan: {
+        ...base.routePlan,
+        redirects: [{ from: '/writing/旧 地址/', to: '/writing/hello/' }],
+      },
+      routeManifest: {
+        ...base.routeManifest,
+        redirects: [{ from: '/writing/旧 地址/', to: '/writing/hello/' }],
+      },
+    };
+
+    const output = bridgeAndAuditQuartzOutput(rawOutput(), withRedirects);
+
+    expect(output.files['/_redirects']).toBe(
+      '/writing/%E6%97%A7%20%E5%9C%B0%E5%9D%80/ /writing/hello/ 301\n',
+    );
+    expect(output.files['/writing/旧 地址/index.html']).toContain('/writing/hello/');
+  });
+
+  it('rejects more redirects than Cloudflare Pages can apply', () => {
+    const base = staging();
+    const redirects = Array.from({ length: 2_001 }, (_, index) => ({
+      from: `/old-${index}/`,
+      to: '/writing/hello/',
+    }));
+    const input: Readonly<QuartzStagingCompilation> = {
+      ...base,
+      routePlan: { ...base.routePlan, redirects },
+      routeManifest: { ...base.routeManifest, redirects },
+    };
+
+    expect(() => bridgeAndAuditQuartzOutput(rawOutput(), input)).toThrow(
+      expect.objectContaining({ code: 'quartz-output-invalid' }),
+    );
   });
 
   it('rejects remote runtime loads from emitted JS/CSS', () => {

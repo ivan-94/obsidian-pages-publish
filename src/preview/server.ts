@@ -63,10 +63,19 @@ export class LocalPreviewServer {
         response.end('Invalid URL encoding');
         return;
       }
+      const redirect = exactPreviewRedirect(files['/_redirects'], pathname);
+      if (redirect !== undefined) {
+        response.writeHead(redirect.status, {
+          location: redirect.location,
+          'x-content-type-options': 'nosniff',
+        });
+        response.end();
+        return;
+      }
       const filePath = pathname.endsWith('/')
         ? `${pathname}index.html`
         : pathname;
-      const body = files[filePath];
+      const body = pathname === '/_redirects' ? undefined : files[filePath];
       const asset = assets[pathname];
 
       if (body === undefined && asset === undefined) {
@@ -142,4 +151,26 @@ function contentTypeForGeneratedFile(path: string): string {
   if (path.endsWith('.xml')) return 'application/xml; charset=utf-8';
   if (path.endsWith('.txt')) return 'text/plain; charset=utf-8';
   return 'text/html; charset=utf-8';
+}
+
+function exactPreviewRedirect(
+  manifest: string | undefined,
+  pathname: string,
+): { location: string; status: number } | undefined {
+  if (manifest === undefined) return undefined;
+  for (const line of manifest.split('\n')) {
+    const [encodedSource, location, code, ...extra] = line.trim().split(/\s+/u);
+    if (!encodedSource || !location || !code || extra.length > 0) continue;
+    let source: string;
+    try {
+      source = decodeURI(encodedSource);
+    } catch {
+      continue;
+    }
+    if (source !== pathname) continue;
+    const status = Number(code);
+    if (![301, 302, 303, 307, 308].includes(status)) continue;
+    return { location, status };
+  }
+  return undefined;
 }

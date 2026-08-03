@@ -56,8 +56,6 @@ export class QuartzSiteBuilder implements SiteBuilder {
 
   private async buildExclusive(request: SiteBuildRequest): Promise<LocalPreview> {
     request.signal?.throwIfAborted();
-    const engine = await this.dependencies.environment.ensureReady(request.signal);
-    request.signal?.throwIfAborted();
     const staging = await compileQuartzStaging(request.vaultRoot, {
       ...(request.webpDecoder === undefined ? {} : { webpDecoder: request.webpDecoder }),
       ...(request.focusSourcePath === undefined
@@ -71,6 +69,9 @@ export class QuartzSiteBuilder implements SiteBuilder {
         ? {}
         : { allowedPrivateSourcePath: request.focusSourcePath }),
     });
+    request.signal?.throwIfAborted();
+    const engine = await this.dependencies.environment.ensureReady(request.signal);
+    request.signal?.throwIfAborted();
     const rawOutput = await this.dependencies.runner.run(engine, staging, request.signal);
     const output = bridgeAndAuditQuartzOutput(rawOutput, staging, auditPolicy);
     const routesBySource = new Map(

@@ -275,6 +275,7 @@ function validateAssetPath(path: string): void {
 }
 
 function contentTypeFor(path: string): string {
+  if (path === '/_redirects') return 'text/plain; charset=utf-8';
   if (path.endsWith('.html')) return 'text/html; charset=utf-8';
   if (path.endsWith('.css')) return 'text/css; charset=utf-8';
   if (path.endsWith('.js')) return 'text/javascript; charset=utf-8';

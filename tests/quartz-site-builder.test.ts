@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ReadyQuartzEngine } from '../src/runtime/quartz-engine-store';
 import { QuartzSiteBuilder } from '../src/site-builder/quartz-site-builder';
 import type { QuartzRawBuildOutput } from '../src/site-builder/quartz-build-runner';
@@ -102,6 +102,26 @@ describe('Quartz site builder', () => {
       signal: controller.signal,
     })).rejects.toMatchObject({ name: 'AbortError' });
     expect(runs).toBe(0);
+  });
+
+  it('does not prepare Node or Quartz when route planning has blockers', async () => {
+    const vaultRoot = await fixtureVault();
+    await writeFile(
+      join(vaultRoot, 'Notes', 'Duplicate.md'),
+      '---\npublication:\n  visibility: public\n  slug: hello\n---\nDuplicate',
+    );
+    const ensureReady = vi.fn(async () => readyEngine());
+    const builder = new QuartzSiteBuilder({
+      environment: { ensureReady },
+      runner: {
+        run: async (): Promise<QuartzRawBuildOutput> => {
+          throw new Error('must not run');
+        },
+      },
+    });
+
+    await expect(builder.build({ vaultRoot, renderMode: 'published' })).rejects.toThrow();
+    expect(ensureReady).not.toHaveBeenCalled();
   });
 
   it('aborts an active build and drains the queue when disposed', async () => {

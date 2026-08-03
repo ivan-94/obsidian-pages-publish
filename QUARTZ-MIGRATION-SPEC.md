@@ -633,12 +633,12 @@ src/runtime/npm-installer.ts
 | AC-QZ-03 | 固定 Node 22.23.1 arm64/x64 manifest、Node 20 拒绝、真实 Node 22 + Quartz install/smoke/build | 通过 | 在候选 Obsidian 内确认 embedded/managed 两条实际路径 |
 | AC-QZ-04 | 固定 archive/lock SHA、受控 `npm ci`、原子激活、离线 cache hit、fallback、Repair、磁盘预算、阶段通知、取消与缓存保留测试 | 自动门禁通过 | UI 首装/取消/失败/Repair 的可理解性与真实网络切换 |
 | AC-QZ-05 | staging 负向 fixture、symlink/archive 防护、macOS sandbox Vault canary、output canary 审计 | 通过 | 干净 Vault 放置真实 canary 后复验 |
-| AC-QZ-06 | Unicode、中文、空格、大小写、case collision、多个 root、index/custom index、redirect、`home_layout`、`publication.order`、扁平 HTML 相对引用与动态 Tag 尾斜杠的 Route Bridge/真实 build 测试 | 通过 | 线上 redirect 响应 |
+| AC-QZ-06 | Unicode、中文、空格、大小写、case collision、多个 root、index/custom index、redirect、`home_layout`、`publication.order`、扁平 HTML 相对引用与动态 Tag 尾斜杠的 Route Bridge/真实 build 测试；输出受控 `_redirects` 301 manifest | 通过 | 线上 redirect 响应 |
 | AC-QZ-07 | public/unlisted/private staging 与最终 HTML/JSON/XML/binary 负向检查；受控 canonical/noindex；真实 content index/sitemap/navigation smoke；同前缀 public/unlisted route 回归测试 | 通过 | 浏览器 Search/Graph/Explorer/Backlinks/Tag/Sitemap 人工抽查 |
 | AC-QZ-08 | raw HTML、事件属性、危险资源、Obsidian comment、Mermaid、Wiki/embed 降级、远程运行时 URL、临时绝对路径与缺失站内目标审计；Quartz build 网络 sandbox | 通过 | 浏览器执行面与网络面板抽查 |
 | AC-QZ-09 | 生产旧 renderer/theme 已删除；真实 Quartz DOM/CSS/静态资源构建；旧主题仅在 tests/support 保留 | 自动门禁通过 | Quartz 新视觉基线、暗色、窄屏、200% 与键盘 |
-| AC-QZ-10 | 预览/发布共用注入的 `SiteBuilder`；digest 前后复核、冻结快照、二进制/MIME/HEAD/404 测试；构建取消和 shutdown drain | 通过 | Obsidian 中编辑源文件时的预览/发布旅程 |
-| AC-QZ-11 | Direct Upload MIME/路径/大小/文件数/40 MiB/2,000 文件 batch、upload/activate 失败与部署事实测试 | 自动门禁通过 | 隔离 Cloudflare 项目的首发、更新、激活失败与下线 |
+| AC-QZ-10 | 预览/发布共用注入的 `SiteBuilder`；Blocker 先于环境准备；digest 前后复核、冻结快照、二进制/MIME/HEAD/404/301 测试；构建取消和 shutdown drain | 通过 | Obsidian 中编辑源文件时的预览/发布旅程 |
+| AC-QZ-11 | Direct Upload MIME/路径/大小/文件数/40 MiB/2,000 文件 batch、upload/activate 失败与部署事实测试；根 `_redirects` 与 Cloudflare `/404.html` fallback 产物 | 自动门禁通过 | 隔离 Cloudflare 项目的首发、更新、永久重定向、404、激活失败与下线 |
 | AC-QZ-12 | 全量测试、typecheck、lint、build、package、diff-check、插件生产 audit；真实 engine 依赖清单与安全处置复核 | 通过 | engine 升级时重新审计；完成 HAT 后作候选发布决策 |
 
 自动证据不能替代人工 HAT。尤其 AC-QZ-04、09、11 中明确列出的 UI、视觉和真实 Cloudflare 场景，在 [`hats/20260803-quartz-migration/guide.md`](./hats/20260803-quartz-migration/guide.md) 完成并留证前不得声称候选发布验收通过。
@@ -708,7 +708,8 @@ HAT 至少包含：
 5. 共享 runtime/engine/cache 位于 `~/Library/Application Support/pages-publish/environment`；每个 Vault 的临时构建位于以 Vault 路径 SHA-256 标识的 `vault-state/<identity>/quartz`。arm64 实测 Node 约 187 MiB、裁剪后 engine 约 249 MiB、首次 npm cache 约 85 MiB。
 6. Route Bridge 位于 Output Collector/Auditor 边界：使用稳定内部 staging slug 避免 Quartz 小写/空格归一化冲突；先按 Quartz 原始扁平 HTML 位置把相对 CSS/JS/Breadcrumb 解析为站内绝对路径，再恢复 Route Planner canonical 文件路径、尾斜杠和引用，并注入受控 canonical/unlisted noindex。Pinned compatibility patch 处理 Quartz workspace Sass 路径、动态 cache import、禁用 serve 依赖的懒加载，以及关闭 `@quartz-community/folder-page@0.1.0` 自带的重复日期列表；栏目成员和顺序由 Route Manifest 生成的 Markdown 列表控制，Quartz 仍负责页面布局与渲染，不改变产品 URL 规则。
 7. 单次下载上限为 64 MiB；2026-08-03 三次首次完整安装复测为 58.24 秒、43.96 秒和 48.71 秒。自动重试次数为 0，失败后保留 active engine，由用户显式 Repair 重试。候选发布 HAT 门槛为 120 秒、总环境占用不超过 1.5 GiB、开始前至少 2 GiB 可用空间；实现会在安装前检查可用空间、激活前检查总预算，并通过稳定错误进入 UI failed/Repair 状态。UI 显示离散阶段，不承诺 `requestUrl` 无法可靠提供的字节级百分比。
-8. 300 public + 30 unlisted + 30 private 的真实 Quartz 构建于 2026-08-03 最新复测为扫描 133 ms、构建 2.89 秒、heap 增量 29.0 MiB。候选门槛为构建不超过 10 秒、heap 增量不超过 256 MiB；最终门槛需在 HAT 指定机器复测。
+8. 300 public + 30 unlisted + 30 private 的真实 Quartz 构建于 2026-08-03 最新复测为扫描 101 ms、构建 3.01 秒、heap 增量 29.0 MiB。候选门槛为构建不超过 10 秒、heap 增量不超过 256 MiB；最终门槛需在 HAT 指定机器复测。
+9. Route Planner 的静态 redirect 同时生成 HTML fallback 与根 `/_redirects` 中的显式 301 规则；超过 Cloudflare Pages 的 2,000 条静态规则或单条 1,000 字符时构建失败。产品 `/404/` 路由保留，同时复制顶层 `/404.html` 供 Cloudflare Pages 缺失路由响应采用；本地 preview server 对同一 manifest 返回 301 并隐藏 manifest 文件。
 
 供应链审计对上游 lockfile 报告的两个 high 已有运行时处置：未启用的 OG image/favicon 插件及 `sharp`/libvips 在 smoke 前从已安装 engine 删除；只服务 Quartz serve 模式的 `serve-handler` 改为懒加载并删除，其传递依赖 `brace-expansion` 不进入受控 build runtime。处置项和 advisory ID 写入 `.pages-publish-dependencies.json`，缓存复用也会验证这些包继续缺席。
 
@@ -733,6 +734,7 @@ HAT 至少包含：
 - [`src/cloudflare/pages-deployment.ts`](./src/cloudflare/pages-deployment.ts)：必须保持的 Cloudflare Direct Upload 输出与限制。
 - [Quartz Configuration](https://quartz.jzhao.xyz/configuration)、[Private Pages](https://quartz.jzhao.xyz/features/private-pages)、[Folder and Tag Listings](https://quartz.jzhao.xyz/features/folder-and-tag-listings) 与 [ObsidianFlavoredMarkdown](https://quartz.jzhao.xyz/plugins/ObsidianFlavoredMarkdown)：Quartz 5 官方配置、过滤、页面和 Obsidian 语法依据。
 - [Quartz v5 `package.json`](https://github.com/jackyzha0/quartz/blob/v5/package.json)、[默认配置](https://github.com/jackyzha0/quartz/blob/v5/quartz.config.default.yaml)、[Markdown parser](https://github.com/jackyzha0/quartz/blob/v5/quartz/processors/parse.ts) 与 [Assets emitter](https://github.com/jackyzha0/quartz/blob/v5/quartz/plugins/emitters/assets.ts)：Node 22、依赖、默认插件、raw HTML 管线和非 Markdown 资源输出依据。
+- [Cloudflare Pages Redirects](https://developers.cloudflare.com/pages/configuration/redirects/)、[Serving Pages](https://developers.cloudflare.com/pages/configuration/serving-pages/) 与 [Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)：根 `_redirects`、301/规则上限、顶层 `404.html` 和预构建目录上传契约。
 - `/Users/ivan/.agents/docs/agents/workflows.md` 与 `/Users/ivan/.agents/docs/agents/handoff-policy.md`：持久化规格的工作流和 Source Manifest 要求。
 
 ### Produced artifacts
@@ -754,9 +756,9 @@ HAT 至少包含：
 ### Verification evidence
 
 - 2026-08-03 对照当前仓库 `PRODUCT-SPEC.md`、`DESIGN.md`、`TASK.md`、本规格和核心实现完成逐项架构审计。
-- `npm test`：67 个 test files 通过、4 个按真实环境变量跳过；612 tests 通过、5 个跳过。
+- `npm test`：67 个 test files 通过、4 个按真实环境变量跳过；616 tests 通过、5 个跳过。
 - 使用固定 source archive 与 Node 22.23.1 执行 `tests/quartz-engine-store-real.test.ts`：真实 `npm ci`、安全裁剪、四项 compatibility patch、smoke、原子激活和断网缓存复用通过；最新复验耗时 48.71 秒，先前两次为 58.24 秒和 43.96 秒。
-- 使用裁剪后的固定 engine 执行 `tests/quartz-real-smoke.test.ts`、`tests/quartz-site-builder-real.test.ts` 与 `tests/release-benchmark.test.ts`：真实构建、Vault sandbox、Unicode/空格/大小写/冲突 route、扁平 HTML 相对资源、动态 Tag Page、canonical/noindex、redirect、`sections/latest`、order/date、custom index、同前缀 unlisted/public route、确定性和 360 篇基准全部通过；最新基准为扫描 133 ms、构建 2.89 秒、heap 增量 29.0 MiB。
+- 使用裁剪后的固定 engine 执行 `tests/quartz-real-smoke.test.ts`、`tests/quartz-site-builder-real.test.ts` 与 `tests/release-benchmark.test.ts`：真实构建、Vault sandbox、Unicode/空格/大小写/冲突 route、扁平 HTML 相对资源、动态 Tag Page、canonical/noindex、redirect HTML + `_redirects` 301、Cloudflare 404 fallback、`sections/latest`、order/date、custom index、同前缀 unlisted/public route、确定性和 360 篇基准全部通过；最新基准为扫描 101 ms、构建 3.01 秒、heap 增量 29.0 MiB。
 - `npm run typecheck`、`npm run lint`、`npm run package` 和 `git diff --check` 通过；release staging 只有 `main.js`、`manifest.json`、`styles.css` 三个文件。
 - `npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org/`：插件生产依赖 0 finding。Quartz lock 的两个 high 按本节安全裁剪策略处置并进入引擎依赖清单。
 - `bash -n hats/20260803-quartz-migration/prepare.sh` 与 `prepare.sh prepare` 通过；HAT 状态为 `prepared`。本机没有 `shellcheck`；`hat-run` 自动报告与人工 GUI/Cloudflare 执行尚未开始。
