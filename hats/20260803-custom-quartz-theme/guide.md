@@ -12,6 +12,7 @@
 - Prepare status: `prepared`
 - Latest run: `20260803-185611`
 - Latest report: [`reports/20260803-185611/summary.md`](./reports/20260803-185611/summary.md)
+- Human acceptance report: [`human-report.md`](./human-report.md)（environment ready，等待人工结果）
 - Overall status: `MANUAL_REQUIRED`
 
 <!-- HAT:END metadata -->
@@ -20,7 +21,7 @@
 
 - 执行环境：macOS Obsidian 桌面端，本地文件系统 Vault，Node ≥22。
 - 数据库 / schema：不适用；站点配置为 `site.yml v1`，Theme API 为 `v1`，Quartz 为 `5.0.0`。
-- 准备命令：`hats/20260803-custom-quartz-theme/prepare.sh prepare`
+- 准备命令：`hats/20260803-custom-quartz-theme/prepare.sh prepare`；会构建并安装当前三文件 candidate 到受控 Vault，同时启用 `pages-publish`。
 - 启动入口：在 Obsidian 中将 `test-vault/` 作为 Vault 打开；从设置页进入“站点主题”。
 - 本地预览 URL：由 Pages Publish 运行时动态分配。
 - 自动化入口：`npm run typecheck`、`npm run lint`、`npm test`；真实引擎测试需要设置 guide Source Manifest 中记录的三个 `PAGES_PUBLISH_*` 环境变量。
@@ -211,6 +212,7 @@
 
 - [`guide.md`](./guide.md)
 - [`prepare.sh`](./prepare.sh)
+- [`human-report.md`](./human-report.md)
 - `test-vault/`（由 prepare 生成）
 - `reports/<run-id>/`（由 hat-run 生成）
 
@@ -227,6 +229,7 @@
 - 已在 1440、768、390、320 检查首页；390 检查文章；暗色、搜索自动聚焦和离线 Graph 已实测。
 - `bash -n hats/20260803-custom-quartz-theme/prepare.sh` 已通过；shellcheck 当前不可用。
 - `prepare.sh prepare` 已完成：三文件 release、外部主题 `.tgz`、4 篇隔离 fixture 和精确 local integrity 均已生成。
+- 当前 release 已安装到 `test-vault/.obsidian/plugins/pages-publish/`，三个文件与 release 逐字节一致，`community-plugins.json` 已启用该插件。
 
 ### Open questions / risks
 

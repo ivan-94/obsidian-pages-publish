@@ -9,6 +9,8 @@ else
 fi
 test_vault="$script_dir/test-vault"
 marker="$test_vault/.pages-publish-custom-theme-hat-v1"
+plugin_id="pages-publish"
+plugin_directory="$test_vault/.obsidian/plugins/$plugin_id"
 theme_root="$repo_root/external-themes/brutalist"
 theme_archive="$theme_root/artifacts/pages-publish-theme-brutalist-1.0.0.tgz"
 action="${1:-info}"
@@ -57,6 +59,17 @@ prepared() {
   done
   [[ -d "$candidate" && ! -L "$candidate" ]] || return 1
   [[ "$(find "$candidate" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" == "3" ]] || return 1
+  [[ -d "$plugin_directory" && ! -L "$plugin_directory" ]] || return 1
+  local plugin_file
+  for plugin_file in main.js manifest.json styles.css; do
+    [[ -f "$plugin_directory/$plugin_file" && ! -L "$plugin_directory/$plugin_file" ]] || return 1
+    cmp -s "$candidate/$plugin_file" "$plugin_directory/$plugin_file" || return 1
+  done
+  node --input-type=module -e '
+    import { readFile } from "node:fs/promises";
+    const enabled = JSON.parse(await readFile(process.argv[1], "utf8"));
+    if (!Array.isArray(enabled) || !enabled.includes(process.argv[2])) process.exit(1);
+  ' "$test_vault/.obsidian/community-plugins.json" "$plugin_id"
 }
 
 create_vault() {
@@ -169,6 +182,49 @@ EOF
   : > "$marker"
 }
 
+install_candidate() {
+  local candidate temporary
+  candidate="$(candidate_directory)"
+  [[ -d "$test_vault" && ! -L "$test_vault" && -f "$marker" && ! -L "$marker" ]] || {
+    printf 'Refusing to install the plugin into an unrecognised Vault: %s\n' "$test_vault" >&2
+    return 1
+  }
+  [[ -d "$test_vault/.obsidian" && ! -L "$test_vault/.obsidian" ]] || {
+    printf 'The controlled HAT Vault has an unsafe .obsidian directory.\n' >&2
+    return 1
+  }
+  mkdir -p "$plugin_directory"
+  [[ -d "$plugin_directory" && ! -L "$plugin_directory" ]] || {
+    printf 'The controlled HAT Vault has an unsafe plugin directory.\n' >&2
+    return 1
+  }
+  for plugin_file in main.js manifest.json styles.css; do
+    [[ -f "$candidate/$plugin_file" && ! -L "$candidate/$plugin_file" ]] || {
+      printf 'Candidate plugin file is missing or unsafe: %s\n' "$candidate/$plugin_file" >&2
+      return 1
+    }
+    cp "$candidate/$plugin_file" "$plugin_directory/$plugin_file"
+  done
+  temporary="$test_vault/.obsidian/community-plugins.json.tmp"
+  node --input-type=module -e '
+    import { readFile, writeFile } from "node:fs/promises";
+    const [path, temporary, pluginId] = process.argv.slice(1);
+    let enabled = [];
+    try {
+      enabled = JSON.parse(await readFile(path, "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (!Array.isArray(enabled) || enabled.some((item) => typeof item !== "string")) {
+      throw new TypeError("community-plugins.json must contain a string array");
+    }
+    if (!enabled.includes(pluginId)) enabled.push(pluginId);
+    enabled.sort();
+    await writeFile(temporary, `${JSON.stringify(enabled, null, 2)}\n`, { mode: 0o600 });
+  ' "$test_vault/.obsidian/community-plugins.json" "$temporary" "$plugin_id"
+  mv "$temporary" "$test_vault/.obsidian/community-plugins.json"
+}
+
 summary() {
   local status="$1"
   cat <<EOF
@@ -197,6 +253,7 @@ case "$action" in
     (cd "$repo_root" && npm run package)
     (cd "$theme_root" && npm run pack:local)
     create_vault
+    install_candidate
     if prepared; then
       summary prepared
     else
