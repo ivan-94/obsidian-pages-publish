@@ -9,3 +9,4 @@ data.json
 hats/*/test-vault/
 hats
 artifacts
+packages/*/dist/

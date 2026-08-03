@@ -25,6 +25,69 @@ describe('Quartz build runner', () => {
     expect(output.sourceDigest).toBe('frozen-source-digest');
   });
 
+  it('keeps an unlisted section index out of a sections home page', async () => {
+    const engineDirectory = await fakeEngine([
+      "const home = await readFile(join(content, 'index.md'), 'utf8')",
+      "if (home.includes('/writing/hidden-section/')) throw new Error('unlisted section leaked onto home')",
+    ]);
+    const buildRoot = await mkdtemp(join(tmpdir(), 'pages-quartz-builds-'));
+    const runner = new QuartzBuildRunner({ rootDirectory: buildRoot });
+    const base = staging();
+    const input: Readonly<QuartzStagingCompilation> = {
+      ...base,
+      config: {
+        ...base.config,
+        site: { ...base.config.site, homeLayout: 'sections' },
+      },
+      routePlan: {
+        ...base.routePlan,
+        articles: [
+          ...base.routePlan.articles,
+          {
+            sourcePath: 'Notes/Hidden/_index.md',
+            url: '/writing/hidden-section/',
+            onlineUrl: undefined,
+            redirects: [],
+          },
+          {
+            sourcePath: 'Notes/Hidden/Child.md',
+            url: '/writing/hidden-section/child/',
+            onlineUrl: undefined,
+            redirects: [],
+          },
+        ],
+        sections: [{
+          directoryPath: 'Notes/Hidden',
+          url: '/writing/hidden-section/',
+          sourcePath: 'Notes/Hidden/_index.md',
+          generated: false,
+        }],
+      },
+      routeManifest: {
+        ...base.routeManifest,
+        articles: [
+          ...base.routeManifest.articles,
+          {
+            sourcePath: 'Notes/Hidden/_index.md',
+            title: 'Hidden section',
+            url: '/writing/hidden-section/',
+            visibility: 'unlisted',
+            kind: 'index',
+          },
+          {
+            sourcePath: 'Notes/Hidden/Child.md',
+            title: 'Public child',
+            url: '/writing/hidden-section/child/',
+            visibility: 'public',
+            kind: 'article',
+          },
+        ],
+      },
+    };
+
+    await expect(runner.run(readyEngine(engineDirectory), input)).resolves.toBeDefined();
+  });
+
   it.skipIf(process.platform !== 'darwin')(
     'denies Vault reads to native child processes as well as the Quartz Node process',
     async () => {

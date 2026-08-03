@@ -29,6 +29,7 @@ describe('Quartz engine compatibility patch', () => {
         '        await serveHandler(req, res, {',
       ].join('\n'),
     );
+    await writeGlobFixture(directory);
 
     await applyQuartzEngineCompatibilityPatch(directory);
 
@@ -38,12 +39,15 @@ describe('Quartz engine compatibility patch', () => {
     expect(patched).toContain('import(`${path.resolve(cacheFile)}?update=${randomUUID()}`)');
     expect(patched).not.toContain('import serveHandler from "serve-handler"');
     expect(patched).toContain('await import("serve-handler")');
+    await expect(readFile(join(directory, 'quartz', 'util', 'glob.ts'), 'utf8'))
+      .resolves.toContain('pages-publish-controlled-content-root');
   });
 
   it('fails closed when the pinned upstream source shape changes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pages-quartz-patch-reject-'));
     await mkdir(join(directory, 'quartz', 'cli'), { recursive: true });
     await writeFile(join(directory, 'quartz', 'cli', 'handlers.js'), 'changed upstream');
+    await writeGlobFixture(directory);
 
     await expect(applyQuartzEngineCompatibilityPatch(directory)).rejects.toThrow(
       'compatibility patch',
@@ -88,6 +92,7 @@ describe('Quartz engine compatibility patch', () => {
         '        await serveHandler(req, res, {',
       ].join('\n'),
     );
+    await writeGlobFixture(directory);
     const packageDirectory = join(
       directory,
       'node_modules',
@@ -112,3 +117,11 @@ describe('Quartz engine compatibility patch', () => {
     await expect(quartzCompatibilityPatchesMatch(directory)).resolves.toBe(false);
   });
 });
+
+async function writeGlobFixture(directory: string): Promise<void> {
+  await mkdir(join(directory, 'quartz', 'util'), { recursive: true });
+  await writeFile(
+    join(directory, 'quartz', 'util', 'glob.ts'),
+    'await globby(pattern, { cwd, ignore: ignorePatterns, gitignore: true, })',
+  );
+}

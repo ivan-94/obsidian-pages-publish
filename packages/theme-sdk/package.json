@@ -1,0 +1,23 @@
+{
+  "name": "@pages-publish/theme-sdk",
+  "version": "1.0.0",
+  "description": "Stable presentation contract for external Pages Publish Quartz themes.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

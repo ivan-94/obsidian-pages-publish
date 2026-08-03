@@ -12,6 +12,15 @@ import {
 import { isAbsolute, join, relative, resolve } from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { normalizeRouteUrlPath } from '../routing/url-path';
+import {
+  assertExactThemeVersion,
+  assertLocalThemeArtifact,
+  assertThemeIntegrity,
+  assertThemePackageName,
+  normalizeThemeOptions,
+  ThemeContractError,
+  type SiteThemeReference,
+} from '../theme/theme-contract';
 
 export interface SiteConfigV1 {
   version: 1;
@@ -20,6 +29,7 @@ export interface SiteConfigV1 {
     description?: string;
     homeLayout: 'sections' | 'latest';
     timezone?: string;
+    theme?: SiteThemeReference;
   };
   contentRoots: Array<{
     path: string;
@@ -104,6 +114,7 @@ interface RawSiteConfig {
     description?: unknown;
     home_layout?: unknown;
     timezone?: unknown;
+    theme?: unknown;
   };
   content_roots?: Array<{
     path?: unknown;
@@ -160,6 +171,7 @@ async function loadSiteConfigSource(
   }
   const config = parseSupportedConfig(raw);
   await assertExistingContentRootsStayInVault(vaultRoot, config);
+  await assertConfiguredLocalThemeArtifact(vaultRoot, config);
 
   return {
     status: 'editable',
@@ -514,7 +526,66 @@ export async function validateSiteConfigForDirectory(
     options.systemTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const config = parseSupportedConfig(toRawConfig(preparedInput));
   await assertExistingContentRootsStayInVault(vaultRoot, config);
+  await assertConfiguredLocalThemeArtifact(vaultRoot, config);
   return config;
+}
+
+async function assertConfiguredLocalThemeArtifact(
+  vaultRoot: string,
+  config: SiteConfigV1,
+): Promise<void> {
+  const theme = config.site.theme;
+  if (theme?.source !== 'local') return;
+  const artifactPath = join(vaultRoot, ...theme.artifact.split('/'));
+  try {
+    for (const relativePath of ['.publish', '.publish/themes', theme.artifact]) {
+      const stats = await lstat(join(vaultRoot, ...relativePath.split('/')));
+      if (stats.isSymbolicLink()) {
+        throw new SiteConfigValidationError([{
+          code: 'theme-artifact-symlink',
+          path: 'site.theme.artifact',
+          message: 'Local theme artifact and its parent directories cannot be symbolic links.',
+        }]);
+      }
+    }
+    const stats = await lstat(artifactPath);
+    if (!stats.isFile() || stats.size <= 0 || stats.size > 16 * 1024 * 1024) {
+      throw new SiteConfigValidationError([{
+        code: 'theme-artifact-invalid',
+        path: 'site.theme.artifact',
+        message: 'Local theme artifact must be a non-empty regular .tgz file up to 16 MiB.',
+      }]);
+    }
+    const canonicalVault = await realpath(vaultRoot);
+    const canonicalArtifact = await realpath(artifactPath);
+    if (canonicalArtifact !== resolve(canonicalVault, theme.artifact)) {
+      throw new SiteConfigValidationError([{
+        code: 'theme-artifact-symlink',
+        path: 'site.theme.artifact',
+        message: 'Local theme artifact must resolve directly inside the Vault.',
+      }]);
+    }
+    const actual = `sha512-${createHash('sha512')
+      .update(await readFile(artifactPath))
+      .digest('base64')}`;
+    if (actual !== theme.integrity) {
+      throw new SiteConfigValidationError([{
+        code: 'theme-artifact-integrity-drift',
+        path: 'site.theme.integrity',
+        message: 'Local theme artifact no longer matches its configured sha512 integrity.',
+      }]);
+    }
+  } catch (error) {
+    if (error instanceof SiteConfigValidationError) throw error;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new SiteConfigValidationError([{
+        code: 'theme-artifact-missing',
+        path: 'site.theme.artifact',
+        message: 'Configured local theme artifact is missing from the Vault.',
+      }]);
+    }
+    throw error;
+  }
 }
 
 async function assertExistingContentRootsStayInVault(
@@ -570,6 +641,7 @@ function parseSupportedConfig(raw: RawSiteConfig): SiteConfigV1 {
   const description = optionalString(raw.site?.description);
   const homeLayout = raw.site?.home_layout;
   const timezone = optionalString(raw.site?.timezone);
+  const theme = parseSiteTheme(raw.site?.theme);
   const projectName = stringValue(raw.cloudflare?.project_name);
   const customDomain = optionalString(raw.cloudflare?.custom_domain);
   const excludes = raw.assets?.exclude ?? [];
@@ -692,6 +764,7 @@ function parseSupportedConfig(raw: RawSiteConfig): SiteConfigV1 {
       ...(description === undefined ? {} : { description }),
       homeLayout: homeLayout as 'sections' | 'latest',
       ...(timezone === undefined ? {} : { timezone }),
+      ...(theme === undefined ? {} : { theme }),
     },
     contentRoots,
     assets: {
@@ -804,6 +877,9 @@ function toRawConfig(config: SiteConfigV1): RawSiteConfig {
       ...(config.site.timezone === undefined
         ? {}
         : { timezone: config.site.timezone }),
+      ...(config.site.theme === undefined
+        ? {}
+        : { theme: toRawTheme(config.site.theme) }),
     },
     content_roots: config.contentRoots.map((root) => ({
       path: root.path,
@@ -818,6 +894,148 @@ function toRawConfig(config: SiteConfigV1): RawSiteConfig {
         : { custom_domain: config.cloudflare.customDomain }),
     },
   };
+}
+
+function parseSiteTheme(value: unknown): SiteThemeReference | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainRecord(value)) {
+    throw new SiteConfigValidationError([
+      invalidField('site.theme', 'site.theme must be a YAML mapping.'),
+    ]);
+  }
+  try {
+    const source = stringValue(value.source);
+    if (source === 'npm') {
+      assertKnownThemeKeys(
+        value,
+        ['source', 'package', 'version', 'integrity', 'options'],
+      );
+      const packageName = requiredThemeString(value.package, 'site.theme.package');
+      const version = requiredThemeString(value.version, 'site.theme.version');
+      const integrity = requiredThemeString(value.integrity, 'site.theme.integrity');
+      assertThemePackageName(packageName, 'site.theme.package');
+      assertExactThemeVersion(version, 'site.theme.version');
+      assertThemeIntegrity(integrity, 'site.theme.integrity');
+      return {
+        source,
+        package: packageName,
+        version,
+        integrity,
+        options: normalizeThemeOptions(value.options),
+      };
+    }
+    if (source === 'local') {
+      assertKnownThemeKeys(
+        value,
+        ['source', 'artifact', 'integrity', 'options'],
+      );
+      const artifact = requiredThemeString(value.artifact, 'site.theme.artifact');
+      const integrity = requiredThemeString(value.integrity, 'site.theme.integrity');
+      assertLocalThemeArtifact(artifact, 'site.theme.artifact');
+      assertThemeIntegrity(integrity, 'site.theme.integrity');
+      return {
+        source,
+        artifact,
+        integrity,
+        options: normalizeThemeOptions(value.options),
+      };
+    }
+    throw new SiteConfigValidationError([
+      {
+        code: 'invalid-theme-source',
+        path: 'site.theme.source',
+        message: 'site.theme.source must be npm or local.',
+      },
+    ]);
+  } catch (error) {
+    if (error instanceof SiteConfigValidationError) throw error;
+    if (error instanceof ThemeContractError) {
+      throw new SiteConfigValidationError([
+        {
+          code: error.code,
+          path: error.path,
+          message: error.message.startsWith(`${error.path}: `)
+            ? error.message.slice(error.path.length + 2)
+            : error.message,
+        },
+      ]);
+    }
+    throw error;
+  }
+}
+
+function toRawTheme(theme: SiteThemeReference): Record<string, unknown> {
+  const options = sortThemeOptions(theme.options);
+  if (theme.source === 'npm') {
+    return {
+      source: theme.source,
+      package: theme.package,
+      version: theme.version,
+      integrity: theme.integrity,
+      ...(Object.keys(options).length === 0 ? {} : { options }),
+    };
+  }
+  return {
+    source: theme.source,
+    artifact: theme.artifact,
+    integrity: theme.integrity,
+    ...(Object.keys(options).length === 0 ? {} : { options }),
+  };
+}
+
+function sortThemeOptions(
+  options: SiteThemeReference['options'],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(options)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [
+        key,
+        value !== null && typeof value === 'object' && !Array.isArray(value)
+          ? sortThemeOptions(value)
+          : Array.isArray(value)
+            ? value.map((item) =>
+              item !== null && typeof item === 'object' && !Array.isArray(item)
+                ? sortThemeOptions(item)
+                : item)
+            : value,
+      ]),
+  );
+}
+
+function requiredThemeString(value: unknown, path: string): string {
+  const normalized = stringValue(value);
+  if (normalized === undefined) {
+    throw new SiteConfigValidationError([
+      invalidField(path, `${path} must be a non-empty string.`),
+    ]);
+  }
+  return normalized;
+}
+
+function assertKnownThemeKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): void {
+  const known = new Set(keys);
+  const unknown = Object.keys(value).find((key) => !known.has(key));
+  if (unknown !== undefined) {
+    throw new SiteConfigValidationError([
+      {
+        code: 'unknown-theme-field',
+        path: `site.theme.${unknown}`,
+        message: `Unknown theme field: ${unknown}.`,
+      },
+    ]);
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  return prototype === Object.prototype || prototype === null;
 }
 
 function digest(source: string): string {

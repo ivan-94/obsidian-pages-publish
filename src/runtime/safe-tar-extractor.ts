@@ -9,6 +9,8 @@ const defaultExpandedLimit = 256 * 1024 * 1024;
 export interface TrustedTarLimits {
   maxCompressedBytes?: number;
   maxExpandedBytes?: number;
+  maxEntries?: number;
+  maxFileBytes?: number;
 }
 
 export class UnsafeArchiveError extends Error {
@@ -59,16 +61,26 @@ async function extractTarGz(
   let localPax: Record<string, string> | undefined;
   let globalPax: Record<string, string> = {};
   let longPath: string | undefined;
+  let entryCount = 0;
+  const maxEntries = limits.maxEntries ?? 100_000;
+  const maxFileBytes = limits.maxFileBytes ?? expandedLimit;
 
   while (offset + tarBlockSize <= tar.length) {
     const header = tar.subarray(offset, offset + tarBlockSize);
     offset += tarBlockSize;
     if (header.every((byte) => byte === 0)) break;
+    entryCount += 1;
+    if (entryCount > maxEntries) {
+      throw unsafe('The Quartz source archive contains too many members.');
+    }
     verifyHeaderChecksum(header);
 
     const size = readTarNumber(header, 124, 12);
     if (!Number.isSafeInteger(size) || size < 0 || offset + size > tar.length) {
       throw unsafe('The Quartz source archive contains an invalid member size.');
+    }
+    if (size > maxFileBytes) {
+      throw unsafe('The Quartz source archive contains a member that exceeds its file size limit.');
     }
     const body = tar.subarray(offset, offset + size);
     offset += Math.ceil(size / tarBlockSize) * tarBlockSize;

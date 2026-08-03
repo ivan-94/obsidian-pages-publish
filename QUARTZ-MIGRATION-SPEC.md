@@ -20,6 +20,7 @@
 - 发布意图、可见性、路由、资源安全、发布快照、Cloudflare 原子部署和失败恢复仍以 `PRODUCT-SPEC.md` 为准。
 - [`DESIGN.md`](./DESIGN.md) 继续约束 Obsidian 插件界面；放弃的是当前生成站点的自研主题，不是插件 UI 对 Obsidian 主题的继承。
 - [`TASK.md`](./TASK.md) 中 S07 的自研默认站点主题验收由本规格中的 Quartz 站点验收替代；S09 的引擎来源、安装、校验和回退未决项由本规格收敛。
+- 外部可执行主题包由后续增量规格 [`CUSTOM-QUARTZ-THEME-SPEC.md`](./CUSTOM-QUARTZ-THEME-SPEC.md) 定义；该规格覆盖本文中“不开放第三方主题”和“不新增主题字段”的原迁移阶段边界，但不得覆盖本文的上层架构、staging 隔离、路由、可见性和输出审计契约。
 
 ## 2. 已确认决策
 
@@ -53,7 +54,7 @@
 - 不保留当前生成站点的 CSS、DOM、视觉截图或像素级兼容。
 - 不把 Vault 变成 Quartz 工程，不在 Vault 中创建 `quartz.config.yaml`、`quartz.layout.ts`、`package.json`、`node_modules` 或 Git 仓库。
 - 不允许用户直接编辑生成的 Quartz 配置。
-- 不在本次改造中开放主题市场、任意第三方 Quartz 插件或自定义 TypeScript 配置。
+- 本次 Quartz renderer 迁移本身不开放主题市场、任意第三方 Quartz 插件或自定义 TypeScript 配置；迁移完成后的外部主题包能力按 [`CUSTOM-QUARTZ-THEME-SPEC.md`](./CUSTOM-QUARTZ-THEME-SPEC.md) 独立实现和验收。
 - 不改变插件 UI、发布中心信息架构、Cloudflare 授权或远端部署模型。
 - 不改变现有 URL 作为默认迁移策略。
 - 不用 Quartz 的 private/draft 过滤器替代 Pages Publish 的内容选择和隐私边界。
@@ -311,8 +312,8 @@ Quartz 首版至少负责：
 
 - 不迁移 `default-theme.ts` 的 CSS、DOM 或视觉 token。
 - Quartz 默认主题和 layout 是新站点视觉基线。
-- 首版不向 `site.yml` 新增主题字段。
-- 后续如开放主题，只允许选择产品批准、版本固定的 Quartz theme/plugin；不得允许任意 GitHub 地址或代码执行。
+- Quartz renderer 迁移首版不向 `site.yml` 新增主题字段；后续外部主题字段、精确 npm 包、本地 `.tgz` 和 Theme API 以 [`CUSTOM-QUARTZ-THEME-SPEC.md`](./CUSTOM-QUARTZ-THEME-SPEC.md) 为准。
+- 外部可执行主题不内置于插件，必须使用固定版本/完整性、显式信任、隔离 theme store、受控 Quartz adapter 和构建后审计；不接受浮动 Git 地址或未经验证的代码入口。
 - 旧自研站点主题截图和视觉 HAT 不再作为发布门槛，必须为 Quartz 新基线重新执行视觉验收。
 
 ## 9. 路由与页面契约

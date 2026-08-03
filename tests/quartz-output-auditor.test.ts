@@ -32,6 +32,10 @@ describe('Quartz output route bridge and auditor', () => {
     expect(output.files['/writing/hello/index.html']).toContain(
       '<link rel="canonical" href="https://example.com/writing/hello/"/>',
     );
+    expect(output.files['/writing/hello/index.html']).toContain(
+      'http-equiv="Content-Security-Policy"',
+    );
+    expect(output.files['/writing/hello/index.html']).toContain("connect-src 'self'");
     expect(output.files['/writing/hidden/index.html']).toContain(
       '<meta name="robots" content="noindex"/>',
     );
@@ -299,6 +303,31 @@ describe('Quartz output route bridge and auditor', () => {
     expect(() => bridgeAndAuditQuartzOutput(remoteFont, staging())).toThrow(
       expect.objectContaining({ code: 'quartz-unexpected-network' }),
     );
+
+    const inlineFetch = rawOutput({
+      'index.html': '<script>fetch("//telemetry.example/collect")</script>',
+    });
+    expect(() => bridgeAndAuditQuartzOutput(inlineFetch, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-unexpected-network' }),
+    );
+
+    const remoteSvg = rawOutput();
+    remoteSvg.files['static/icon.svg'] = bytes(
+      '<svg><image href="https://images.example/tracker.png"/></svg>',
+    );
+    expect(() => bridgeAndAuditQuartzOutput(remoteSvg, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-unexpected-network' }),
+    );
+  });
+
+  it('replaces a theme-provided CSP with the controlled policy', () => {
+    const output = bridgeAndAuditQuartzOutput(rawOutput({
+      'index.html': '<html><head><meta http-equiv="Content-Security-Policy" content="default-src *"></head><body>Home</body></html>',
+    }), staging());
+
+    expect(output.files['/index.html']).not.toContain('default-src *');
+    expect(output.files['/index.html']).toContain("default-src 'self'");
+    expect(output.files['/index.html']?.match(/Content-Security-Policy/gu)).toHaveLength(1);
   });
 
   it('removes metadata for the disabled Quartz OG image output', () => {

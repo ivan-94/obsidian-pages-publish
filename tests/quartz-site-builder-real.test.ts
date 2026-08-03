@@ -96,9 +96,36 @@ describe('real Quartz SiteBuilder integration', () => {
     },
     60_000,
   );
+
+  it.skipIf(!engineDirectory || !nodeExecutable)(
+    'builds a sections home without leaking an unlisted section index',
+    async () => {
+      const vaultRoot = await fixtureVault('sections');
+      const buildRoot = await mkdtemp(join(tmpdir(), 'pages-real-sections-builder-'));
+      const builder = new QuartzSiteBuilder({
+        environment: { ensureReady: async () => readyEngine() },
+        runner: new QuartzBuildRunner({ rootDirectory: buildRoot, deniedReadRoots: [vaultRoot] }),
+      });
+
+      const preview = await builder.build({ vaultRoot, renderMode: 'published' });
+      const homeArticle = /<article\b[^>]*>[\s\S]*?<\/article>/u.exec(
+        preview.files['/index.html'] ?? '',
+      )?.[0] ?? '';
+
+      expect(homeArticle).toContain('/writing/guides/');
+      expect(homeArticle).not.toContain('/writing/hidden-section/');
+      expect(preview.files['/writing/hidden-section/index.html']).toContain(
+        'Unlisted Section',
+      );
+      expect(preview.files['/writing/hidden-section/child/index.html']).toContain(
+        'Public section child',
+      );
+    },
+    60_000,
+  );
 });
 
-async function fixtureVault(): Promise<string> {
+async function fixtureVault(homeLayout: 'latest' | 'sections' = 'latest'): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'pages-real-quartz-vault-'));
   await mkdir(join(root, '.publish'), { recursive: true });
   await mkdir(join(root, 'Notes'), { recursive: true });
@@ -110,7 +137,7 @@ async function fixtureVault(): Promise<string> {
       'version: 1',
       'site:',
       '  name: Real Quartz Site',
-      '  home_layout: latest',
+      `  home_layout: ${homeLayout}`,
       'content_roots:',
       '  - path: Notes',
       '    public_root: /writing',

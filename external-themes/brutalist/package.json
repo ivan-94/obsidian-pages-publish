@@ -1,0 +1,41 @@
+{
+  "name": "@pages-publish-theme/brutalist",
+  "version": "1.0.0",
+  "description": "An external Brutalist editorial theme for Pages Publish and Quartz 5.",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/theme.test.mjs",
+    "pack:local": "npm run build && npm pack --pack-destination artifacts"
+  },
+  "peerDependencies": {
+    "@pages-publish/theme-sdk": "1.x",
+    "preact": "^10.0.0"
+  },
+  "pagesPublishTheme": {
+    "apiVersion": 1,
+    "displayName": "Brutalist UI",
+    "quartzVersion": "5.0.0",
+    "entry": "./dist/index.js",
+    "capabilities": [
+      "styles",
+      "assets",
+      "layout",
+      "components",
+      "clientScripts"
+    ],
+    "optionsSchema": "./dist/options.schema.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

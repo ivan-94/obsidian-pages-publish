@@ -406,6 +406,11 @@ function sourceArchive(lockfile: Uint8Array): Uint8Array {
       ].join('\n'),
     },
     { name: 'quartz-source/quartz/bootstrap-cli.mjs', body: 'export {}' },
+    { name: 'quartz-source/quartz/util/', type: 'directory' },
+    {
+      name: 'quartz-source/quartz/util/glob.ts',
+      body: 'await globby(pattern, { cwd, ignore: ignorePatterns, gitignore: true, })',
+    },
     {
       name: 'quartz-source/node_modules/@quartz-community/folder-page/package.json',
       body: '{"name":"@quartz-community/folder-page","version":"0.1.0"}',

@@ -25,6 +25,13 @@ import {
 } from '../config/site-config';
 import { siteCanonicalOrigin } from '../site/discovery';
 import { openSiteConfigForRepair } from './site-config-repair-view';
+import type {
+  ThemeCandidate,
+  ThemeManagementService,
+  ThemePanelState,
+} from '../theme/theme-management';
+import type { ThemeOptionSchema } from '../theme/theme-options-schema';
+import type { JsonValue, SiteThemeReference } from '../theme/theme-contract';
 
 const PAGES_PUBLISH_VIEW_TYPE = 'pages-publish-center';
 
@@ -53,11 +60,17 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   private rendering = 0;
   private pendingOAuthButton: ButtonComponent | undefined;
   private unsubscribeGlobalUiState: (() => void) | undefined;
+  private themePanelState: ThemePanelState | undefined;
+  private themePanelKey: string | undefined;
+  private themePanelLoadingKey: string | undefined;
+  private pendingThemeCandidate: ThemeCandidate | undefined;
+  private themeOperation: { label: string; controller: AbortController } | undefined;
 
   constructor(
     plugin: Plugin,
     private readonly vaultRoot: string,
     private readonly application: PagesPublishApplication,
+    private readonly themeManagement?: ThemeManagementService,
   ) {
     super(plugin.app, plugin);
   }
@@ -98,6 +111,12 @@ export class PagesPublishSettingTab extends PluginSettingTab {
     this.localSaveDescription = undefined;
     this.remoteActionStatus = undefined;
     this.pendingOAuthButton = undefined;
+    this.themeOperation?.controller.abort();
+    this.themeOperation = undefined;
+    this.themePanelState = undefined;
+    this.themePanelKey = undefined;
+    this.themePanelLoadingKey = undefined;
+    this.pendingThemeCandidate = undefined;
     this.resetCustomDomainStatus();
     this.rendering += 1;
   }
@@ -105,6 +124,8 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   async notifyConfigFileChanged(): Promise<void> {
     if (!this.session) return;
     this.resetCustomDomainStatus();
+    this.themePanelKey = undefined;
+    this.themePanelState = undefined;
     try {
       this.editorState = await this.session.detectExternalChange();
       this.update();
@@ -201,6 +222,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
       ['content', '内容范围', 'folder'],
       ['cloudflare', 'Cloudflare', 'cloud'],
       ['features', '站点功能', 'layout-grid'],
+      ['theme', '站点主题', 'palette'],
       ['environment', '本地环境', 'monitor'],
     ] as const) {
       const button = new ButtonComponent(anchors).setIcon(icon).setTooltip(label);
@@ -484,6 +506,8 @@ export class PagesPublishSettingTab extends PluginSettingTab {
       }),
     );
 
+    this.renderThemeSettings(container, sections, state);
+
     this.renderMaintenance(container, sections);
 
     const scrollRoot = document.closest('.vertical-tab-content');
@@ -587,6 +611,361 @@ export class PagesPublishSettingTab extends PluginSettingTab {
             }
           }),
       );
+  }
+
+  private renderThemeSettings(
+    container: HTMLElement,
+    sections: Map<string, HTMLElement>,
+    state: SiteConfigEditorState,
+  ): void {
+    const section = new Setting(container).setName('站点主题').setHeading();
+    sections.set('theme', section.settingEl);
+    const reference = state.draft.site.theme;
+    if (!this.themeManagement) {
+      new Setting(container)
+        .setName('Quartz 默认主题')
+        .setDesc('当前宿主未接入外部主题管理；站点继续使用受控 Quartz 默认主题。');
+      return;
+    }
+
+    const key = themeReferenceKey(reference);
+    if (this.themePanelKey !== key && this.themePanelLoadingKey !== key) {
+      this.themePanelLoadingKey = key;
+      const manager = this.themeManagement;
+      void manager.panelState(reference).then((panel) => {
+        if (this.themePanelLoadingKey !== key) return;
+        this.themePanelLoadingKey = undefined;
+        this.themePanelKey = key;
+        this.themePanelState = panel;
+        this.update();
+      }).catch((error) => {
+        if (this.themePanelLoadingKey !== key) return;
+        this.themePanelLoadingKey = undefined;
+        this.themePanelKey = key;
+        this.themePanelState = {
+          installed: [],
+          configuredError: {
+            code: 'theme-status-unavailable',
+            message: errorMessage(error),
+          },
+        };
+        this.update();
+      });
+    }
+
+    const panel = this.themePanelKey === key ? this.themePanelState : undefined;
+    if (reference === undefined) {
+      new Setting(container)
+        .setName('当前主题')
+        .setDesc('Quartz 默认主题 · 无外部包 · 永远可作为恢复路径');
+    } else if (panel?.configured) {
+      const current = panel.configured;
+      new Setting(container)
+        .setName(current.displayName)
+        .setDesc([
+          `${current.reference.source === 'npm' ? 'npm' : '本地工件'} · ${current.packageName}@${current.version}`,
+          `integrity ${shortIntegrity(current.integrity)}`,
+          current.trusted ? '已确认执行信任' : '尚未确认执行信任',
+        ].join('；'));
+    } else if (panel?.configuredError) {
+      new Setting(container)
+        .setName('主题需要修复')
+        .setDesc(`${panel.configuredError.code}：${panel.configuredError.message}`);
+    } else {
+      new Setting(container)
+        .setName('正在检查主题')
+        .setDesc('正在校验固定版本、完整性、文件 inventory 和执行信任。');
+    }
+
+    new Setting(container)
+      .setName('恢复默认主题')
+      .setDesc('只形成未保存草稿；保存后下次预览和发布使用 Quartz 默认主题。')
+      .addButton((button) => button
+        .setButtonText('使用 Quartz 默认主题')
+        .setDisabled(reference === undefined)
+        .onClick(() => {
+          this.pendingThemeCandidate = undefined;
+          this.updateDraft((draft) => {
+            delete draft.site.theme;
+          });
+          this.themePanelKey = undefined;
+          this.update();
+        }));
+
+    let npmPackage = '';
+    let npmVersion = '';
+    new Setting(container)
+      .setName('从 npm 安装精确版本')
+      .setDesc('只访问官方 npm registry；不会运行 npm install、生命周期脚本或解析依赖树。')
+      .addText((text) => text
+        .setPlaceholder('@scope/theme')
+        .onChange((value) => { npmPackage = value.trim(); }))
+      .addText((text) => text
+        .setPlaceholder('1.0.0')
+        .onChange((value) => { npmVersion = value.trim(); }))
+      .addButton((button) => button
+        .setButtonText('安装')
+        .setDisabled(this.themeOperation !== undefined)
+        .onClick(async () => {
+          if (!npmPackage || !npmVersion) {
+            new Notice('请输入 npm package 和精确版本。');
+            return;
+          }
+          const candidate = await this.runThemeOperation(
+            '正在安装 npm 主题',
+            (signal) => this.themeManagement!.installNpm(npmPackage, npmVersion, signal),
+          );
+          if (!candidate) return;
+          this.pendingThemeCandidate = candidate;
+          this.themePanelKey = undefined;
+          new Notice('主题已验证并缓存；确认执行信任后才会加入设置草稿。');
+          this.update();
+        }));
+
+    const localSetting = new Setting(container)
+      .setName('导入本地主题包')
+      .setDesc('选择 .tgz；插件会复制到 Vault 的 .publish/themes/，固定摘要后执行隔离 smoke。');
+    const fileInput = localSetting.controlEl.createEl('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.tgz,application/gzip';
+    fileInput.disabled = this.themeOperation !== undefined;
+    fileInput.setAttribute('aria-label', '选择本地 Quartz 主题 tgz 包');
+    localSetting.controlEl.appendChild(fileInput);
+    fileInput.addEventListener('change', () => {
+      const selected = fileInput.files?.[0];
+      const selectedPath = localDesktopFilePath(selected);
+      if (!selectedPath) {
+        new Notice('无法取得所选文件路径；请使用 Obsidian 桌面端本地文件选择器。');
+        return;
+      }
+      void this.runThemeOperation(
+        '正在导入本地主题',
+        (signal) => this.themeManagement!.importLocal(selectedPath, signal),
+      ).then((candidate) => {
+        if (!candidate) return;
+        this.pendingThemeCandidate = candidate;
+        this.themePanelKey = undefined;
+        new Notice('本地主题已验证并缓存；确认执行信任后才会加入设置草稿。');
+        this.update();
+      });
+    });
+
+    if (this.themeOperation) {
+      new Setting(container)
+        .setName(this.themeOperation.label)
+        .setDesc('一次只执行一个安装、修复或导入操作。取消会清理未完成的临时目录。')
+        .addButton((button) => button.setButtonText('取消').onClick(() => {
+          this.themeOperation?.controller.abort();
+        }));
+    }
+
+    if (this.pendingThemeCandidate) {
+      const candidate = this.pendingThemeCandidate;
+      const hasClientScripts = candidate.capabilities.includes('clientScripts');
+      const warning = container.createDiv({ cls: 'pages-publish-view__warning' });
+      warning.createEl('strong', { text: `确认执行信任：${candidate.displayName}` });
+      warning.createEl('p', {
+        text: `${candidate.packageName}@${candidate.version} · 来源：${candidate.reference.source === 'npm' ? '官方 npm registry 精确工件' : 'Vault 本地工件'} · integrity：${shortIntegrity(candidate.integrity)}。该主题包含会在隔离 Quartz 构建中执行的代码。`,
+      });
+      if (candidate.publisher !== undefined) {
+        warning.createEl('p', {
+          text: `Registry 发布者：${formatThemePublisher(candidate.publisher)}。此信息仅供识别，不是信任根；精确 integrity 才标识当前工件。`,
+        });
+      }
+      if (hasClientScripts) {
+        warning.createEl('p', {
+          text: '该主题还声明 clientScripts：脚本会在读者浏览器中执行，但仍受本地资源扫描和站点 CSP 约束。',
+        });
+      }
+      new Setting(warning)
+        .setDesc(`能力：${candidate.capabilities.join('、') || '无'}`)
+        .addButton((button) => button.setButtonText('取消').onClick(() => {
+          this.pendingThemeCandidate = undefined;
+          this.update();
+        }))
+        .addButton((button) => button.setButtonText('我信任并加入草稿').setCta().onClick(async () => {
+          try {
+            await this.themeManagement!.confirmTrust(candidate);
+            this.updateDraft((draft) => {
+              draft.site.theme = structuredClone(candidate.reference);
+            });
+            this.pendingThemeCandidate = undefined;
+            this.themePanelKey = undefined;
+            new Notice('已记录此精确主题工件的信任；仍需保存设置才会生效。');
+            this.update();
+          } catch (error) {
+            new Notice(`无法记录主题信任：${errorMessage(error)}`);
+          }
+        }));
+    }
+
+    const configured = panel?.configured;
+    if (reference && configured?.optionsSchema) {
+      new Setting(container).setName('主题选项').setHeading();
+      for (const [name, optionSchema] of Object.entries(
+        configured.optionsSchema.properties ?? {},
+      )) {
+        this.renderThemeOption(container, reference, name, optionSchema);
+      }
+    }
+
+    if ((panel?.installed.length ?? 0) > 0) {
+      new Setting(container).setName('已验证版本').setHeading();
+      for (const installed of panel?.installed ?? []) {
+        const isActive = reference?.integrity === installed.integrity;
+        new Setting(container)
+          .setName(`${installed.displayName} ${installed.version}`)
+          .setDesc(`${installed.reference.source} · ${shortIntegrity(installed.integrity)} · ${installed.trusted ? '已信任' : '未信任'}`)
+          .addButton((button) => button
+            .setButtonText(isActive ? '当前草稿' : '选择')
+            .setDisabled(isActive)
+            .onClick(() => {
+              if (!installed.trusted) {
+                this.pendingThemeCandidate = installed;
+              } else {
+                this.updateDraft((draft) => {
+                  draft.site.theme = structuredClone(installed.reference);
+                });
+                this.themePanelKey = undefined;
+              }
+              this.update();
+            }))
+          .addButton((button) => button
+            .setButtonText('卸载')
+            .setDestructive()
+            .setDisabled(isActive || this.themeOperation !== undefined)
+            .onClick(async () => {
+              try {
+                await this.themeManagement!.uninstall(installed, reference);
+                this.themePanelKey = undefined;
+                new Notice('未使用的主题缓存版本已卸载；Vault 内本地 .tgz 未删除。');
+                this.update();
+              } catch (error) {
+                new Notice(`无法卸载主题：${errorMessage(error)}`);
+              }
+            }));
+      }
+    }
+
+    if (reference) {
+      new Setting(container)
+        .setName('主题维护与预览')
+        .setDesc('修复会重新取得同一精确工件并校验完整性；预览使用已保存配置，不会部署。')
+        .addButton((button) => button
+          .setButtonText('修复')
+          .setDisabled(this.themeOperation !== undefined)
+          .onClick(async () => {
+            const repaired = await this.runThemeOperation(
+              '正在修复主题',
+              async (signal) => {
+                await this.themeManagement!.repair(reference, signal);
+                return true;
+              },
+            );
+            if (!repaired) return;
+            this.themePanelKey = undefined;
+            new Notice('主题已按配置中的精确 integrity 修复。');
+            this.update();
+          }))
+        .addButton((button) => button
+          .setButtonText('预览已保存主题')
+          .setDisabled(state.status !== 'clean' || configured?.trusted !== true)
+          .onClick(async () => {
+            try {
+              await this.application.openPreview();
+              new Notice('主题本地预览已打开；没有自动发布。');
+            } catch (error) {
+              new Notice(`无法预览主题：${errorMessage(error)}`);
+            }
+          }));
+    }
+  }
+
+  private renderThemeOption(
+    container: HTMLElement,
+    reference: SiteThemeReference,
+    name: string,
+    schema: ThemeOptionSchema,
+  ): void {
+    const value = reference.options[name];
+    const setting = new Setting(container)
+      .setName(schema.title ?? name)
+      .setDesc(schema.description ?? `主题选项：${name}`);
+    if (schema.enum) {
+      setting.addDropdown((dropdown) => {
+        for (const item of schema.enum ?? []) {
+          dropdown.addOption(JSON.stringify(item), themeOptionLabel(item));
+        }
+        dropdown.setValue(JSON.stringify(value)).onChange((selected) => {
+          this.updateThemeOption(name, JSON.parse(selected) as JsonValue);
+        });
+      });
+      return;
+    }
+    if (schema.type === 'boolean') {
+      setting.addToggle((toggle) => toggle
+        .setValue(value === true)
+        .onChange((selected) => this.updateThemeOption(name, selected)));
+      return;
+    }
+    setting.addText((text) => {
+      text.inputEl.type = schema.type === 'number' || schema.type === 'integer'
+        ? 'number'
+        : 'text';
+      text.setValue(typeof value === 'string' || typeof value === 'number'
+        ? String(value)
+        : JSON.stringify(value ?? schema.default ?? ''))
+        .onChange((selected) => {
+          if (schema.type === 'number' || schema.type === 'integer') {
+            const number = Number(selected);
+            if (Number.isFinite(number)) this.updateThemeOption(name, number);
+            return;
+          }
+          if (schema.type === 'array' || schema.type === 'object') {
+            try {
+              this.updateThemeOption(name, JSON.parse(selected) as JsonValue);
+            } catch {
+              // Keep the current valid draft until the JSON field becomes valid.
+            }
+            return;
+          }
+          this.updateThemeOption(name, selected);
+        });
+    });
+  }
+
+  private updateThemeOption(name: string, value: JsonValue): void {
+    this.updateDraft((draft) => {
+      const theme = draft.site.theme;
+      if (!theme) return;
+      theme.options = { ...theme.options, [name]: value };
+    });
+  }
+
+  private async runThemeOperation<T>(
+    label: string,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T | undefined> {
+    if (this.themeOperation) {
+      new Notice('已有主题操作正在进行。');
+      return undefined;
+    }
+    const controller = new AbortController();
+    this.themeOperation = { label, controller };
+    this.update();
+    try {
+      return await operation(controller.signal);
+    } catch (error) {
+      new Notice(controller.signal.aborted
+        ? '主题操作已取消；未完成的临时文件已清理。'
+        : `主题操作失败：${errorMessage(error)}`);
+      return undefined;
+    } finally {
+      if (this.themeOperation?.controller === controller) {
+        this.themeOperation = undefined;
+      }
+      this.update();
+    }
   }
 
   private renderMaintenance(
@@ -1032,6 +1411,32 @@ export async function reloadSettingsDraft<T>(session: {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '未知错误';
+}
+
+function themeReferenceKey(reference?: SiteThemeReference): string {
+  return reference === undefined ? 'quartz-default' : JSON.stringify(reference);
+}
+
+function shortIntegrity(integrity: string): string {
+  return `${integrity.slice(0, 18)}…${integrity.slice(-8)}`;
+}
+
+function formatThemePublisher(publisher: { name?: string; email?: string }): string {
+  if (publisher.name && publisher.email) return `${publisher.name} <${publisher.email}>`;
+  return publisher.name ?? publisher.email ?? 'registry 未提供名称';
+}
+
+function themeOptionLabel(value: JsonValue): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return `${value}`;
+  return JSON.stringify(value);
+}
+
+function localDesktopFilePath(file: File | undefined): string | undefined {
+  if (file === undefined) return undefined;
+  const path = (file as unknown as { path?: unknown }).path;
+  return typeof path === 'string' && path.length > 0 ? path : undefined;
 }
 
 function customDomainStatusDescription(status: ConfiguredCustomDomainStatus | undefined): string {

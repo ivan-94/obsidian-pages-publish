@@ -136,6 +136,7 @@ export function bridgeAndAuditQuartzOutput(
       source = sanitizeUnlistedHtmlMetadata(outputPath, source, staging);
       source = sanitizeUnlistedHtmlNavigation(outputPath, source, staging);
       source = ensureControlledHtmlMetadata(outputPath, source, staging);
+      source = ensureControlledContentSecurityPolicy(outputPath, source);
       source = sanitizeQuartzDiscoveryOutput(outputPath, source, staging);
       source = injectRouteContractBridge(outputPath, source, clientRoutes);
       const remoteResource = remoteRuntimeResource(source, contentType);
@@ -354,6 +355,37 @@ function ensureControlledHtmlMetadata(
     return controlled.replace(/<html\b[^>]*>/iu, (tag) => `${tag}<head>${insertion}</head>`);
   }
   return `${insertion}${controlled}`;
+}
+
+const CONTROLLED_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "form-action 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self' blob:",
+  "media-src 'self'",
+].join('; ');
+
+function ensureControlledContentSecurityPolicy(outputPath: string, source: string): string {
+  if (!outputPath.endsWith('.html')) return source;
+  const withoutThemePolicy = source.replace(
+    /<meta\b(?=[^>]*\bhttp-equiv\s*=\s*["']content-security-policy["'])[^>]*>/giu,
+    '',
+  );
+  const policy = `<meta http-equiv="Content-Security-Policy" content="${CONTROLLED_CONTENT_SECURITY_POLICY}">`;
+  if (/<\/head>/iu.test(withoutThemePolicy)) {
+    return withoutThemePolicy.replace(/<\/head>/iu, `${policy}</head>`);
+  }
+  if (/<html\b[^>]*>/iu.test(withoutThemePolicy)) {
+    return withoutThemePolicy.replace(/<html\b[^>]*>/iu, (tag) => `${tag}<head>${policy}</head>`);
+  }
+  return `${policy}${withoutThemePolicy}`;
 }
 
 function sanitizeUnlistedHtmlNavigation(
@@ -820,6 +852,7 @@ function redirectDocument(target: string): string {
     '<!doctype html>',
     '<html lang="zh-CN"><head>',
     '<meta charset="utf-8">',
+    `<meta http-equiv="Content-Security-Policy" content="${CONTROLLED_CONTENT_SECURITY_POLICY}">`,
     `<meta http-equiv="refresh" content="0;url=${escaped}">`,
     `<link rel="canonical" href="${escaped}">`,
     '<meta name="robots" content="noindex">',
@@ -849,16 +882,27 @@ function cloudflareRedirectManifest(
 
 function remoteRuntimeResource(source: string, contentType: string): string | undefined {
   if (contentType === 'text/css') {
-    return /(?:@import\s+|url\(\s*)["']?https?:\/\/[^\s"')]+/iu.exec(source)?.[0];
+    return /(?:@import\s+|url\(\s*)["']?(?:https?:)?\/\/[^\s"')]+/iu.exec(source)?.[0];
   }
   if (contentType === 'text/javascript' || contentType === 'application/json') {
-    return /(?:\b(?:import|fetch)\s*\(|\b(?:WebSocket|EventSource|Worker)\s*\()\s*["'`]https?:\/\/[^\s"'`)]+/iu.exec(source)?.[0]
+    return /(?:\b(?:import|fetch)\s*\(|\b(?:WebSocket|EventSource|Worker|SharedWorker)\s*\()\s*["'`](?:https?:)?\/\/[^\s"'`)]+/iu.exec(source)?.[0]
       ?? /https:\/\/(?:cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|files\.pixijs\.download)\//iu.exec(source)?.[0];
   }
+  if (contentType === 'application/xml' || contentType === 'image/svg+xml') {
+    return /(?:href|src)\s*=\s*["'](?:https?:)?\/\/[^"']+/iu.exec(source)?.[0]
+      ?? /url\(\s*["']?(?:https?:)?\/\/[^\s"')]+/iu.exec(source)?.[0]
+      ?? /<script\b/iu.exec(source)?.[0];
+  }
   if (contentType !== 'text/html') return undefined;
-  const script = /<script\b[^>]*\bsrc\s*=\s*["']https?:\/\/[^>]*>/iu.exec(source)?.[0];
-  if (script) return script;
-  const embed = /<(?:iframe|object|embed|video|audio|source)\b[^>]*>/iu.exec(source)?.[0];
+  const externalAttribute = /<(?:script|iframe|object|embed|video|audio|source|img)\b[^>]*\b(?:src|data|poster)\s*=\s*["'](?:https?:)?\/\/[^>]*>/iu.exec(source)?.[0];
+  if (externalAttribute) return externalAttribute;
+  const sourceSet = /\bsrcset\s*=\s*["'][^"']*(?:https?:)?\/\//iu.exec(source)?.[0];
+  if (sourceSet) return sourceSet;
+  const inlineLoad = /(?:\b(?:import|fetch)\s*\(|\b(?:WebSocket|EventSource|Worker|SharedWorker)\s*\()\s*["'`](?:https?:)?\/\/[^\s"'`)]+/iu.exec(source)?.[0];
+  if (inlineLoad) return inlineLoad;
+  const styleResource = /(?:style\s*=\s*["'][^"']*|<style\b[^>]*>[\s\S]*?)url\(\s*["']?(?:https?:)?\/\/[^\s"')]+/iu.exec(source)?.[0];
+  if (styleResource) return styleResource;
+  const embed = /<(?:iframe|object|embed)\b[^>]*>/iu.exec(source)?.[0];
   if (embed) return embed;
   for (const match of source.matchAll(/<link\b[^>]*>/giu)) {
     const tag = match[0];
@@ -932,7 +976,8 @@ function isTextContent(contentType: string): boolean {
   return contentType.startsWith('text/')
     || contentType === 'application/json'
     || contentType === 'application/xml'
-    || contentType === 'application/manifest+json';
+    || contentType === 'application/manifest+json'
+    || contentType === 'image/svg+xml';
 }
 
 function escapeRegExp(value: string): string {

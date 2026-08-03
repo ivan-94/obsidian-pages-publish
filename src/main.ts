@@ -67,6 +67,13 @@ import { CloudflareDesktopOAuth } from './cloudflare/oauth-host';
 import { cloudflareOAuthBuildConfig } from './cloudflare/oauth-build-config';
 import { CloudflareOAuthLoopbackServer } from './cloudflare/oauth-loopback';
 import { completeCloudflareOAuthCallback } from './cloudflare/oauth-callback-handler';
+import { ThemeStore } from './theme/theme-store';
+import { ThemeTrustStore } from './theme/theme-trust-store';
+import { InstalledThemeResolver } from './theme/theme-resolver';
+import { createQuartzThemeSmoke } from './theme/theme-quartz-smoke';
+import { ThemeRegistryClient } from './theme/theme-registry-client';
+import { ThemeInstaller } from './theme/theme-installer';
+import { ThemeManagementService } from './theme/theme-management';
 
 export default class PagesPublishPlugin extends Plugin {
   private activation: PagesPublishActivation | undefined;
@@ -188,11 +195,53 @@ export default class PagesPublishPlugin extends Plugin {
         reportProgress,
       ),
     });
+    const themeStore = new ThemeStore({
+      rootDirectory: environmentDirectory,
+      smoke: createQuartzThemeSmoke(
+        join(environmentDirectory, 'theme-smoke'),
+        (signal) => publicationEnvironment.ensureReady(signal),
+      ),
+    });
+    const themeTrustStore = new ThemeTrustStore(environmentDirectory);
+    const registryFetch: typeof fetch = async (input, init) => {
+      if (typeof input !== 'string') {
+        throw new Error('Theme registry requests must use an explicit URL string.');
+      }
+      init?.signal?.throwIfAborted();
+      const response = await abortable(requestUrl({
+        url: input,
+        method: init?.method ?? 'GET',
+        headers: headersRecord(init?.headers),
+        throw: false,
+      }), init?.signal ?? undefined);
+      init?.signal?.throwIfAborted();
+      return new Response(response.arrayBuffer, {
+        status: response.status,
+        headers: response.headers,
+      });
+    };
+    const themeInstaller = new ThemeInstaller(
+      themeStore,
+      new ThemeRegistryClient(registryFetch),
+    );
+    const themeManagement = new ThemeManagementService(
+      vaultRoot,
+      themeStore,
+      themeInstaller,
+      themeTrustStore,
+      (signal) => publicationEnvironment.ensureReady(signal),
+    );
+    const themeResolver = new InstalledThemeResolver(
+      environmentDirectory,
+      themeStore,
+      themeTrustStore,
+    );
     const siteBuilder = new QuartzSiteBuilder({
       environment: publicationEnvironment,
       runner: new QuartzBuildRunner({
         rootDirectory: join(localPluginStateDirectory(vaultRoot), 'quartz'),
         deniedReadRoots: [vaultRoot],
+        themeResolver,
       }),
     });
     const cloudflareProjects = new CloudflarePagesProjectApi(
@@ -295,6 +344,7 @@ export default class PagesPublishPlugin extends Plugin {
       this,
       adapter.getBasePath(),
       application,
+      themeManagement,
     );
     this.addSettingTab(settingTab);
     const notifyConfigChange = (file: { path: string }): void => {
@@ -589,6 +639,15 @@ async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<
 
 function abortError(): DOMException {
   return new DOMException('The publication environment download was aborted.', 'AbortError');
+}
+
+function headersRecord(input?: HeadersInit): Record<string, string> | undefined {
+  if (input === undefined) return undefined;
+  const record: Record<string, string> = {};
+  new Headers(input).forEach((value, key) => {
+    record[key] = value;
+  });
+  return record;
 }
 
 function errorMessage(error: unknown): string {

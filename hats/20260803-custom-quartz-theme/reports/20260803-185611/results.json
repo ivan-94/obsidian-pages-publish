@@ -1,0 +1,112 @@
+{
+  "run_id": "20260803-185611",
+  "run_scope": "P0+P1",
+  "run_type": "new",
+  "hat_dir": "hats/20260803-custom-quartz-theme",
+  "source": "CUSTOM-QUARTZ-THEME-SPEC.md",
+  "mode": "blank",
+  "started_at": "2026-08-03T18:56:11+08:00",
+  "finished_at": "2026-08-03T18:59:38+08:00",
+  "overall_status": "MANUAL_REQUIRED",
+  "prepare": {
+    "ran_info": true,
+    "ran_prepare": true,
+    "status": "prepared"
+  },
+  "scenarios": [
+    {
+      "id": "HAT-P0-001",
+      "priority": "P0",
+      "title": "三文件插件与外部主题隔离",
+      "verification_type": "cli",
+      "status": "PASS",
+      "duration_ms": 400,
+      "artifacts": [],
+      "notes": "release 恰好三文件，外部主题 payload 搜索为空。"
+    },
+    {
+      "id": "HAT-P0-002",
+      "priority": "P0",
+      "title": "本地 tgz 导入、身份和显式信任",
+      "verification_type": "manual",
+      "status": "MANUAL",
+      "duration_ms": 0,
+      "artifacts": [],
+      "notes": "自动契约与 trust receipt 测试通过；Obsidian 风险文案待人工确认。"
+    },
+    {
+      "id": "HAT-P0-003",
+      "priority": "P0",
+      "title": "真实 Quartz 深度主题构建",
+      "verification_type": "cli+browser",
+      "status": "PASS",
+      "duration_ms": 12910,
+      "artifacts": ["artifacts/screenshot_HAT-P0-003_desktop-home-dark.png"],
+      "notes": "默认/外部 Quartz 共 5 个真实测试通过，外部主题连续构建确定。"
+    },
+    {
+      "id": "HAT-P0-004",
+      "priority": "P0",
+      "title": "可见性、路由、CSP 与离线资源",
+      "verification_type": "cli+browser",
+      "status": "PASS",
+      "duration_ms": 9170,
+      "artifacts": ["artifacts/screenshot_HAT-P0-003_desktop-home-dark.png"],
+      "notes": "private/unlisted/discovery/CSP/local graph vendor 断言通过；物理断网留人工补验。"
+    },
+    {
+      "id": "HAT-P1-001",
+      "priority": "P1",
+      "title": "响应式、暗色、搜索、图谱和长文工具",
+      "verification_type": "browser",
+      "status": "PASS",
+      "duration_ms": 6200,
+      "artifacts": [
+        "artifacts/screenshot_HAT-P1-001_desktop-light.png",
+        "artifacts/screenshot_HAT-P1-001_mobile-article.png",
+        "artifacts/screenshot_HAT-P1-001_mobile-search.png"
+      ],
+      "notes": "1440/768/390/320 无横向溢出；search 全屏聚焦；Graph canvas；44px button。"
+    },
+    {
+      "id": "HAT-P1-002",
+      "priority": "P1",
+      "title": "200%、纯键盘和 reduced motion",
+      "verification_type": "manual",
+      "status": "MANUAL",
+      "duration_ms": 500,
+      "artifacts": ["artifacts/screenshot_HAT-P1-001_mobile-search.png"],
+      "notes": "320px reflow、焦点和 Escape 自动通过；200% 与完整 Tab 顺序待人工。"
+    },
+    {
+      "id": "HAT-P1-003",
+      "priority": "P1",
+      "title": "Repair、损坏、回滚、默认主题和卸载",
+      "verification_type": "manual",
+      "status": "MANUAL",
+      "duration_ms": 0,
+      "artifacts": [],
+      "notes": "store 自动测试通过；Obsidian Notice 与交互路径待人工。"
+    },
+    {
+      "id": "HAT-P1-004",
+      "priority": "P1",
+      "title": "npm 精确版本与离线缓存",
+      "verification_type": "manual",
+      "status": "BLOCKED",
+      "duration_ms": 0,
+      "artifacts": [],
+      "notes": "包尚未发布；official registry 单元测试通过。"
+    },
+    {
+      "id": "HAT-P2-001",
+      "priority": "P2",
+      "title": "Cloudflare Direct Upload",
+      "verification_type": "manual",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "artifacts": [],
+      "notes": "没有专用项目写入授权。"
+    }
+  ]
+}

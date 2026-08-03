@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "accent": {
+      "type": "string",
+      "title": "强调色",
+      "description": "用于信号块、当前状态和硬阴影。",
+      "enum": ["orange", "red", "blue", "acid"],
+      "default": "orange"
+    },
+    "graphMode": {
+      "type": "string",
+      "title": "图谱模式",
+      "enum": ["compact", "expanded-on-demand"],
+      "default": "compact"
+    },
+    "homeHero": {
+      "type": "string",
+      "title": "首页主视觉",
+      "enum": ["latest", "section", "fixed"],
+      "default": "latest"
+    },
+    "showPublicCount": {
+      "type": "boolean",
+      "title": "显示公开索引状态",
+      "default": true
+    },
+    "wordmark": {
+      "type": "string",
+      "title": "站点字标",
+      "description": "最多 40 个字符的纯文字站点标记。",
+      "minLength": 1,
+      "maxLength": 40,
+      "default": "PUBLIC FIELD NOTES"
+    }
+  },
+  "required": ["accent", "graphMode", "homeHero", "showPublicCount", "wordmark"],
+  "additionalProperties": false
+}

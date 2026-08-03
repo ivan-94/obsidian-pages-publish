@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Brutalist UI registration mark</title>
+  <rect width="64" height="64" fill="#151515"/>
+  <path d="M10 10h24v10H20v8h12v10H20v16H10z" fill="#f0ece2"/>
+  <path d="M39 10h15v44H39z" fill="#ff4b17"/>
+</svg>

@@ -11,10 +11,18 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join, posix, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import type { ReadyQuartzEngine } from '../runtime/quartz-engine-store';
 import { siteCanonicalOrigin } from '../site/discovery';
 import { rethrowAbort } from '../runtime/quartz-environment-error';
+import type { SiteThemeReference } from '../theme/theme-contract';
+import {
+  materializeQuartzThemeAdapter,
+  type MaterializedQuartzTheme,
+} from '../theme/theme-quartz-adapter';
+import type { ResolvedBuildTheme } from '../theme/theme-resolver';
+import { prepareNodeModules } from '../theme/theme-runtime-inspector';
 import { createControlledQuartzConfig } from './quartz-config';
 import {
   markdownRouteLink,
@@ -36,6 +44,14 @@ export interface QuartzRawBuildOutput {
   forbiddenOutputText?: readonly string[];
 }
 
+export interface QuartzThemeResolverBoundary {
+  resolve(
+    reference: SiteThemeReference,
+    engine: ReadyQuartzEngine,
+    signal?: AbortSignal,
+  ): Promise<ResolvedBuildTheme>;
+}
+
 export class QuartzBuildError extends Error {
   readonly name = 'QuartzBuildError';
   readonly code = 'quartz-build-failed';
@@ -50,6 +66,7 @@ export class QuartzBuildRunner {
   constructor(private readonly input: {
     rootDirectory: string;
     deniedReadRoots?: readonly string[];
+    themeResolver?: QuartzThemeResolverBoundary;
   }) {}
 
   async run(
@@ -73,6 +90,32 @@ export class QuartzBuildRunner {
       ]);
       await materializeStaging(contentDirectory, staging);
       await prepareQuartzWorkspace(workspace, engineDirectory);
+      let theme: MaterializedQuartzTheme | undefined;
+      let themeStorePackageDirectory: string | undefined;
+      if (staging.config.site.theme !== undefined) {
+        if (this.input.themeResolver === undefined) {
+          throw new QuartzBuildError(
+            'The configured external theme cannot be resolved by this publication environment.',
+          );
+        }
+        const resolvedTheme = await this.input.themeResolver.resolve(
+          staging.config.site.theme,
+          engine,
+          signal,
+        );
+        themeStorePackageDirectory = resolvedTheme.installed.packageDirectory;
+        theme = await materializeQuartzThemeAdapter({
+          workspace,
+          nodeModules: join(workspace, 'node_modules'),
+          installed: resolvedTheme.installed,
+          descriptor: resolvedTheme.descriptor,
+          options: resolvedTheme.options,
+          features: {
+            search: staging.config.features.search,
+            graph: staging.config.features.graph,
+          },
+        });
+      }
       const canonicalOrigin = siteCanonicalOrigin(staging.config);
       await writeFile(
         join(workspace, 'quartz.config.yaml'),
@@ -81,6 +124,7 @@ export class QuartzBuildRunner {
           baseUrl: new URL(canonicalOrigin).host,
           search: staging.config.features.search,
           graph: staging.config.features.graph,
+          ...(theme === undefined ? {} : { theme: theme.config }),
         }),
         { flag: 'wx', mode: 0o600 },
       );
@@ -135,6 +179,16 @@ export class QuartzBuildRunner {
       }
 
       const files = await collectOutput(outputDirectory);
+      if (theme !== undefined) {
+        for (const [path, content] of Object.entries(theme.outputAssets)) {
+          if (files[path] !== undefined) {
+            throw new QuartzBuildError(
+              `Quartz output conflicts with verified theme resource ${path}.`,
+            );
+          }
+          files[path] = content;
+        }
+      }
       const runtimeAssetsDirectory = join(engineDirectory, '.pages-publish-runtime-assets');
       try {
         const runtimeAssets = await collectOutput(runtimeAssetsDirectory);
@@ -152,7 +206,14 @@ export class QuartzBuildRunner {
         files: Object.freeze(files),
         sourceDigest: staging.sourceDigest,
         engineVersion: engine.engineVersion,
-        forbiddenOutputText: Object.freeze([workspace, engineDirectory]),
+        forbiddenOutputText: Object.freeze([
+          workspace,
+          engineDirectory,
+          ...(theme === undefined
+            ? []
+            : [theme.snapshotDirectory]),
+          ...(themeStorePackageDirectory === undefined ? [] : [themeStorePackageDirectory]),
+        ]),
       };
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -171,17 +232,26 @@ async function sandboxedQuartzCommand(
     return { executable: nodeExecutable, arguments: [...nodeArguments] };
   }
   const profilePath = join(workspace, 'pages-publish.sb');
+  const allowedReadRoots = [
+    workspace,
+    engineDirectory,
+    resolve(dirname(nodeExecutable), '..'),
+  ];
+  const metadataAncestors = [...new Set(allowedReadRoots.flatMap(pathAncestors))];
   const profile = [
     '(version 1)',
     '(allow default)',
     '(deny network*)',
     '(deny file-write*)',
     `(allow file-write* (subpath ${sandboxLiteral(workspace)}))`,
+    `(deny file-read* (subpath ${sandboxLiteral(resolve(homedir()))}))`,
+    ...metadataAncestors.map((path) =>
+      `(allow file-read-metadata (literal ${sandboxLiteral(path)}))`),
     ...deniedReadRoots.map((path) =>
       `(deny file-read* (subpath ${sandboxLiteral(resolve(path))}))`),
     `(allow file-read* (subpath ${sandboxLiteral(engineDirectory)}))`,
     `(allow file-read* (subpath ${sandboxLiteral(workspace)}))`,
-    `(allow file-read* (subpath ${sandboxLiteral(resolve(dirname(nodeExecutable), '..'))}))`,
+    `(allow file-read* (subpath ${sandboxLiteral(allowedReadRoots[2] as string)}))`,
     '',
   ].join('\n');
   await writeFile(profilePath, profile, { flag: 'wx', mode: 0o600 });
@@ -189,6 +259,17 @@ async function sandboxedQuartzCommand(
     executable: '/usr/bin/sandbox-exec',
     arguments: ['-f', profilePath, nodeExecutable, ...nodeArguments],
   };
+}
+
+function pathAncestors(path: string): string[] {
+  const ancestors: string[] = [];
+  let cursor = resolve(path);
+  while (cursor !== '/') {
+    ancestors.unshift(cursor);
+    cursor = dirname(cursor);
+  }
+  ancestors.unshift('/');
+  return ancestors;
 }
 
 function sandboxLiteral(value: string): string {
@@ -227,7 +308,7 @@ function generatedSystemPages(
       staging.config.site.homeLayout,
       staging.config.contentRoots,
       staging.routePlan.sections,
-      publicArticles,
+      staging.routeManifest.articles,
     );
     const links = homeEntries
       .map((entry) => markdownRouteLink(entry.title, entry.url))
@@ -284,7 +365,7 @@ async function prepareQuartzWorkspace(workspace: string, engineDirectory: string
     if (entry.name === '.quartz-cache') continue;
     await symlink(join(engineQuartz, entry.name), join(workspaceQuartz, entry.name));
   }
-  for (const name of ['package.json', 'package-lock.json', 'node_modules']) {
+  for (const name of ['package.json', 'package-lock.json']) {
     try {
       await lstat(join(engineDirectory, name));
       await symlink(join(engineDirectory, name), join(workspace, name));
@@ -292,6 +373,10 @@ async function prepareQuartzWorkspace(workspace: string, engineDirectory: string
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
+  await prepareNodeModules(
+    join(engineDirectory, 'node_modules'),
+    join(workspace, 'node_modules'),
+  );
 }
 
 async function writeSafeFile(
