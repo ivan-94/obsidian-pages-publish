@@ -8,3 +8,4 @@ data.json
 .DS_Store
 hats/*/test-vault/
 hats
+artifacts

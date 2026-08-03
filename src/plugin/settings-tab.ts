@@ -49,6 +49,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   private headerStatusText: HTMLElement | undefined;
   private localSaveDescription: HTMLElement | undefined;
   private remoteActionStatus: HTMLElement | undefined;
+  private sectionObserver: IntersectionObserver | undefined;
   private rendering = 0;
   private pendingOAuthButton: ButtonComponent | undefined;
   private unsubscribeGlobalUiState: (() => void) | undefined;
@@ -82,6 +83,8 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   }
 
   hide(): void {
+    this.sectionObserver?.disconnect();
+    this.sectionObserver = undefined;
     this.unsubscribeGlobalUiState?.();
     this.unsubscribeGlobalUiState = undefined;
     this.session = undefined;
@@ -159,43 +162,66 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   }
 
   private renderEditor(container: HTMLElement, state: SiteConfigEditorState): void {
+    this.sectionObserver?.disconnect();
+    this.sectionObserver = undefined;
     this.remoteActionButtons = [];
     this.headerStatusText = undefined;
     this.localSaveDescription = undefined;
     this.remoteActionStatus = undefined;
     const draft = state.draft;
-    container.createDiv({ cls: 'pages-publish-settings__title', text: 'Pages Publish' });
-    container.createEl('p', { text: `${draft.site.name} · ${siteCanonicalOrigin(draft)}` });
-    const headerStatus = container.createDiv({ cls: 'pages-publish-settings__header-status' });
+    const document = container.createDiv({ cls: 'pages-publish-settings__document' });
+    const hero = document.createEl('header', { cls: 'pages-publish-settings__hero' });
+    hero.createDiv({ cls: 'pages-publish-settings__title', text: 'Pages Publish' });
+    const identity = hero.createDiv({ cls: 'pages-publish-settings__site-identity' });
+    identity.createEl('strong', { text: draft.site.name });
+    identity.createSpan({ text: siteCanonicalOrigin(draft) });
+    const headerStatus = hero.createDiv({ cls: 'pages-publish-settings__header-status' });
     this.headerStatusText = headerStatus.createSpan({
       text: settingsHeaderStatusText(state.status),
     });
-    new ButtonComponent(headerStatus).setButtonText('打开配置文件').onClick(() =>
+    new ButtonComponent(headerStatus).setIcon('file-code-2').setButtonText('打开配置文件').onClick(() =>
       openSiteConfigForRepair({ workspace: this.app.workspace }),
     );
-    new ButtonComponent(headerStatus).setButtonText('打开发布中心').onClick(() =>
+    new ButtonComponent(headerStatus).setIcon('cloud-upload').setButtonText('打开发布中心').onClick(() =>
       this.openPublishCenter(),
     );
     const sections = new Map<string, HTMLElement>();
-    const anchors = container.createDiv({ cls: 'pages-publish-settings__anchors' });
-    for (const [id, label] of [
-      ['site', '站点'],
-      ['content', '内容范围'],
-      ['cloudflare', 'Cloudflare'],
-      ['features', '站点功能'],
-      ['environment', '本地环境'],
+    const sectionAnchors = new Map<string, HTMLButtonElement>();
+    const setActiveAnchor = (activeId: string): void => {
+      for (const [id, anchorButton] of sectionAnchors) {
+        anchorButton.toggleClass('is-active', id === activeId);
+      }
+    };
+    const anchors = document.createEl('nav', {
+      cls: 'pages-publish-settings__anchors',
+      attr: { 'aria-label': '设置分区' },
+    });
+    for (const [id, label, icon] of [
+      ['site', '站点', 'home'],
+      ['content', '内容范围', 'folder'],
+      ['cloudflare', 'Cloudflare', 'cloud'],
+      ['features', '站点功能', 'layout-grid'],
+      ['environment', '本地环境', 'monitor'],
     ] as const) {
-      new ButtonComponent(anchors).setButtonText(label).onClick(() => {
+      const button = new ButtonComponent(anchors).setIcon(icon).setTooltip(label);
+      button.buttonEl.createSpan({ text: label });
+      button.buttonEl.setAttr('aria-label', label);
+      button.buttonEl.toggleClass('is-active', id === 'site');
+      sectionAnchors.set(id, button.buttonEl);
+      button.onClick(() => {
+        setActiveAnchor(id);
         sections.get(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     }
+
+    container = document.createEl('main', { cls: 'pages-publish-settings__body' });
 
     if (state.status === 'conflict' && state.comparison) {
       const warning = container.createDiv({ cls: 'pages-publish-view__warning' });
       warning.createEl('p', {
         text: '.publish/site.yml 已在外部修改。当前草稿不会被静默覆盖。',
       });
-      const actions = warning.createDiv({ cls: 'pages-publish-view__actions' });
+      const actions = warning.createDiv({ cls: 'pages-publish-settings__conflict-actions' });
       new Setting(actions)
         .addButton((button) =>
           button.setButtonText('重新载入').onClick(async () => {
@@ -459,6 +485,24 @@ export class PagesPublishSettingTab extends PluginSettingTab {
     );
 
     this.renderMaintenance(container, sections);
+
+    const scrollRoot = document.closest('.vertical-tab-content');
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.sectionObserver = new IntersectionObserver((entries) => {
+        const active = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+        if (!active) return;
+        for (const [id, section] of sections) {
+          if (section === active.target) setActiveAnchor(id);
+        }
+      }, {
+        root: scrollRoot,
+        rootMargin: '-14% 0px -70%',
+        threshold: [0.01, 0.2, 0.6],
+      });
+      for (const section of sections.values()) this.sectionObserver.observe(section);
+    }
 
     if (this.pendingUrlChanges && this.pendingUrlChanges.length > 0) {
       const impact = container.createDiv({ cls: 'pages-publish-view__warning' });

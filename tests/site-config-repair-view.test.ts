@@ -21,8 +21,14 @@ const obsidianMock = vi.hoisted(() => {
       this.children.push(child);
       return child;
     }
+    createDiv(input: { cls?: string; text?: string } = {}): Element {
+      const child = new Element('div', input);
+      this.children.push(child);
+      return child;
+    }
     addClass(value: string): void { this.attributes.class = value; }
     empty(): void { this.children.length = 0; }
+    setText(value: string): void { this.text = value; }
     setAttr(name: string, value: string): void { this.attributes[name] = value; }
     addEventListener(type: string, listener: () => void | Promise<void>): void {
       this.listeners[type] = listener;
@@ -34,7 +40,9 @@ const obsidianMock = vi.hoisted(() => {
     private action: (() => void | Promise<void>) | undefined;
     constructor(container: Element) { container.children.push(this.buttonEl); buttons.push(this); }
     setButtonText(text: string): this { this.buttonEl.text = text; return this; }
+    setIcon(_: string): this { return this; }
     setCta(): this { return this; }
+    setDestructive(): this { return this; }
     onClick(action: () => void | Promise<void>): this { this.action = action; return this; }
     async trigger(): Promise<void> { await this.action?.(); }
   }
@@ -102,6 +110,7 @@ describe('site configuration repair view', () => {
 
     await expect(readFile(join(vault, '.publish', 'site.yml'), 'utf8')).resolves.toBe(original);
     expect(obsidianMock.notices.at(-1)).toMatch(/^无法保存修复：/);
+    expect(text(view.contentEl as unknown as ElementModel)).toContain('1 个校验问题');
   });
 
   it('loads the latest disk source after a conflict so a corrected draft can be saved', async () => {
@@ -117,6 +126,8 @@ describe('site configuration repair view', () => {
     expect(obsidianMock.notices.at(-1)).toMatch(/^无法保存修复：Site configuration changed outside this editor/);
 
     await button('载入当前配置并放弃修复草稿').trigger();
+    expect(editor.value).toBe(source('Local draft'));
+    await button('再次点击以放弃修复草稿').trigger();
     expect(editor.value).toBe(source('External edit'));
 
     await button('验证并保存修复').trigger();

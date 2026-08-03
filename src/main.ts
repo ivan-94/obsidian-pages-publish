@@ -238,7 +238,11 @@ export default class PagesPublishPlugin extends Plugin {
     );
     this.registerView(
       PAGES_PUBLISH_LOG_VIEW_TYPE,
-      (leaf) => new PagesPublishMaintenanceLogView(leaf, () => diagnosticLog.entries()),
+      (leaf) => new PagesPublishMaintenanceLogView(
+        leaf,
+        () => diagnosticLog.entries(),
+        () => application.exportDiagnostics({ confirmed: true }),
+      ),
     );
     this.registerView(
       PAGES_PUBLISH_CONFIG_REPAIR_VIEW_TYPE,

@@ -54,7 +54,10 @@ describe('Cloudflare connection service', () => {
     const exchanges: Array<{ code: string; codeVerifier: string; redirectUri?: string }> = [];
     const exchange = vi.fn(async (input: (typeof exchanges)[number]) => {
       exchanges.push(input);
-      return { accessToken: 'oauth-access-secret' };
+      return {
+        accessToken: 'oauth-access-secret',
+        refreshToken: 'oauth-refresh-secret',
+      };
     });
     const keychain = { save: vi.fn(async () => undefined), read: vi.fn(), remove: vi.fn() };
     const service = new CloudflareConnectionService(makeDependencies({
@@ -71,7 +74,7 @@ describe('Cloudflare connection service', () => {
     expect(first.url).toContain('https://dash.cloudflare.com/oauth/authorize');
     expect(second.url).toContain('https://dash.cloudflare.com/oauth/authorize');
     expect(firstRequest).toMatchObject({
-      scopes: ['memberships.read', 'page.read', 'page.write'],
+      scopes: ['memberships.read', 'page.read', 'page.write', 'offline_access'],
       codeChallengeMethod: 'S256',
     });
     expect(firstRequest?.state).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -131,7 +134,10 @@ describe('Cloudflare connection service', () => {
           state = input.state;
           return { authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' };
         },
-        exchange: async () => ({ accessToken: 'oauth-access-secret' }),
+        exchange: async () => ({
+          accessToken: 'oauth-access-secret',
+          refreshToken: 'oauth-refresh-secret',
+        }),
       },
       api: { verify, listAccounts, verifyPermissions },
     }));
@@ -149,6 +155,41 @@ describe('Cloudflare connection service', () => {
       accountId: personal.id,
       capabilities: CLOUD_FLARE_PAGES_CAPABILITIES,
     });
+  });
+
+  it('rejects an OAuth grant without a refresh token before presenting it as connected', async () => {
+    let state = '';
+    const listAccounts = vi.fn(async () => [personal]);
+    const keychain = { save: vi.fn(), read: vi.fn(), remove: vi.fn() };
+    const bindings = { read: vi.fn(), write: vi.fn() };
+    const service = new CloudflareConnectionService(makeDependencies({
+      oauth: {
+        begin: async (input) => {
+          state = input.state;
+          return { authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' };
+        },
+        exchange: async () => ({
+          accessToken: 'short-lived-access-secret',
+          expiresInSeconds: 3600,
+        }),
+      },
+      api: {
+        verify: async () => personal,
+        verifyPermissions: async () => true,
+        listAccounts,
+      },
+      keychain,
+      bindings,
+    }));
+
+    await service.beginOAuth();
+
+    await expect(service.completeOAuth({ state, code: 'authorization-code' })).rejects.toMatchObject({
+      code: 'oauth-refresh-unavailable',
+    });
+    expect(listAccounts).not.toHaveBeenCalled();
+    expect(keychain.save).not.toHaveBeenCalled();
+    expect(bindings.write).not.toHaveBeenCalled();
   });
 
   it('stores OAuth refresh credentials separately and records only the access expiry in local status', async () => {
@@ -368,7 +409,10 @@ describe('Cloudflare connection service', () => {
           state = input.state;
           return { authorizationUrl: 'https://dash.cloudflare.com/oauth2/auth' };
         },
-        exchange: async () => ({ accessToken: 'oauth-access-secret' }),
+        exchange: async () => ({
+          accessToken: 'oauth-access-secret',
+          refreshToken: 'oauth-refresh-secret',
+        }),
       },
       api: {
         verify: vi.fn(),

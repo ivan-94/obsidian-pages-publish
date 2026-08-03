@@ -4,6 +4,7 @@ export const CLOUD_FLARE_PAGES_SCOPES = [
   'memberships.read',
   'page.read',
   'page.write',
+  'offline_access',
 ] as const;
 
 /**
@@ -93,6 +94,23 @@ export interface CloudflarePublishingConnection {
   credential: string;
 }
 
+export type CloudflareOAuthExchangeRejectionReason =
+  | 'invalid_client'
+  | 'invalid_grant'
+  | 'invalid_request'
+  | 'invalid_scope'
+  | 'unauthorized_client'
+  | 'unsupported_grant_type';
+
+/** A provider rejection reduced to a protocol-defined, non-secret reason. */
+export class CloudflareOAuthExchangeRejectedError extends Error {
+  readonly name = 'CloudflareOAuthExchangeRejectedError';
+
+  constructor(readonly oauthReason: CloudflareOAuthExchangeRejectionReason) {
+    super(`Cloudflare rejected the OAuth token exchange: ${oauthReason}.`);
+  }
+}
+
 type CloudflareConnectionErrorCode =
   | 'api-account-verification-failed'
   | 'api-accounts-list-failed'
@@ -107,7 +125,8 @@ type CloudflareConnectionErrorCode =
   | 'oauth-begin-failed'
   | 'oauth-callback-invalid'
   | 'oauth-exchange-failed'
-  | 'oauth-refresh-failed';
+  | 'oauth-refresh-failed'
+  | 'oauth-refresh-unavailable';
 
 /** A deliberately non-wrapping error safe to present in the UI or a log. */
 export class CloudflareConnectionError extends Error {
@@ -116,6 +135,7 @@ export class CloudflareConnectionError extends Error {
   constructor(
     readonly code: CloudflareConnectionErrorCode,
     message: string,
+    readonly oauthReason?: CloudflareOAuthExchangeRejectionReason,
   ) {
     super(message);
   }
@@ -210,6 +230,12 @@ export class CloudflareConnectionService {
           redirectUri: transaction.redirectUri,
         }),
       );
+      if (!credential.refreshToken) {
+        throw new CloudflareConnectionError(
+          'oauth-refresh-unavailable',
+          'Cloudflare did not issue a refresh token. Check the OAuth client refresh-token grant and authorize again.',
+        );
+      }
       return this.connectVerifiedCredential(credential.accessToken, 'oauth', credential);
     });
   }
@@ -764,7 +790,11 @@ export class CloudflareConnectionService {
     code: CloudflareConnectionErrorCode,
     message: string,
   ): CloudflareConnectionError {
-    return new CloudflareConnectionError(code, message);
+    const oauthReason = code === 'oauth-exchange-failed' &&
+      error instanceof CloudflareOAuthExchangeRejectedError
+      ? error.oauthReason
+      : undefined;
+    return new CloudflareConnectionError(code, message, oauthReason);
   }
 
   private newOAuthTransaction(redirectUri?: string): OAuthTransaction {

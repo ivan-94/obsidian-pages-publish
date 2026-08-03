@@ -6,6 +6,7 @@ import {
   Modal,
   Notice,
   Setting,
+  setIcon,
   type ViewStateResult,
   type WorkspaceLeaf,
 } from 'obsidian';
@@ -260,27 +261,46 @@ export class PagesPublishView extends ItemView {
     center: PublishCenterState,
     connection: InitialSetupConnection = { state: 'unavailable' },
   ): void {
-    container.createDiv({ cls: 'pages-publish-view__type', text: '发布中心' });
-    container.createEl('h2', { text: center.siteName });
+    const pageHeader = container.createDiv({ cls: 'pages-publish-view__page-header' });
+    const headerContent = pageHeader.createDiv({ cls: 'pages-publish-view__header-content' });
+    headerContent.createDiv({ cls: 'pages-publish-view__type', text: '发布中心' });
+    headerContent.createEl('h2', { text: center.siteName });
     const publishedSiteUrl = center.lastPublishedAt ? center.siteUrl : undefined;
-    const identity = container.createEl('p', { cls: 'pages-publish-view__identity' });
-    identity.createSpan({ text: publishedSiteUrl ?? '尚无已确认成功的线上站点' });
+    const identity = headerContent.createDiv({ cls: 'pages-publish-view__identity' });
     identity.createSpan({
+      cls: 'pages-publish-view__site-url',
+      text: publishedSiteUrl ?? '尚无已确认成功的线上站点',
+    });
+    const connectionState = connection.state === 'connected'
+      ? 'connected'
+      : connection.state === 'expired' || connection.state === 'disconnected'
+        ? 'attention'
+        : 'unknown';
+    const connectionIdentity = identity.createSpan({
+      cls: `pages-publish-view__connection pages-publish-view__connection--${connectionState}`,
+    });
+    connectionIdentity.createSpan({
+      cls: 'pages-publish-view__connection-dot',
+      attr: { 'aria-hidden': 'true' },
+    });
+    connectionIdentity.createSpan({
       text: connection.state === 'connected'
-        ? ` · Cloudflare 已连接${connection.account ? `：${connection.account.name}` : ''}`
+        ? `Cloudflare 已连接${connection.account ? `：${connection.account.name}` : ''}`
         : connection.state === 'expired'
-          ? ' · Cloudflare 授权已失效'
+          ? 'Cloudflare 授权已失效'
           : connection.state === 'disconnected'
-            ? ' · Cloudflare 尚未连接'
-            : ' · Cloudflare 状态不可用',
+            ? 'Cloudflare 尚未连接'
+            : 'Cloudflare 状态不可用',
     });
     identity.createSpan({
+      cls: 'pages-publish-view__published-at',
       text: center.lastPublishedAt
-        ? ` · 上次发布 ${new Date(center.lastPublishedAt).toLocaleString()}`
-        : ' · 从未成功发布',
+        ? `上次发布 ${new Date(center.lastPublishedAt).toLocaleString()}`
+        : '从未成功发布',
     });
-    const headerActions = container.createDiv({ cls: 'pages-publish-view__header-actions' });
+    const headerActions = pageHeader.createDiv({ cls: 'pages-publish-view__header-actions' });
     new ButtonComponent(headerActions)
+      .setIcon('external-link')
       .setButtonText('打开站点')
       .setDisabled(!publishedSiteUrl)
       .onClick(async () => {
@@ -312,7 +332,7 @@ export class PagesPublishView extends ItemView {
         menu.showAtMouseEvent(event);
       });
     moreActions.buttonEl.setAttribute('aria-label', '更多操作');
-    container.createEl('p', {
+    headerContent.createEl('p', {
       cls: 'pages-publish-view__summary',
       text: center.output.status === 'unknown'
         ? '当前问题阻止了完整输出估算；修复后重新扫描即可恢复发布报告。'
@@ -322,38 +342,62 @@ export class PagesPublishView extends ItemView {
     });
 
     const scanBar = container.createDiv({ cls: 'pages-publish-view__scan' });
+    const scanSummary = scanBar.createDiv({ cls: 'pages-publish-view__scan-summary' });
+    scanSummary.createEl('strong', { text: `${center.summary.changes} 项变化` });
+    scanSummary.createSpan({
+      text: center.lastPublishedAt
+        ? `基于 ${new Date(center.lastPublishedAt).toLocaleTimeString()}`
+        : '等待首次发布',
+    });
+    const scanMetrics = scanBar.createDiv({ cls: 'pages-publish-view__scan-metrics' });
     for (const metric of [
-      { text: `+${center.summary.added} 新增`, tab: 'changes' as const },
-      { text: `~${center.summary.updated} 更新`, tab: 'changes' as const },
-      { text: `-${center.summary.takedowns} 待下线`, tab: 'changes' as const },
-      { text: `${center.summary.blockers} 阻塞`, tab: 'issues' as const },
-      { text: `${center.summary.warnings} 警告`, tab: 'issues' as const },
+      { text: `+${center.summary.added} 新增`, icon: 'circle-plus', tab: 'changes' as const, tone: 'success' },
+      { text: `~${center.summary.updated} 更新`, icon: 'refresh-cw', tab: 'changes' as const, tone: 'accent' },
+      { text: `-${center.summary.takedowns} 待下线`, icon: 'arrow-down-to-line', tab: 'changes' as const, tone: 'warning' },
+      { text: `${center.summary.blockers} 阻塞`, icon: 'circle-x', tab: 'issues' as const, tone: 'danger' },
+      { text: `${center.summary.warnings} 警告`, icon: 'triangle-alert', tab: 'issues' as const, tone: 'warning' },
     ]) {
-      new ButtonComponent(scanBar).setButtonText(metric.text).onClick(() => {
-        this.activateTab(metric.tab);
-      });
+      new ButtonComponent(scanMetrics)
+        .setIcon(metric.icon)
+        .setButtonText(metric.text)
+        .setClass('pages-publish-view__metric')
+        .setClass(`pages-publish-view__metric--${metric.tone}`)
+        .onClick(() => {
+          this.activateTab(metric.tab);
+        });
     }
-    new ButtonComponent(scanBar).setButtonText('重新扫描').onClick(async () => {
+    const scanActions = scanBar.createDiv({ cls: 'pages-publish-view__scan-actions' });
+    new ButtonComponent(scanActions).setIcon('refresh-cw').setButtonText('重新扫描').onClick(async () => {
       await this.refreshPublishCenter({ content: true });
     });
-    new ButtonComponent(scanBar).setButtonText('检查 Cloudflare').onClick(async () => {
+    new ButtonComponent(scanActions).setIcon('cloud').setButtonText('检查 Cloudflare').onClick(async () => {
       await this.refreshPublishCenter({ connection: true });
     });
     if (!center.canPublish) {
       const blocker = center.issues.find((issue) => issue.severity === 'blocker');
-      container.createEl('p', {
-        cls: 'pages-publish-view__error',
+      const callout = container.createDiv({
+        cls: 'pages-publish-view__callout pages-publish-view__callout--danger',
+      });
+      const message = callout.createDiv({ cls: 'pages-publish-view__callout-message' });
+      const icon = message.createSpan({ attr: { 'aria-hidden': 'true' } });
+      setIcon(icon, 'circle-x');
+      message.createEl('p', {
         text: `发布被阻塞：${blocker?.message ?? '修复所有阻塞问题后重试。'}`,
       });
-      new ButtonComponent(container).setButtonText('查看问题').onClick(() => {
+      new ButtonComponent(callout).setButtonText('查看问题').onClick(() => {
         this.activateTab('issues');
       });
     }
     const connectionBlocksPublishing = connection.state === 'expired'
       || connection.state === 'disconnected';
     if (connectionBlocksPublishing) {
-      const warning = container.createEl('p', {
-        cls: 'pages-publish-view__error',
+      const warning = container.createDiv({
+        cls: 'pages-publish-view__callout pages-publish-view__callout--danger',
+      });
+      const message = warning.createDiv({ cls: 'pages-publish-view__callout-message' });
+      const icon = message.createSpan({ attr: { 'aria-hidden': 'true' } });
+      setIcon(icon, 'cloud-off');
+      message.createEl('p', {
         text: connection.state === 'expired'
           ? 'Cloudflare 授权已失效；本地编辑仍可用，重新授权前不会开始发布。'
           : 'Cloudflare 尚未连接；本地编辑仍可用，连接账号前不会开始发布。',
@@ -373,14 +417,19 @@ export class PagesPublishView extends ItemView {
     }
 
     const tabs = container.createDiv({ cls: 'pages-publish-view__tabs' });
-    const tabDefinitions: Array<{ id: PublishCenterTab; text: string }> = [
-      { id: 'changes', text: `当前变化 ${center.summary.changes}` },
-      { id: 'all', text: `全部内容 ${center.articles.length}` },
-      { id: 'unpublished', text: `未发布 ${center.summary.added}` },
-      { id: 'issues', text: `问题 ${center.issues.length}` },
+    const tabList = tabs.createDiv({ cls: 'pages-publish-view__tab-list', attr: { role: 'tablist' } });
+    const tabDefinitions: Array<{ id: PublishCenterTab; text: string; count: number }> = [
+      { id: 'changes', text: '当前变化', count: center.summary.changes },
+      { id: 'all', text: '全部内容', count: center.articles.length },
+      { id: 'unpublished', text: '未发布', count: center.summary.added },
+      { id: 'issues', text: '问题', count: center.issues.length },
     ];
     for (const tab of tabDefinitions) {
-      const button = new ButtonComponent(tabs).setButtonText(tab.text);
+      const button = new ButtonComponent(tabList).setClass('pages-publish-view__tab');
+      button.buttonEl.setAttr('role', 'tab');
+      button.buttonEl.setAttr('aria-label', `${tab.text} ${tab.count}`);
+      button.buttonEl.createSpan({ cls: 'pages-publish-view__tab-label', text: tab.text });
+      button.buttonEl.createSpan({ cls: 'pages-publish-view__tab-count', text: String(tab.count) });
       if (this.activeTab === tab.id) button.setClass('is-active');
       button.onClick(() => {
         this.activateTab(tab.id);
@@ -390,7 +439,11 @@ export class PagesPublishView extends ItemView {
         button.buttonEl.focus();
       }
     }
-    const search = tabs.createEl('input', {
+    const controls = tabs.createDiv({ cls: 'pages-publish-view__tab-controls' });
+    const searchControl = controls.createDiv({ cls: 'pages-publish-view__search-control' });
+    const searchIcon = searchControl.createSpan({ attr: { 'aria-hidden': 'true' } });
+    setIcon(searchIcon, 'search');
+    const search = searchControl.createEl('input', {
       type: 'search',
       attr: { 'aria-label': '搜索文章或路径', placeholder: '搜索文章或路径' },
     });
@@ -399,7 +452,10 @@ export class PagesPublishView extends ItemView {
       this.focusSearchOnRender = false;
       search.focus();
     }
-    const filter = tabs.createEl('select', {
+    const filterControl = controls.createDiv({ cls: 'pages-publish-view__filter-control' });
+    const filterIcon = filterControl.createSpan({ attr: { 'aria-hidden': 'true' } });
+    setIcon(filterIcon, 'list-filter');
+    const filter = filterControl.createEl('select', {
       cls: 'pages-publish-view__filter',
       attr: { 'aria-label': '筛选文章' },
     });
@@ -445,14 +501,20 @@ export class PagesPublishView extends ItemView {
     });
     const list = workspace.createDiv({ cls: 'pages-publish-view__list' });
     const table = list.createEl('table', { cls: 'pages-publish-view__articles' });
+    const colgroup = table.createEl('colgroup');
+    for (const column of ['selection', 'article', 'visibility', 'change', 'check', 'menu']) {
+      colgroup.createEl('col', { cls: `pages-publish-view__column--${column}` });
+    }
     const header = table.createEl('thead').createEl('tr');
     for (const label of ['上线', '文章 / 路径', '公开方式', '状态变化', '检查']) {
       header.createEl('th', { attr: { scope: 'col' }, text: label });
     }
+    header.createEl('th', { attr: { scope: 'col', 'aria-label': '行操作' } });
     const body = table.createEl('tbody');
     const searchableRows: Array<{ row: HTMLTableRowElement; text: string }> = [];
     for (const article of scopedArticles) {
       const row = body.createEl('tr');
+      if (selected?.sourcePath === article.sourcePath) row.addClass('is-selected');
       searchableRows.push({ row, text: `${article.title}\n${article.sourcePath}`.toLocaleLowerCase() });
       row.addEventListener('click', (event) => {
         if (event.target instanceof HTMLInputElement) return;
@@ -467,8 +529,17 @@ export class PagesPublishView extends ItemView {
       checkbox.addEventListener('change', () => {
         void this.updateInclusion(article, checkbox.checked);
       });
-      const title = row.createEl('td', { attr: { 'data-label': '文章 / 路径' } });
-      const reviewButton = new ButtonComponent(title)
+      const title = row.createEl('td', {
+        cls: 'pages-publish-view__article-cell',
+        attr: { 'data-label': '文章 / 路径' },
+      });
+      const fileIcon = title.createSpan({
+        cls: 'pages-publish-view__article-icon',
+        attr: { 'aria-hidden': 'true' },
+      });
+      setIcon(fileIcon, 'file-text');
+      const articleInfo = title.createDiv({ cls: 'pages-publish-view__article-info' });
+      const reviewButton = new ButtonComponent(articleInfo)
         .setButtonText(article.title)
         .setTooltip(`审阅 ${article.title}`)
         .onClick(() => this.selectArticle(article));
@@ -476,21 +547,50 @@ export class PagesPublishView extends ItemView {
         this.focusArticleOnRender = undefined;
         reviewButton.buttonEl.focus();
       }
-      title.createEl('code', { text: article.sourcePath });
-      row.createEl('td', {
+      articleInfo.createEl('code', { text: article.sourcePath });
+      const visibility = row.createEl('td', {
+        cls: `pages-publish-view__visibility pages-publish-view__visibility--${article.visibility}`,
         attr: { 'data-label': '公开方式' },
-        text: visibilityLabel(article.visibility),
       });
-      row.createEl('td', {
+      const visibilityIcon = visibility.createSpan({ attr: { 'aria-hidden': 'true' } });
+      setIcon(visibilityIcon, visibilityIconName(article.visibility));
+      visibility.createSpan({ text: visibilityLabel(article.visibility) });
+      const change = row.createEl('td', {
+        cls: `pages-publish-view__change pages-publish-view__change--${article.change}`,
         attr: { 'data-label': '状态变化' },
-        text: changeLabel(article.change),
       });
-      row.createEl('td', {
+      const changeIcon = change.createSpan({ attr: { 'aria-hidden': 'true' } });
+      setIcon(changeIcon, changeIconName(article.change));
+      change.createSpan({ text: changeLabel(article.change) });
+      const checkTone = article.issues.length === 0
+        ? 'passed'
+        : article.issues.some((issue) => issue.severity === 'blocker')
+          ? 'blocker'
+          : 'warning';
+      const check = row.createEl('td', {
+        cls: article.issues.length === 0
+          ? 'pages-publish-view__check pages-publish-view__check--passed'
+          : article.issues.some((issue) => issue.severity === 'blocker')
+            ? 'pages-publish-view__check pages-publish-view__check--blocker'
+            : 'pages-publish-view__check pages-publish-view__check--warning',
         attr: { 'data-label': '检查' },
+      });
+      const checkIcon = check.createSpan({ attr: { 'aria-hidden': 'true' } });
+      setIcon(checkIcon, checkTone === 'passed' ? 'circle-check' : checkTone === 'blocker' ? 'circle-x' : 'triangle-alert');
+      check.createSpan({
         text: article.issues.length === 0
           ? '通过'
-          : `${article.issues.some((issue) => issue.severity === 'blocker') ? '阻塞' : '警告'} ${article.issues.length}`,
+          : `${checkTone === 'blocker' ? '阻塞' : '警告'} ${article.issues.length}`,
       });
+      const rowActions = row.createEl('td', {
+        cls: 'pages-publish-view__row-actions',
+        attr: { 'data-label': '操作' },
+      });
+      const reviewAction = new ButtonComponent(rowActions)
+        .setIcon('ellipsis')
+        .setTooltip(`审阅 ${article.title}`)
+        .onClick(() => this.selectArticle(article));
+      reviewAction.buttonEl.setAttr('aria-label', `审阅 ${article.title}`);
     }
     const applySearch = (): void => {
       const query = search.value.trim().toLocaleLowerCase();
@@ -530,14 +630,18 @@ export class PagesPublishView extends ItemView {
       }
     }
 
-    const actions = container.createDiv({ cls: 'pages-publish-view__actions' });
+    const footer = container.createEl('footer', { cls: 'pages-publish-view__footer' });
+    const footerStatus = footer.createDiv({ cls: 'pages-publish-view__footer-status' });
     const publication = this.application.getPublicationStatus();
-    this.renderPublicationStatus(container, publication);
-    new ButtonComponent(actions)
+    this.renderPublicationStatus(footerStatus, publication);
+    const footerActions = footer.createDiv({ cls: 'pages-publish-view__footer-actions' });
+    new ButtonComponent(footerActions)
+      .setIcon('eye')
       .setButtonText(this.sitePreviewInFlight ? '正在准备预览…' : '预览站点')
       .setDisabled(this.sitePreviewInFlight !== undefined)
       .onClick(() => this.openSitePreview());
-    new ButtonComponent(actions)
+    new ButtonComponent(footerActions)
+      .setIcon('cloud-upload')
       .setButtonText(publishButtonLabel(center.canPublish, publication))
       .setCta()
       .setDisabled(
@@ -593,29 +697,70 @@ export class PagesPublishView extends ItemView {
     status: PublicationServiceStatus,
   ): void {
     if (status.state === 'idle' || status.state === 'unavailable') return;
-    const element = container.createEl('p', {
+    const element = container.createEl('section', {
       cls: status.state === 'failed' || status.state === 'reconciliation-required'
-        ? 'pages-publish-view__error'
-        : 'pages-publish-view__summary',
-      text: publicationStatusText(status),
+        ? `pages-publish-view__publication-status pages-publish-view__publication-status--${status.state} pages-publish-view__error`
+        : `pages-publish-view__publication-status pages-publish-view__publication-status--${status.state} pages-publish-view__summary`,
+      attr: {
+        role: 'status',
+        'aria-live': 'polite',
+        'aria-atomic': 'true',
+        'aria-busy': status.state === 'running' ? 'true' : 'false',
+      },
+    });
+    element.setAttr('data-state', status.state);
+    const message = element.createDiv({ cls: 'pages-publish-view__publication-message' });
+    const symbol = message.createSpan({
+      cls: 'pages-publish-view__publication-symbol',
+      attr: { 'aria-hidden': 'true' },
+    });
+    setIcon(symbol, status.state === 'running'
+      ? 'loader-circle'
+      : status.state === 'succeeded'
+        ? 'circle-check'
+        : 'circle-x');
+    const copy = message.createDiv({ cls: 'pages-publish-view__publication-copy' });
+    copy.createEl('strong', { text: publicationStatusLabel(status) });
+    copy.createSpan({
+      cls: 'pages-publish-view__publication-detail',
+      text: publicationStatusDetail(status),
     });
     if (status.state === 'running') {
-      element.createSpan({
-        text: ` 准备${status.stage === 'prepare' ? ' ●' : ' ✓'} → 构建与检查${status.stage === 'build' ? ' ●' : status.stage === 'prepare' ? '' : ' ✓'} → 上传${status.stage === 'upload' ? ' ●' : status.stage === 'activate' ? ' ✓' : ''} → 激活${status.stage === 'activate' ? ' ●' : ''}`,
+      const track = element.createEl('ol', {
+        cls: 'pages-publish-view__publication-track',
+        attr: { 'aria-label': '发布进度' },
       });
-      const maintenance = this.application.getMaintenanceStatus();
-      if (!('state' in maintenance) && maintenance.capabilities.openLogs) {
-        new ButtonComponent(element).setButtonText('查看日志').onClick(async () => {
-          try {
-            await this.application.openMaintenanceLogs();
-          } catch (error) {
-            new Notice(`无法打开日志：${errorMessage(error)}`);
-          }
+      const stages = ['prepare', 'build', 'upload', 'activate'] as const;
+      const activeStage = stages.indexOf(status.stage);
+      for (const [index, stage] of stages.entries()) {
+        const item = track.createEl('li', {
+          cls: index < activeStage
+            ? 'is-complete'
+            : index === activeStage
+              ? 'is-active'
+              : 'is-upcoming',
+        });
+        item.setAttr('data-stage', stage);
+        if (index === activeStage) item.setAttr('aria-current', 'step');
+        const marker = item.createSpan({
+          cls: 'pages-publish-view__publication-stage-marker',
+          attr: { 'aria-hidden': 'true' },
+        });
+        setIcon(marker, index < activeStage
+          ? 'check'
+          : index === activeStage
+            ? 'loader-circle'
+            : 'circle');
+        item.createSpan({
+          cls: 'pages-publish-view__publication-stage-label',
+          text: publicationStageLabel(stage),
         });
       }
+      this.renderPublicationLogAction(element);
     }
     if (status.state === 'succeeded') {
-      new ButtonComponent(element).setButtonText('打开站点').onClick(async () => {
+      const actions = element.createDiv({ cls: 'pages-publish-view__publication-actions' });
+      new ButtonComponent(actions).setIcon('external-link').setButtonText('打开站点').onClick(async () => {
         try {
           await this.application.openPublishedSite();
         } catch (error) {
@@ -623,8 +768,11 @@ export class PagesPublishView extends ItemView {
         }
       });
     }
+    if (status.state === 'failed' || status.state === 'reconciliation-required') {
+      this.renderPublicationLogAction(element);
+    }
     if (status.state === 'reconciliation-required' && status.reconciliation === 'upload-uncertain') {
-      const actions = element.createDiv({ cls: 'pages-publish-view__actions' });
+      const actions = element.createDiv({ cls: 'pages-publish-view__publication-actions' });
       new ButtonComponent(actions)
         .setButtonText('我已在 Cloudflare 核验，解除本地阻塞')
         .setDestructive()
@@ -642,6 +790,19 @@ export class PagesPublishView extends ItemView {
           await this.render();
         });
     }
+  }
+
+  private renderPublicationLogAction(container: HTMLElement): void {
+    const maintenance = this.application.getMaintenanceStatus?.();
+    if (!maintenance || 'state' in maintenance || !maintenance.capabilities.openLogs) return;
+    const actions = container.createDiv({ cls: 'pages-publish-view__publication-actions' });
+    new ButtonComponent(actions).setIcon('file-clock').setButtonText('查看日志').onClick(async () => {
+      try {
+        await this.application.openMaintenanceLogs();
+      } catch (error) {
+        new Notice(`无法打开日志：${errorMessage(error)}`);
+      }
+    });
   }
 
   private matchesTab(article: PublishCenterArticle): boolean {
@@ -684,37 +845,59 @@ export class PagesPublishView extends ItemView {
       attr: { 'aria-label': `审阅 ${article.title}` },
     });
     const header = drawer.createDiv({ cls: 'pages-publish-view__review-header' });
-    header.createEl('h3', { text: article.title });
-    const returnButton = new ButtonComponent(header).setButtonText('返回内容列表').onClick(() => {
-      this.focusArticleOnRender = article.sourcePath;
-      this.selectedSourcePath = undefined;
-      this.selectedArticleDetail = undefined;
-      this.renderCachedPublishCenter();
+    const articleIdentity = header.createDiv({ cls: 'pages-publish-view__review-identity' });
+    const articleIcon = articleIdentity.createSpan({ attr: { 'aria-hidden': 'true' } });
+    setIcon(articleIcon, 'file-text');
+    const articleCopy = articleIdentity.createDiv();
+    articleCopy.createEl('h3', { text: article.title });
+    articleCopy.createEl('p', {
+      cls: 'pages-publish-view__review-path',
+      text: article.sourcePath,
     });
+    const returnButton = new ButtonComponent(header)
+      .setButtonText('返回内容列表')
+      .setIcon('x')
+      .setTooltip('返回内容列表')
+      .onClick(() => {
+        this.focusArticleOnRender = article.sourcePath;
+        this.selectedSourcePath = undefined;
+        this.selectedArticleDetail = undefined;
+        this.renderCachedPublishCenter();
+      });
+    returnButton.buttonEl.setAttr('aria-label', '返回内容列表');
     if (this.focusReviewOnRender) {
       this.focusReviewOnRender = false;
       returnButton.buttonEl.focus();
     }
-    drawer.createEl('p', { text: article.sourcePath });
+    const body = drawer.createDiv({ cls: 'pages-publish-view__review-body' });
     if (article.availability === 'unavailable') {
-      drawer.createEl('p', {
-        cls: 'pages-publish-view__warning',
+      body.createEl('p', {
+        cls: 'pages-publish-view__review-notice pages-publish-view__warning',
         text: '当前 blocker 使此文章的待发布状态无法安全计算；修复后重新扫描。',
       });
     }
     if (article.availability === 'historical') {
-      drawer.createEl('p', {
-        cls: 'pages-publish-view__warning',
+      body.createEl('p', {
+        cls: 'pages-publish-view__review-notice pages-publish-view__warning',
         text: '本地源文件已不存在；此行只记录下一次完整发布的待下线事实，不能直接编辑。',
       });
     }
-    drawer.createEl('h4', { text: '发布结果' });
-    new ButtonComponent(drawer)
+    const result = body.createEl('section', { cls: 'pages-publish-view__review-section' });
+    result.createEl('h4', { text: '发布结果' });
+    const inclusion = result.createDiv({ cls: 'pages-publish-view__review-inclusion' });
+    const inclusionIcon = inclusion.createSpan({ attr: { 'aria-hidden': 'true' } });
+    setIcon(inclusionIcon, article.nextIncluded ? 'circle-check' : 'circle-minus');
+    inclusion.createSpan({
+      text: article.nextIncluded ? '下一版将包含此文章' : '此文章不会进入下一版',
+    });
+    new ButtonComponent(inclusion)
       .setButtonText(article.nextIncluded ? '下一版包含此文章' : '加入下一版')
+      .setClass('pages-publish-view__review-include-action')
       .setDisabled(article.availability !== 'ready')
       .onClick(() => this.updateInclusion(article, !article.nextIncluded));
+    const settings = result.createDiv({ cls: 'pages-publish-view__review-settings' });
     if (detail && article.availability === 'ready') {
-      new Setting(drawer)
+      new Setting(settings)
         .setName('公开方式')
         .addDropdown((dropdown) => dropdown
           .addOption('public', '公开')
@@ -743,7 +926,7 @@ export class PagesPublishView extends ItemView {
       let slug = detail.metadata.slug.source === 'publication.slug'
         ? detail.metadata.slug.value
         : '';
-      new Setting(drawer)
+      new Setting(settings)
         .setName('待发布 URL')
         .setDesc(article.url ?? '下一版不生成页面')
         .addText((text) => text
@@ -766,44 +949,69 @@ export class PagesPublishView extends ItemView {
           await this.selectArticle(article);
         }));
     } else {
-      drawer.createEl('p', { text: `待发布 URL：${article.url ?? '下一版不包含'}` });
+      settings.createEl('p', {
+        cls: 'pages-publish-view__review-fact',
+        text: `待发布 URL：${article.url ?? '下一版不包含'}`,
+      });
     }
     if (article.onlineUrl) {
-      drawer.createEl('p', { text: `当前线上 URL：${article.onlineUrl}` });
+      const online = result.createDiv({ cls: 'pages-publish-view__review-fact' });
+      online.createSpan({ text: '当前线上 URL' });
+      online.createEl('code', { text: article.onlineUrl });
+      if (article.url && article.url !== article.onlineUrl) {
+        result.createEl('p', {
+          cls: 'pages-publish-view__review-redirect',
+          text: '发布后自动保留旧地址重定向',
+        });
+      }
     }
-    drawer.createEl('h4', { text: '检查' });
+    const checks = body.createEl('section', { cls: 'pages-publish-view__review-section' });
+    checks.createEl('h4', { text: '检查' });
     if (article.issues.length === 0) {
-      drawer.createEl('p', { text: '未发现此文章的问题。' });
+      const passed = checks.createDiv({ cls: 'pages-publish-view__review-check pages-publish-view__review-check--passed' });
+      const passedIcon = passed.createSpan({ attr: { 'aria-hidden': 'true' } });
+      setIcon(passedIcon, 'circle-check');
+      passed.createSpan({ text: '未发现此文章的问题。' });
     } else {
-      const issues = drawer.createEl('ul');
+      const issues = checks.createEl('ul', { cls: 'pages-publish-view__review-issues' });
       for (const issue of article.issues) {
         const item = issues.createEl('li', {
-          text: `${issue.severity === 'blocker' ? '阻塞' : '警告'} · ${issue.path}${issue.line ? `:${issue.line}` : ''} · ${issue.message}`,
+          cls: `pages-publish-view__review-issue pages-publish-view__review-issue--${issue.severity}`,
         });
+        const issueCopy = item.createDiv();
+        issueCopy.createEl('strong', { text: issue.severity === 'blocker' ? '阻塞' : '警告' });
+        issueCopy.createSpan({ text: `${issue.path}${issue.line ? `:${issue.line}` : ''} · ${issue.message}` });
         new ButtonComponent(item)
           .setButtonText('定位')
           .setTooltip('打开问题来源')
           .onClick(() => this.locateIssue(issue));
       }
     }
-    drawer.createEl('h4', { text: '将写入 Frontmatter' });
+    const details = body.createEl('section', { cls: 'pages-publish-view__review-section pages-publish-view__review-section--details' });
+    const frontmatter = details.createEl('details', {
+      cls: 'pages-publish-view__review-disclosure',
+    });
+    frontmatter.createEl('summary', { text: '将写入 Frontmatter' });
     if (!detail) {
-      drawer.createEl('p', { text: '正在读取当前文章的发布意图…' });
+      frontmatter.createEl('p', { text: '正在读取当前文章的发布意图…' });
     } else {
-      drawer.createEl('code', {
+      frontmatter.createEl('code', {
         text: `publication.visibility: ${detail.metadata.visibility.value}`,
       });
       if (detail.metadata.slug.source === 'publication.slug') {
-        drawer.createEl('code', { text: `publication.slug: ${detail.metadata.slug.value}` });
+        frontmatter.createEl('code', { text: `publication.slug: ${detail.metadata.slug.value}` });
       }
       if (detail.metadata.redirects.value.length > 0) {
-        drawer.createEl('code', {
+        frontmatter.createEl('code', {
           text: `publication.redirects: ${detail.metadata.redirects.value.join(', ')}`,
         });
       }
     }
-    drawer.createEl('h4', { text: '依赖' });
-    drawer.createEl('p', {
+    const dependencies = details.createEl('details', {
+      cls: 'pages-publish-view__review-disclosure',
+    });
+    dependencies.createEl('summary', { text: '依赖' });
+    dependencies.createEl('p', {
       text: detail
         ? `图片 ${detail.dependencies.images} · 笔记 ${detail.dependencies.notes} · 外链 ${detail.dependencies.externalLinks}`
         : '正在读取依赖摘要…',
@@ -875,6 +1083,10 @@ export class PagesPublishView extends ItemView {
   }
 
   private async renderSetupWizard(container: HTMLElement): Promise<void> {
+    container.addClass('pages-publish-view--setup');
+    const setupShell = container.createDiv({ cls: 'pages-publish-view__setup-shell' });
+    const setupHeader = setupShell.createEl('header', { cls: 'pages-publish-view__setup-header' });
+    container = setupShell.createEl('main', { cls: 'pages-publish-view__setup-body' });
     let invalidateRenderedScopeReview = (): void => undefined;
     let updateRenderedSetupContinueState = (): void => undefined;
     let scopeReviewSummary: HTMLElement | undefined;
@@ -916,12 +1128,15 @@ export class PagesPublishView extends ItemView {
     const setupAvailable = setupConnectionAvailable
       && Boolean(draft.cloudflare.account.id)
       && connectedAccount?.id === draft.cloudflare.account.id;
-    container.createDiv({ cls: 'pages-publish-view__type', text: '首次设置' });
-    container.createEl('h2', { text: '创建你的发布站点' });
-    container.createEl('p', {
+    setupHeader.createDiv({ cls: 'pages-publish-view__type', text: '首次设置' });
+    setupHeader.createEl('h2', { text: '创建你的发布站点' });
+    setupHeader.createEl('p', {
       text: '草稿只保留在此向导中。只有最后确认才会写入 .publish/site.yml 或修改 Cloudflare 项目；不会发布文章或修改 Frontmatter。',
     });
-    const progress = container.createDiv({ cls: 'pages-publish-view__setup-progress' });
+    const progress = setupHeader.createEl('ol', {
+      cls: 'pages-publish-view__setup-progress',
+      attr: { 'aria-label': '首次设置进度' },
+    });
     for (const [index, label] of [
       '环境准备',
       '1 站点信息',
@@ -929,10 +1144,11 @@ export class PagesPublishView extends ItemView {
       '3 Cloudflare',
       '4 确认',
     ].entries()) {
-      progress.createSpan({
+      const step = progress.createEl('li', {
         cls: index === this.setupStep ? 'is-active' : index < this.setupStep ? 'is-complete' : '',
-        text: label,
+        attr: { 'data-step': String(index + 1) },
       });
+      step.createSpan({ text: label });
     }
 
     if (this.setupStep === 0) {
@@ -1102,7 +1318,7 @@ export class PagesPublishView extends ItemView {
         });
       if (this.setupReview) {
         scopeReviewSummary = container.createEl('p', {
-          cls: 'pages-publish-view__summary',
+          cls: 'pages-publish-view__setup-scan-summary',
           text: `草稿扫描：找到 ${this.setupReview.candidateCount} 篇候选，其中 ${this.setupReview.eligibleCount} 篇当前无 Blocker。`,
         });
         for (const example of this.setupReview.examples ?? []) {
@@ -1278,7 +1494,9 @@ export class PagesPublishView extends ItemView {
       container.createEl('p', { text: '不会执行：发布文章、修改文章 Frontmatter。' });
     }
 
-    const actions = container.createDiv({ cls: 'pages-publish-view__actions' });
+    const actions = setupShell.createDiv({
+      cls: 'pages-publish-view__actions pages-publish-view__setup-actions',
+    });
     if (this.setupStep > 0) {
       new ButtonComponent(actions)
         .setButtonText('退出设置')
@@ -1620,15 +1838,28 @@ class PublishCenterTakedownModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl?.addClass('pages-publish-modal');
+    this.modalEl?.addClass('pages-publish-modal--danger');
+    this.titleEl.addClass('pages-publish-modal__title');
+    this.contentEl.addClass('pages-publish-modal__content');
     this.titleEl.setText('确认待下线');
-    this.contentEl.createEl('p', {
-      text: '此文章将在下一次完整发布中下线；当前线上页面不会立即改变。',
+    const copy = this.contentEl.createDiv({ cls: 'pages-publish-modal__copy' });
+    copy.createEl('p', {
+      text: '下一次完整发布会移除这篇文章的线上页面。本地 Markdown 文件不会被删除，当前线上页面也不会立即改变。',
     });
+    const impact = this.contentEl.createDiv({ cls: 'pages-publish-modal__impact' });
+    impact.createSpan({ text: '影响范围' });
+    impact.createSpan({ text: '仅在下一次整站发布生效' });
     if (this.article.onlineUrl) {
-      this.contentEl.createEl('code', { text: this.article.onlineUrl });
+      const target = this.contentEl.createDiv({ cls: 'pages-publish-modal__target' });
+      target.createSpan({
+        cls: 'pages-publish-modal__target-label',
+        text: '将下线的线上地址',
+      });
+      target.createEl('code', { text: this.article.onlineUrl });
     }
     const actions = this.contentEl.createDiv({
-      cls: 'pages-publish-article-panel__modal-actions',
+      cls: 'pages-publish-modal__actions pages-publish-article-panel__modal-actions',
     });
     new ButtonComponent(actions).setButtonText('取消').onClick(() => this.finish(false));
     new ButtonComponent(actions)
@@ -1661,17 +1892,30 @@ class UploadUncertainRecoveryModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl?.addClass('pages-publish-modal');
+    this.modalEl?.addClass('pages-publish-modal--danger');
+    this.titleEl.addClass('pages-publish-modal__title');
+    this.contentEl.addClass('pages-publish-modal__content');
     this.titleEl.setText('确认解除上传结果未知锁');
-    this.contentEl.createEl('p', {
+    const copy = this.contentEl.createDiv({ cls: 'pages-publish-modal__copy' });
+    copy.createEl('p', {
       text: this.projectName === undefined
         ? '插件无法确认上次 Cloudflare 上传是否创建或激活。请先在 Cloudflare Pages 核验目标项目的部署记录。'
         : `插件无法确认上次上传是否影响 Pages 项目“${this.projectName}”。请先在 Cloudflare Pages 核验部署记录。`,
     });
-    this.contentEl.createEl('p', {
-      text: '只有在你已处理或确认该远端结果后，才能解除本地阻塞；这不会撤销或删除任何 Cloudflare 部署。',
-    });
+    const impact = this.contentEl.createDiv({ cls: 'pages-publish-modal__impact' });
+    impact.createSpan({ text: '解除后' });
+    impact.createSpan({ text: '仅允许后续发布重新开始；不会撤销或删除 Cloudflare 部署。' });
+    if (this.projectName) {
+      const target = this.contentEl.createDiv({ cls: 'pages-publish-modal__target' });
+      target.createSpan({
+        cls: 'pages-publish-modal__target-label',
+        text: '需要核验的项目',
+      });
+      target.createEl('code', { text: this.projectName });
+    }
     const actions = this.contentEl.createDiv({
-      cls: 'pages-publish-article-panel__modal-actions',
+      cls: 'pages-publish-modal__actions pages-publish-article-panel__modal-actions',
     });
     new ButtonComponent(actions).setButtonText('取消').onClick(() => this.finish(false));
     new ButtonComponent(actions)
@@ -1737,20 +1981,39 @@ function publishButtonLabel(
   return '发布站点';
 }
 
-export function publicationStatusText(status: Exclude<PublicationServiceStatus, { state: 'idle' | 'unavailable' }>): string {
+function publicationStatusLabel(
+  status: Exclude<PublicationServiceStatus, { state: 'idle' | 'unavailable' }>,
+): string {
+  if (status.state === 'running') return `${publicationStageLabel(status.stage)}中`;
+  if (status.state === 'succeeded') return '发布成功';
+  if (status.state === 'reconciliation-required') {
+    return status.reconciliation === 'upload-uncertain'
+      ? '上传结果未确认'
+      : '本地发布事实待协调';
+  }
+  return '发布失败';
+}
+
+function publicationStatusDetail(
+  status: Exclude<PublicationServiceStatus, { state: 'idle' | 'unavailable' }>,
+): string {
   if (status.state === 'running') {
-    return `发布中：${publicationStageLabel(status.stage)}（第 ${publicationStageNumber(status.stage)}/4 阶段）`;
+    return `第 ${publicationStageNumber(status.stage)}/4 阶段。任务在后台继续运行。`;
   }
   if (status.state === 'succeeded') {
-    return `发布成功：${status.deployment.output.fileCount} 个文件已激活。`;
+    return `${status.deployment.output.fileCount} 个文件已激活。后续编辑会进入下一次变化。`;
   }
   if (status.state === 'reconciliation-required') {
     if (status.reconciliation === 'upload-uncertain') {
-      return `上传结果未确认：请先在 Cloudflare Pages 核验${status.target === undefined ? '已保存的目标项目' : `项目 ${status.target.projectName}`}，再解除本地阻塞。${status.message}`;
+      return `请先在 Cloudflare Pages 核验${status.target === undefined ? '已保存的目标项目' : `项目 ${status.target.projectName}`}，再解除本地阻塞。${status.message}`;
     }
     return `线上发布成功，但本地事实待协调：${status.message}`;
   }
-  return `发布失败：${status.message} 新版本未激活，现有线上站点保持不变。`;
+  return `${status.message} 新版本未激活，现有线上站点保持不变。`;
+}
+
+export function publicationStatusText(status: Exclude<PublicationServiceStatus, { state: 'idle' | 'unavailable' }>): string {
+  return `${publicationStatusLabel(status)}：${publicationStatusDetail(status)}`;
 }
 
 function publicationStageLabel(stage: 'prepare' | 'build' | 'upload' | 'activate'): string {
@@ -1774,6 +2037,13 @@ function visibilityLabel(value: PublishCenterArticle['visibility']): string {
   return '—';
 }
 
+function visibilityIconName(value: PublishCenterArticle['visibility']) {
+  if (value === 'public') return 'globe-2';
+  if (value === 'unlisted') return 'link';
+  if (value === 'private') return 'lock-keyhole';
+  return 'circle-help';
+}
+
 function changeLabel(value: PublishCenterArticle['change']): string {
   const labels: Record<PublishCenterArticle['change'], string> = {
     added: '新增',
@@ -1785,6 +2055,16 @@ function changeLabel(value: PublishCenterArticle['change']): string {
     unknown: '状态未知',
   };
   return labels[value];
+}
+
+function changeIconName(value: PublishCenterArticle['change']) {
+  if (value === 'added') return 'plus';
+  if (value === 'updated') return 'refresh-cw';
+  if (value === 'url-changed') return 'link-2';
+  if (value === 'visibility-changed') return 'eye';
+  if (value === 'takedown') return 'minus';
+  if (value === 'unchanged') return 'minus';
+  return 'circle-help';
 }
 
 function projectNameFrom(value: string): string {

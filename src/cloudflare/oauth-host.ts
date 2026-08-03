@@ -1,5 +1,7 @@
 import {
+  CloudflareOAuthExchangeRejectedError,
   CloudflareOAuthRefreshRejectedError,
+  type CloudflareOAuthExchangeRejectionReason,
   type CloudflareOAuthBoundary,
   type CloudflareOAuthTokens,
 } from './connection';
@@ -129,6 +131,8 @@ function tokenResponse(
     if (isRefresh && (response.status === 400 || response.status === 401)) {
       throw new CloudflareOAuthRefreshRejectedError();
     }
+    const oauthReason = oauthExchangeRejectionReason(payload?.error);
+    if (oauthReason) throw new CloudflareOAuthExchangeRejectedError(oauthReason);
     throw new Error(failureMessage);
   }
   const refreshToken = payload?.refresh_token;
@@ -140,4 +144,20 @@ function tokenResponse(
       ? { expiresInSeconds: expiresIn }
       : {}),
   };
+}
+
+function oauthExchangeRejectionReason(
+  value: unknown,
+): CloudflareOAuthExchangeRejectionReason | undefined {
+  switch (value) {
+    case 'invalid_client':
+    case 'invalid_grant':
+    case 'invalid_request':
+    case 'invalid_scope':
+    case 'unauthorized_client':
+    case 'unsupported_grant_type':
+      return value;
+    default:
+      return undefined;
+  }
 }

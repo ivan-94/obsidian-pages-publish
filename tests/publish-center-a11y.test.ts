@@ -225,6 +225,7 @@ vi.mock('obsidian', () => {
     Modal,
     Notice: class {},
     Setting,
+    setIcon: () => undefined,
   };
 });
 
@@ -340,7 +341,7 @@ describe('publish-center table accessibility', () => {
 
     await view.onOpen();
     const content = view.contentEl as unknown as ElementModel;
-    expect(descendants(content, 'li').map((item) => item.text)).toEqual([
+    expect(descendants(content, 'li').map((item) => item.text).filter(Boolean)).toEqual([
       '✓ 检查系统与 Vault',
       '✓ Obsidian Node.js 22.14.0',
       '✓ Pages 发布引擎 0.1.0',
@@ -1375,10 +1376,10 @@ describe('publish-center table accessibility', () => {
     expect(table).toBeDefined();
     const headers = descendants(table!, 'th');
     expect(headers.map((header) => header.attributes.scope)).toEqual([
-      'col', 'col', 'col', 'col', 'col',
+      'col', 'col', 'col', 'col', 'col', 'col',
     ]);
     expect(descendants(table!, 'td').map((cell) => cell.attributes['data-label'])).toEqual([
-      '下一版包含', '文章 / 路径', '公开方式', '状态变化', '检查',
+      '下一版包含', '文章 / 路径', '公开方式', '状态变化', '检查', '操作',
     ]);
   });
 
@@ -1601,7 +1602,7 @@ describe('publish-center table accessibility', () => {
     await clickButton(content, '问题 1');
 
     expect(descendants(content, 'aside')).toHaveLength(0);
-    expect(descendants(content, 'button').find((button) => button.text === '问题 1')
+    expect(descendants(content, 'button').find((button) => button.attributes['aria-label'] === '问题 1')
       ?.attributes['data-focused']).toBe('true');
     expect(descendants(content, 'button').map((button) => button.text))
       .toContain('Blocked article');
@@ -1620,7 +1621,7 @@ describe('publish-center table accessibility', () => {
       await clickButton(content, trigger);
 
       expect(descendants(content, 'aside')).toHaveLength(0);
-      expect(descendants(content, 'button').find((button) => button.text === '问题 1')
+      expect(descendants(content, 'button').find((button) => button.attributes['aria-label'] === '问题 1')
         ?.attributes['data-focused']).toBe('true');
     },
   );
@@ -1980,9 +1981,12 @@ function findSetupContinues(root: ElementModel): ElementModel[] {
 }
 
 async function clickButton(root: ElementModel, text: string): Promise<void> {
-  const button = descendants(root, 'button').find((candidate) =>
-    candidate.text === text || (text === '继续' && candidate.text.startsWith('继续：')),
-  );
+  const button = descendants(root, 'button').find((candidate) => {
+    const label = candidate.attributes['aria-label'] ?? '';
+    return candidate.text === text
+      || label === text
+      || (text === '继续' && candidate.text.startsWith('继续：'));
+  });
   expect(button?.click).toBeTypeOf('function');
   await button?.click?.();
 }

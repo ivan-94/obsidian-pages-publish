@@ -78,6 +78,10 @@ export class CurrentArticleView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    // `data-type` is not present on every Obsidian workspace split.  Mark the
+    // owning leaf explicitly so the inspector can reserve a scrollable middle
+    // region and keep its action dock in view.
+    this.containerEl?.addClass?.('pages-publish-article-panel-host');
     this.registerEvent(
       this.app.workspace.on('file-open', () => {
         if (!this.pinnedPath) void this.render();
@@ -96,14 +100,30 @@ export class CurrentArticleView extends ItemView {
     await this.render();
   }
 
+  async onClose(): Promise<void> {
+    this.containerEl?.removeClass?.('pages-publish-article-panel-host');
+  }
+
   private async render(): Promise<void> {
     const container = this.contentEl;
     container.empty();
-    container.addClass('pages-publish-article-panel');
-    const header = container.createDiv({
+    container.addClass(
+      'pages-publish-article-panel',
+      'pages-publish-article-panel--inspector',
+    );
+    const shell = container.createDiv({
+      cls: 'pages-publish-article-panel__shell',
+    });
+    const header = shell.createEl('header', {
       cls: 'pages-publish-article-panel__header',
     });
-    header.createEl('h2', { text: '当前文章发布' });
+    header.createEl('h2', {
+      cls: 'pages-publish-article-panel__header-title',
+      text: '当前文章发布',
+    });
+    const headerActions = header.createDiv({
+      cls: 'pages-publish-article-panel__header-actions',
+    });
     const activePath = this.app.workspace.getActiveFile()?.path;
     if (!this.pinnedPath) {
       if (this.lastUnpinnedActivePath !== undefined
@@ -112,7 +132,7 @@ export class CurrentArticleView extends ItemView {
       }
       this.lastUnpinnedActivePath = activePath;
     }
-    const pin = new ButtonComponent(header)
+    const pin = new ButtonComponent(headerActions)
       .setIcon(this.pinnedPath ? 'pin-off' : 'pin')
       .setTooltip(this.pinnedPath ? '取消固定文章' : '固定当前文章');
     pin.buttonEl.setAttribute(
@@ -129,11 +149,22 @@ export class CurrentArticleView extends ItemView {
       pinnedPath: this.pinnedPath,
     });
     if (!state) return;
+    const body = shell.createDiv({
+      cls: 'pages-publish-article-panel__body',
+      attr: {
+        role: 'region',
+        'aria-label': '当前文章发布详情',
+      },
+    });
     if (state.status !== 'article') {
-      this.renderEmptyState(container, state);
+      this.renderEmptyState(body, state);
       return;
     }
-    this.renderArticle(container, state);
+    const actions = shell.createEl('footer', {
+      cls: 'pages-publish-article-panel__actions',
+      attr: { 'aria-label': '文章发布操作' },
+    });
+    this.renderArticle(body, actions, state);
   }
 
   private clearTransientArticleInteraction(): void {
@@ -146,41 +177,77 @@ export class CurrentArticleView extends ItemView {
   }
 
   private renderArticle(
-    container: HTMLElement,
+    body: HTMLElement,
+    actions: HTMLElement,
     state: CurrentArticlePanelArticle,
   ): void {
-    container.createEl('h3', { text: state.metadata.title.value });
-    container.createEl('code', {
+    const article = body.createDiv({
+      cls: 'pages-publish-article-panel__article',
+    });
+    const identity = article.createDiv({
+      cls: 'pages-publish-article-panel__identity',
+    });
+    const articleIcon = new ButtonComponent(identity).setIcon('file-text');
+    articleIcon.buttonEl.addClass('pages-publish-article-panel__article-icon');
+    articleIcon.buttonEl.setAttr('aria-hidden', 'true');
+    articleIcon.buttonEl.setAttr('tabindex', '-1');
+    const identityCopy = identity.createDiv({
+      cls: 'pages-publish-article-panel__identity-copy',
+    });
+    identityCopy.createEl('h3', { text: state.metadata.title.value });
+    identityCopy.createEl('code', {
       cls: 'pages-publish-article-panel__path',
       text: state.sourcePath,
     });
-    container.createDiv({
+
+    const syncFacts = article.createEl('section', {
+      cls: 'pages-publish-article-panel__section pages-publish-article-panel__sync-facts',
+      attr: { 'aria-labelledby': 'pages-publish-sync-heading' },
+    });
+    syncFacts.createEl('h4', {
+      cls: 'pages-publish-article-panel__section-title',
+      text: '同步状态',
+      attr: { id: 'pages-publish-sync-heading' },
+    });
+    const syncRow = syncFacts.createDiv({
+      cls: 'pages-publish-article-panel__sync-row',
+    });
+    const publicationStatus = syncRow.createDiv({
       cls: `pages-publish-article-panel__status pages-publish-article-panel__status--${state.publicationState}`,
-      text: publicationStateLabel(state.publicationState),
       attr: { role: 'status', 'aria-live': 'polite' },
     });
+    const statusIcon = new ButtonComponent(publicationStatus)
+      .setIcon(publicationStateIcon(state.publicationState));
+    statusIcon.buttonEl.addClass('pages-publish-article-panel__status-icon');
+    statusIcon.buttonEl.setAttr('aria-hidden', 'true');
+    statusIcon.buttonEl.setAttr('tabindex', '-1');
+    publicationStatus.createSpan({ text: publicationStateLabel(state.publicationState) });
+    if (state.metadata.deployment?.lastPublishedAt) {
+      syncRow.createSpan({
+        cls: 'pages-publish-article-panel__sync-timestamp',
+        text: `线上版本 ${new Date(state.metadata.deployment.lastPublishedAt).toLocaleString()}`,
+      });
+    }
     if (state.sitePublicationFailed) {
-      container.createEl('p', {
+      syncFacts.createEl('p', {
         cls: 'pages-publish-view__warning',
         text: '上次整站发布失败；这不会覆盖当前文章自身的部署状态，线上仍保持旧版本。',
       });
     }
-    if (state.metadata.deployment?.lastPublishedAt) {
-      container.createEl('p', {
-        text: `线上版本：${new Date(state.metadata.deployment.lastPublishedAt).toLocaleString()}`,
-      });
-    }
     if (state.legacyMigration) {
-      const migration = container.createEl('details', {
-        cls: 'pages-publish-article-panel__migration',
+      const migration = article.createEl('details', {
+        cls: 'pages-publish-article-panel__section pages-publish-article-panel__migration',
       });
       migration.createEl('summary', { text: '检测到旧发布字段' });
-      migration.createEl('p', {
+      const migrationContent = migration.createDiv({
+        cls: 'pages-publish-article-panel__section-content',
+      });
+      migrationContent.createEl('p', {
         text: `迁移预览：${state.legacyMigration.legacyFields
           .map((field) => `${field.path}: ${String(field.value)}`)
           .join('、')} → publication.visibility: ${state.legacyMigration.next.visibility.value}。旧字段会原样保留。`,
       });
-      new ButtonComponent(migration)
+      new ButtonComponent(migrationContent)
         .setButtonText('迁移到新 schema')
         .onClick(async () => {
           try {
@@ -200,47 +267,55 @@ export class CurrentArticleView extends ItemView {
         });
     }
 
-    container.createEl('h4', { text: '发布' });
-    const visibilitySetting = new Setting(container)
-      .setName('公开方式')
-      .setDesc(visibilityDescription(state.metadata.visibility.value));
-    const dropdown = new DropdownComponent(visibilitySetting.controlEl)
-      .addOption('public', '公开')
-      .addOption('unlisted', '不列出')
-      .addOption('private', '私密')
-      .setValue(state.metadata.visibility.value);
-    dropdown.onChange(async (value) => {
-      dropdown.setDisabled(true);
-      try {
-        const prepared = await this.application.prepareArticleRouteIntentEdit(
-          state.sourcePath,
-          { visibility: value as 'public' | 'unlisted' | 'private' },
-        );
-        const confirmed = await this.confirmIfNeeded(prepared);
-        if (!confirmed) return;
-        const result = await this.application.commitArticleIntentEdit(prepared, {
-          confirmTakedown: prepared.confirmation !== undefined,
-        });
-        new Notice(
-          result.scanError
-            ? `发布意图已保存，但重新扫描失败：${result.scanError.message}`
-            : '发布意图已保存；线上内容尚未改变。',
-        );
-      } catch (error) {
-        new Notice(`无法保存发布意图：${errorMessage(error)}`);
-      } finally {
-        this.focusVisibilityOnRender = true;
-        await this.render();
+    {
+      const container = article.createEl('section', {
+        cls: 'pages-publish-article-panel__section pages-publish-article-panel__section--settings',
+      });
+      container.createEl('h4', { text: '发布设置' });
+      const visibilitySetting = new Setting(container)
+        .setName('公开方式')
+        .setDesc(visibilityDescription(state.metadata.visibility.value));
+      const dropdown = new DropdownComponent(visibilitySetting.controlEl)
+        .addOption('public', '公开')
+        .addOption('unlisted', '不列出')
+        .addOption('private', '私密')
+        .setValue(state.metadata.visibility.value);
+      dropdown.onChange(async (value) => {
+        dropdown.setDisabled(true);
+        try {
+          const prepared = await this.application.prepareArticleRouteIntentEdit(
+            state.sourcePath,
+            { visibility: value as 'public' | 'unlisted' | 'private' },
+          );
+          const confirmed = await this.confirmIfNeeded(prepared);
+          if (!confirmed) return;
+          const result = await this.application.commitArticleIntentEdit(prepared, {
+            confirmTakedown: prepared.confirmation !== undefined,
+          });
+          new Notice(
+            result.scanError
+              ? `发布意图已保存，但重新扫描失败：${result.scanError.message}`
+              : '发布意图已保存；线上内容尚未改变。',
+          );
+        } catch (error) {
+          new Notice(`无法保存发布意图：${errorMessage(error)}`);
+        } finally {
+          this.focusVisibilityOnRender = true;
+          await this.render();
+        }
+      });
+      if (this.focusVisibilityOnRender) {
+        this.focusVisibilityOnRender = false;
+        dropdown.selectEl.focus();
       }
-    });
-    if (this.focusVisibilityOnRender) {
-      this.focusVisibilityOnRender = false;
-      dropdown.selectEl.focus();
     }
 
-    container.createEl('h4', { text: 'URL 与重定向' });
+    const routes = article.createEl('section', {
+      cls: 'pages-publish-article-panel__section pages-publish-article-panel__section--routes',
+    });
+    routes.createEl('h4', { text: 'URL 与重定向' });
     const pendingUrl = this.renderReadonlyFact(
-      container,
+      routes,
       '待发布 URL',
       state.route.pendingUrl ?? '下一版不生成页面',
     );
@@ -255,10 +330,10 @@ export class CurrentArticleView extends ItemView {
       });
     this.restorePropertyActionFocus(editPendingUrl, state.sourcePath, 'slug');
     if (this.isPropertyEditorActive(state, 'slug')) {
-      this.renderTextOverride(container, state, 'Slug', 'slug');
+      this.renderTextOverride(routes, state, 'Slug', 'slug');
     }
     const onlineUrl = this.renderReadonlyFact(
-      container,
+      routes,
       '当前线上 URL',
       state.route.onlineUrl ?? '尚未上线',
     );
@@ -272,7 +347,7 @@ export class CurrentArticleView extends ItemView {
       });
     }
     this.renderReadonlyFact(
-      container,
+      routes,
       '重定向结果',
       state.route.redirects.length === 0
         ? '无'
@@ -280,20 +355,22 @@ export class CurrentArticleView extends ItemView {
             .map((redirect) => `${redirect.from} → ${redirect.to}`)
             .join('\n'),
     );
-    this.renderChecks(container, state);
+    this.renderChecks(article, state);
 
-    container.createEl('h4', { text: '依赖' });
-    const dependencies = container.createEl('details', {
-      cls: 'pages-publish-article-panel__dependencies',
+    const dependencies = article.createEl('details', {
+      cls: 'pages-publish-article-panel__section pages-publish-article-panel__dependencies',
     });
     dependencies.createEl('summary', {
-      text: `图片 ${state.dependencies.images} · 笔记 ${state.dependencies.notes} · 外链 ${state.dependencies.externalLinks}`,
+      text: `依赖 · 图片 ${state.dependencies.images} · 笔记 ${state.dependencies.notes} · 外链 ${state.dependencies.externalLinks}`,
     });
-    dependencies.createEl('p', {
+    const dependenciesContent = dependencies.createDiv({
+      cls: 'pages-publish-article-panel__section-content',
+    });
+    dependenciesContent.createEl('p', {
       text: '本地图片和笔记链接在常规本地扫描中检查；外链只在你明确点击后联网检查。',
     });
     if (state.dependencies.externalLinks > 0) {
-      new ButtonComponent(dependencies)
+      new ButtonComponent(dependenciesContent)
         .setButtonText('检查外链')
         .onClick(async () => {
           try {
@@ -313,23 +390,26 @@ export class CurrentArticleView extends ItemView {
     }
     const externalResults = this.externalLinkResults.get(state.sourcePath) ?? [];
     for (const result of externalResults) {
-      dependencies.createEl('p', {
+      dependenciesContent.createEl('p', {
         cls: 'pages-publish-content-issue pages-publish-content-issue--warning',
         text: result,
       });
     }
 
-    container.createEl('h4', { text: '发布属性' });
-    this.renderEditableValue(container, state, '标题', state.metadata.title, 'title', '覆盖');
-    this.renderEditableValue(container, state, '摘要', state.metadata.summary, 'summary', '覆盖');
-    this.renderEditableValue(container, state, '日期', state.metadata.date, 'date', '编辑');
-    this.renderEditableValue(container, state, '标签', {
+    const properties = article.createEl('section', {
+      cls: 'pages-publish-article-panel__section pages-publish-article-panel__section--properties',
+    });
+    properties.createEl('h4', { text: '发布属性' });
+    this.renderEditableValue(properties, state, '标题', state.metadata.title, 'title', '覆盖');
+    this.renderEditableValue(properties, state, '摘要', state.metadata.summary, 'summary', '覆盖');
+    this.renderEditableValue(properties, state, '日期', state.metadata.date, 'date', '编辑');
+    this.renderEditableValue(properties, state, '标签', {
       value: state.metadata.tags.value.join(', ') || '未设置',
       source: state.metadata.tags.source,
     }, 'tags', '编辑');
-    this.renderEditableValue(container, state, '封面', state.metadata.cover, 'cover', '选择');
-    const advanced = container.createEl('details', {
-      cls: 'pages-publish-article-panel__advanced',
+    this.renderEditableValue(properties, state, '封面', state.metadata.cover, 'cover', '选择');
+    const advanced = properties.createEl('details', {
+      cls: 'pages-publish-article-panel__advanced pages-publish-article-panel__disclosure',
     });
     advanced.open = this.isPropertyEditorActive(state, 'kind')
       || this.isPropertyEditorActive(state, 'order')
@@ -343,8 +423,8 @@ export class CurrentArticleView extends ItemView {
       source: state.metadata.redirects.source,
     }, 'redirects', '编辑');
 
-    const facts = container.createEl('details', {
-      cls: 'pages-publish-article-panel__facts',
+    const facts = article.createEl('details', {
+      cls: 'pages-publish-article-panel__section pages-publish-article-panel__facts',
     });
     facts.createEl('summary', { text: '部署事实（只读）' });
     if (!state.metadata.deployment) {
@@ -361,17 +441,29 @@ export class CurrentArticleView extends ItemView {
       }
     }
 
-    const actions = container.createDiv({
-      cls: 'pages-publish-article-panel__actions',
+    const actionCopy = actions.createDiv({
+      cls: 'pages-publish-article-panel__actions-copy',
     });
+    actionCopy.createEl('strong', { text: '发布操作' });
     const environment = this.application.getInitialSetupEnvironment();
     const environmentReady = environment.stage === 'ready';
     if (!environmentReady) {
-      container.createEl('p', {
+      actionCopy.createEl('p', {
         cls: 'pages-publish-content-issue pages-publish-content-issue--warning',
         text: '本地发布环境尚未就绪；文章属性仍可编辑，但预览暂不可用。',
       });
-      new ButtonComponent(actions)
+    }
+    const actionButtons = actions.createDiv({
+      cls: [
+        'pages-publish-article-panel__action-buttons',
+        environmentReady
+          ? 'pages-publish-article-panel__action-buttons--ready'
+          : 'pages-publish-article-panel__action-buttons--repair',
+      ].join(' '),
+    });
+    if (!environmentReady) {
+      new ButtonComponent(actionButtons)
+        .setIcon('wrench')
         .setButtonText('修复本地环境')
         .onClick(async () => {
           try {
@@ -382,7 +474,8 @@ export class CurrentArticleView extends ItemView {
           await this.render();
         });
     }
-    new ButtonComponent(actions)
+    new ButtonComponent(actionButtons)
+      .setIcon('eye')
       .setButtonText('预览当前文章')
       .setCta()
       .setDisabled(!environmentReady)
@@ -394,7 +487,8 @@ export class CurrentArticleView extends ItemView {
           new Notice(`无法打开本地预览：${errorMessage(error)}`);
         }
       });
-    new ButtonComponent(actions)
+    new ButtonComponent(actionButtons)
+      .setIcon('external-link')
       .setButtonText('打开发布中心')
       .onClick(() => this.openPublishCenter());
   }
@@ -686,13 +780,22 @@ export class CurrentArticleView extends ItemView {
     container: HTMLElement,
     state: CurrentArticlePanelArticle,
   ): void {
-    const section = container.createDiv({
+    const hasIssues = state.route.issues.length > 0 || state.contentIssues.length > 0;
+    const section = container.createEl('details', {
       cls: 'pages-publish-article-panel__checks',
+      attr: {
+        'data-inspector-section': 'checks',
+        'data-state': hasIssues ? 'attention' : 'passed',
+      },
     });
-    const header = section.createDiv({
+    section.open = hasIssues || this.focusRecheckOnRender;
+    section.createEl('summary', { text: '检查' });
+    const content = section.createDiv({
+      cls: 'pages-publish-article-panel__section-content',
+    });
+    const header = content.createDiv({
       cls: 'pages-publish-article-panel__section-header',
     });
-    header.createEl('h4', { text: '检查' });
     const recheck = new ButtonComponent(header)
       .setButtonText('重新检查')
       .onClick(async () => {
@@ -703,8 +806,8 @@ export class CurrentArticleView extends ItemView {
       this.focusRecheckOnRender = false;
       recheck.buttonEl.focus();
     }
-    if (state.route.issues.length === 0 && state.contentIssues.length === 0) {
-      section.createEl('p', {
+    if (!hasIssues) {
+      content.createEl('p', {
         cls: 'pages-publish-article-panel__checks-passed',
         text: '通过 · 未发现阻塞或警告',
       });
@@ -716,7 +819,7 @@ export class CurrentArticleView extends ItemView {
     ].sort((left, right) =>
       severityOrder(left.issue.severity) - severityOrder(right.issue.severity));
     for (const check of checks) {
-      const row = section.createDiv({
+      const row = content.createDiv({
         cls: `pages-publish-article-panel__check-item pages-publish-article-panel__check-item--${check.issue.severity}`,
       });
       if (check.kind === 'content') {
@@ -956,17 +1059,30 @@ class TakedownConfirmationModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl?.addClass('pages-publish-modal');
+    this.modalEl?.addClass('pages-publish-modal--danger');
+    this.titleEl.addClass('pages-publish-modal__title');
+    this.contentEl.addClass('pages-publish-modal__content');
     this.titleEl.setText('确认待下线');
-    this.contentEl.createEl('p', {
-      text: '保存后，该文章会在下一次整站发布时下线；当前线上页面不会立即改变。',
+    const copy = this.contentEl.createDiv({ cls: 'pages-publish-modal__copy' });
+    copy.createEl('p', {
+      text: '保存后，下一次整站发布会移除这篇文章的线上页面。本地 Markdown 文件不会被删除，当前线上页面也不会立即改变。',
     });
+    const impact = this.contentEl.createDiv({ cls: 'pages-publish-modal__impact' });
+    impact.createSpan({ text: '影响范围' });
+    impact.createSpan({ text: '仅在下一次整站发布生效' });
     if (this.prepared.confirmation?.onlineUrl) {
-      this.contentEl.createEl('code', {
+      const target = this.contentEl.createDiv({ cls: 'pages-publish-modal__target' });
+      target.createSpan({
+        cls: 'pages-publish-modal__target-label',
+        text: '将下线的线上地址',
+      });
+      target.createEl('code', {
         text: this.prepared.confirmation.onlineUrl,
       });
     }
     const actions = this.contentEl.createDiv({
-      cls: 'pages-publish-article-panel__modal-actions',
+      cls: 'pages-publish-modal__actions pages-publish-article-panel__modal-actions',
     });
     new ButtonComponent(actions).setButtonText('取消').onClick(() => {
       this.finish(false);
@@ -1055,6 +1171,31 @@ function publicationStateLabel(
       return '无法发布 · 请先修复当前文章的阻塞问题';
     case 'unknown':
       return '状态未知 · 缺少可比较的最近成功部署事实';
+  }
+}
+
+function publicationStateIcon(
+  state: CurrentArticlePanelArticle['publicationState'],
+): string {
+  switch (state) {
+    case 'synced':
+      return 'circle-check';
+    case 'private':
+      return 'lock-keyhole';
+    case 'pending-first-publish':
+      return 'clock-3';
+    case 'updated':
+      return 'refresh-cw';
+    case 'url-changed':
+      return 'link-2';
+    case 'visibility-changed':
+      return 'eye';
+    case 'pending-takedown':
+      return 'circle-minus';
+    case 'blocked':
+      return 'circle-alert';
+    case 'unknown':
+      return 'circle-help';
   }
 }
 

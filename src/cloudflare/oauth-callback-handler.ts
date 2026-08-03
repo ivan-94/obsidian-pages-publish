@@ -38,7 +38,16 @@ function callbackFailureMessage(error: unknown): string {
       return 'Cloudflare 授权回调已过期或被新的授权请求取代，请在 Obsidian 中重新开始授权。';
     }
     if (error.code === 'oauth-exchange-failed') {
+      if (error.oauthReason === 'invalid_grant') {
+        return 'Cloudflare 拒绝了本次授权事务（invalid_grant）。授权码可能已过期、已使用，或与本次 PKCE/回调不匹配；请从 Obsidian 重新开始一次全新授权。';
+      }
+      if (error.oauthReason) {
+        return `Cloudflare token endpoint 拒绝了授权（${error.oauthReason}）。请检查 OAuth client 配置后，从 Obsidian 重新开始授权。`;
+      }
       return 'Cloudflare 未接受本次授权码。请在 Obsidian 中重新开始授权；若仍失败，请检查 OAuth client 的授权码与回调地址配置。';
+    }
+    if (error.code === 'oauth-refresh-unavailable') {
+      return 'Cloudflare 已授权，但未签发可自动续期的凭据。请确认 OAuth client 已启用 refresh_token grant，然后重新授权。';
     }
     if (error.code === 'credential-storage-failed' || error.code === 'binding-write-failed') {
       return 'Cloudflare 已完成授权，但 Obsidian 无法安全保存凭据。请检查本地 SecretStorage 后重试。';
