@@ -19,6 +19,9 @@ describe('Quartz build runner', () => {
       'Public title',
     );
     expect(output.files['static/app.js']).toBeDefined();
+    expect(Buffer.from(output.files['static/vendor/test.js']!).toString('utf8')).toBe(
+      'window.vendor=true',
+    );
     expect(output.sourceDigest).toBe('frozen-source-digest');
   });
 
@@ -63,6 +66,13 @@ describe('Quartz build runner', () => {
 async function fakeEngine(extraSource: readonly string[] = []): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'pages-fake-quartz-'));
   await mkdir(join(directory, 'quartz'), { recursive: true });
+  await mkdir(join(directory, '.pages-publish-runtime-assets', 'static', 'vendor'), {
+    recursive: true,
+  });
+  await writeFile(
+    join(directory, '.pages-publish-runtime-assets', 'static', 'vendor', 'test.js'),
+    'window.vendor=true',
+  );
   await writeFile(
     join(directory, 'package.json'),
     '{"name":"@jackyzha0/quartz","version":"5.0.0"}',

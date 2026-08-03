@@ -17,7 +17,15 @@ describe('Quartz engine store', () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'pages-engine-store-'));
     const lockfile = Buffer.from('{"lockfileVersion":3,"packages":{}}');
     const archive = sourceArchive(lockfile);
-    const manifest = engineManifest(archive, lockfile, 'pages-publish-quartz-5.0.0.1');
+    const runtimeAsset = bytes('window.vendor=true');
+    const manifest: QuartzEngineManifest = {
+      ...engineManifest(archive, lockfile, 'pages-publish-quartz-5.0.0.1'),
+      runtimeAssets: [{
+        outputPath: 'static/vendor/test-1.2.3.js',
+        sourceUrl: 'https://cdn.jsdelivr.net/npm/test@1.2.3/dist/test.js',
+        sourceSha256: sha256(runtimeAsset),
+      }],
+    };
     const installDependencies = vi.fn(async ({ sourceDirectory }: LockedNpmInstallRequest) => {
       await Promise.all([
         mkdir(join(sourceDirectory, 'node_modules', 'sharp'), { recursive: true }),
@@ -36,7 +44,7 @@ describe('Quartz engine store', () => {
     const checkEnvironmentSize = vi.fn(async () => undefined);
     const store = new QuartzEngineStore({
       rootDirectory,
-      download: async () => archive,
+      download: async (url) => url === manifest.sourceUrl ? archive : runtimeAsset,
       installDependencies,
       smoke,
       checkDiskCapacity,
@@ -69,6 +77,18 @@ describe('Quartz engine store', () => {
     await expect(
       readFile(join(runtime.engineDirectory, '.pages-publish-dependencies.json'), 'utf8'),
     ).resolves.toContain('"securityDispositions"');
+    await expect(
+      readFile(
+        join(
+          runtime.engineDirectory,
+          '.pages-publish-runtime-assets',
+          'static',
+          'vendor',
+          'test-1.2.3.js',
+        ),
+        'utf8',
+      ),
+    ).resolves.toBe('window.vendor=true');
     const active = JSON.parse(
       await readFile(join(rootDirectory, 'active-darwin-arm64.json'), 'utf8'),
     ) as { engineVersion: string };
@@ -399,6 +419,10 @@ function sourceArchive(lockfile: Uint8Array): Uint8Array {
 
 function sha256(content: Uint8Array): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+function bytes(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
 }
 
 interface TarMember {

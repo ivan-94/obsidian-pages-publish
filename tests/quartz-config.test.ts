@@ -26,6 +26,8 @@ describe('controlled Quartz configuration', () => {
     expect(config.plugins.find((plugin) => plugin.source.endsWith('/graph'))?.enabled).toBe(true);
     expect(config.plugins.find((plugin) => plugin.source.endsWith('/folder-page'))?.enabled)
       .toBe(true);
+    expect(config.plugins.find((plugin) => plugin.source.endsWith('/explorer')))
+      .toMatchObject({ options: { folderClickBehavior: 'collapse' } });
     expect(config.plugins.find((plugin) => plugin.source.endsWith('/content-index')))
       .toMatchObject({ options: { enableSiteMap: true, enableRSS: false } });
     expect(source).not.toContain('googleFonts');

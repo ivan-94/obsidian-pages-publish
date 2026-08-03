@@ -16,9 +16,37 @@ describe('Quartz engine manifest', () => {
       nodeRange: '>=22',
       npmVersionRange: '>=10.9.2',
       platform: 'darwin-arm64',
+      runtimeAssets: [{
+        outputPath: 'static/vendor/example.js',
+        sourceUrl: 'https://cdn.jsdelivr.net/npm/example@1.2.3/dist/example.min.js',
+        sourceSha256: 'c'.repeat(64),
+      }],
     };
 
     expect(validateQuartzEngineManifest(manifest, 'darwin-arm64')).toEqual(manifest);
+  });
+
+  it('rejects mutable or unsafe runtime asset declarations', () => {
+    const manifest: QuartzEngineManifest = {
+      engineVersion: 'pages-publish-quartz-5.0.0.2',
+      quartzVersion: '5.0.0',
+      sourceUrl:
+        'https://github.com/jackyzha0/quartz/archive/0123456789abcdef0123456789abcdef01234567.tar.gz',
+      sourceSha256: 'a'.repeat(64),
+      lockfileSha256: 'b'.repeat(64),
+      nodeRange: '>=22',
+      npmVersionRange: '>=10.9.2',
+      platform: 'darwin-arm64',
+      runtimeAssets: [{
+        outputPath: '../escape.js',
+        sourceUrl: 'https://cdn.jsdelivr.net/npm/example@latest/dist/example.js',
+        sourceSha256: 'bad',
+      }],
+    };
+
+    expect(() => validateQuartzEngineManifest(manifest, 'darwin-arm64')).toThrow(
+      'runtime assets',
+    );
   });
 
   it('rejects a mutable Quartz source reference', () => {

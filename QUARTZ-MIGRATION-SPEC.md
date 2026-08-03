@@ -633,15 +633,15 @@ src/runtime/npm-installer.ts
 | AC-QZ-03 | 固定 Node 22.23.1 arm64/x64 manifest、Node 20 拒绝、真实 Node 22 + Quartz install/smoke/build | 通过 | 在候选 Obsidian 内确认 embedded/managed 两条实际路径 |
 | AC-QZ-04 | 固定 archive/lock SHA、受控 `npm ci`、原子激活、离线 cache hit、fallback、Repair、磁盘预算、阶段通知、取消与缓存保留测试；HAT 首轮发现取消后的 idle 被向导自动 prepare，第二轮发现 npm 退出前清理 staging 的竞态，现已增加调用链、进程组退出与临时目录清理回归测试 | 自动门禁通过；第三轮真实冷启动的取消、清理、30 秒无重试和显式 Repair 通过 | 低磁盘、真实断网与其他失败分支 |
 | AC-QZ-05 | staging 负向 fixture、symlink/archive 防护、macOS sandbox Vault canary、output canary 审计 | 通过 | 干净 Vault 放置真实 canary 后复验 |
-| AC-QZ-06 | Unicode、中文、空格、大小写、case collision、多个 root、index/custom index、redirect、`home_layout`、`publication.order`、扁平 HTML 相对引用与动态 Tag 尾斜杠的 Route Bridge/真实 build 测试；输出受控 `_redirects` 301 manifest | 通过 | 线上 redirect 响应 |
-| AC-QZ-07 | public/unlisted/private staging 与最终 HTML/JSON/XML/binary 负向检查；受控 canonical/noindex；真实 content index/sitemap/navigation smoke；同前缀 public/unlisted route 回归测试 | 通过 | 浏览器 Search/Graph/Explorer/Backlinks/Tag/Sitemap 人工抽查 |
-| AC-QZ-08 | raw HTML、事件属性、危险资源、Obsidian comment、Mermaid、Wiki/embed 降级、远程运行时 URL、临时绝对路径与缺失站内目标审计；Quartz build 网络 sandbox | 通过 | 浏览器执行面与网络面板抽查 |
-| AC-QZ-09 | 生产旧 renderer/theme 已删除；真实 Quartz DOM/CSS/静态资源构建；旧主题仅在 tests/support 保留 | 自动门禁通过 | Quartz 新视觉基线、暗色、窄屏、200% 与键盘 |
+| AC-QZ-06 | Unicode、中文、空格、大小写、case collision、多个 root、index/custom index、redirect、`home_layout`、`publication.order`、扁平 HTML 相对引用、动态 Tag 与客户端组件尾斜杠的 Route Bridge/真实 build 测试；输出受控 `_redirects` 301 manifest；HAT 浏览器实际点击保持 `/public/` | 本地通过 | 线上 redirect 响应 |
+| AC-QZ-07 | public/unlisted/private staging 与最终 HTML/JSON/XML/binary 负向检查；受控 canonical/noindex；真实 content index/sitemap/navigation smoke；同前缀 public/unlisted route 回归测试；HAT Search/Graph/Explorer/Sitemap 发现面 canary 缺席 | 本地通过 | 线上页面与 Backlinks/Tag 补充抽查 |
+| AC-QZ-08 | raw HTML、事件属性、危险资源、Obsidian comment、Mermaid、Wiki/embed 降级、远程运行时 URL、临时绝对路径与缺失站内目标审计；Quartz build 网络 sandbox；Graph D3/Pixi 固定 hash、本地发布并在 HAT 中成功渲染 canvas | 本地通过 | 真实断网缓存复用 |
+| AC-QZ-09 | 生产旧 renderer/theme 已删除；真实 Quartz DOM/CSS/静态资源构建；旧主题仅在 tests/support 保留；HAT 浅色/深色与 Quartz Search/Explorer/Graph ownership 通过 | 本地基线通过 | 窄屏、200% 与完整纯键盘 |
 | AC-QZ-10 | 预览/发布共用注入的 `SiteBuilder`；Blocker 先于环境准备；digest 前后复核、冻结快照、二进制/MIME/HEAD/404/301 测试；构建取消和 shutdown drain | 通过 | Obsidian 中编辑源文件时的预览/发布旅程 |
 | AC-QZ-11 | Direct Upload MIME/路径/大小/文件数/40 MiB/2,000 文件 batch、upload/activate 失败与部署事实测试；根 `_redirects` 与 Cloudflare `/404.html` fallback 产物 | 自动门禁通过 | 隔离 Cloudflare 项目的首发、更新、永久重定向、404、激活失败与下线 |
-| AC-QZ-12 | 全量测试、typecheck、lint、build、package、diff-check、插件生产 audit；真实 engine 依赖清单与安全处置复核 | 通过 | engine 升级时重新审计；完成 HAT 后作候选发布决策 |
+| AC-QZ-12 | 全量测试、typecheck、lint、build、package、diff-check、插件生产 audit；真实 engine 依赖清单、安全处置与固定 runtime asset 清单复核 | 通过 | engine 升级时重新审计；完成剩余 HAT 后作候选发布决策 |
 
-自动证据不能替代人工 HAT。尤其 AC-QZ-04、09、11 中明确列出的 UI、视觉和真实 Cloudflare 场景，在 [`hats/20260803-quartz-migration/guide.md`](./hats/20260803-quartz-migration/guide.md) 完成并留证前不得声称候选发布验收通过。run `20260803-140904` 在 AC-QZ-04 发现取消后自动重启；定向 run `20260803-143837` 证明自动重启已消失，但发现 npm 退出与 staging 清理竞态；run `20260803-145147` 已证明两项修复在真实冷启动中同时成立，并完成显式 Repair。该定向 PASS 不代表低磁盘、断网、视觉或 Cloudflare HAT 已完成。
+自动证据不能替代人工 HAT。尤其 AC-QZ-04、09、11 中明确列出的 UI、视觉和真实 Cloudflare 场景，在 [`hats/20260803-quartz-migration/guide.md`](./hats/20260803-quartz-migration/guide.md) 完成并留证前不得声称候选发布验收通过。run `20260803-140904` 在 AC-QZ-04 发现取消后自动重启；定向 run `20260803-143837` 证明自动重启已消失，但发现 npm 退出与 staging 清理竞态；run `20260803-145147` 已证明两项修复在真实冷启动中同时成立并完成显式 Repair；run `20260803-151018` 已证明本地输出/路由/可见性/执行安全和 Quartz ownership，并在真实浏览器中验证本地图谱与动态链接。以上 scoped PASS 不代表低磁盘、真实断网、Cloudflare、窄屏/缩放或完整纯键盘 HAT 已完成。
 
 ## 17. 测试策略
 
@@ -701,7 +701,7 @@ HAT 至少包含：
 
 ## 19. 已固化的实现参数
 
-1. Quartz 固定为 `5.0.0`、commit `74b3fc9efd0caafea3dbcd846ddf1f06855b6d2a`，source archive SHA-256 为 `69380b2e3acf3590ad144304e4e97be621562b1ab14512c2537ad348d707c3aa`，上游 lockfile SHA-256 为 `bca1aff728d3257b8ca6989f9a4d9913836ab1f1a034505d3e3c481b3dab3e05`。
+1. Quartz 固定为 engine `pages-publish-quartz-5.0.0.2`、Quartz `5.0.0`、commit `74b3fc9efd0caafea3dbcd846ddf1f06855b6d2a`，source archive SHA-256 为 `69380b2e3acf3590ad144304e4e97be621562b1ab14512c2537ad348d707c3aa`，上游 lockfile SHA-256 为 `bca1aff728d3257b8ca6989f9a4d9913836ab1f1a034505d3e3c481b3dab3e05`。
 2. v1 的 trust origin 是随三文件插件发布、编译进 `main.js` 的不可变 manifest；运行时不下载或接受第二份 manifest。归档来自 GitHub 固定 commit URL，并按内置 SHA-256 校验。v1 不使用 detached signature；trust rotation 只能随经过现有插件发布链的新版本发生。
 3. managed runtime 固定 npm `10.9.8`；兼容内嵌 runtime 要求 npm `>=10.9.2`。`npm ci` 只使用 `https://registry.npmjs.org/`、隔离 user/global npmrc 和隔离 cache，不继承用户 npm 配置。
 4. managed Node 固定为 Node `22.23.1` 官方 `nodejs.org` 归档；darwin-arm64 SHA-256 为 `ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953`，darwin-x64 为 `b8da981b8a0b1241b70249204916da76c63573ddf5814dbd2d1e41069105cb81`。内嵌 Node 支持范围为 `>=22.0.0`。
@@ -710,6 +710,7 @@ HAT 至少包含：
 7. 单次下载上限为 64 MiB；2026-08-03 三次首次完整安装复测为 58.24 秒、43.96 秒和 48.71 秒。自动重试次数为 0，失败后保留 active engine，由用户显式 Repair 重试。候选发布 HAT 门槛为 120 秒、总环境占用不超过 1.5 GiB、开始前至少 2 GiB 可用空间；实现会在安装前检查可用空间、激活前检查总预算，并通过稳定错误进入 UI failed/Repair 状态。UI 显示离散阶段，不承诺 `requestUrl` 无法可靠提供的字节级百分比。
 8. 300 public + 30 unlisted + 30 private 的真实 Quartz 构建于 2026-08-03 最新复测为扫描 101 ms、构建 3.01 秒、heap 增量 29.0 MiB。候选门槛为构建不超过 10 秒、heap 增量不超过 256 MiB；最终门槛需在 HAT 指定机器复测。
 9. Route Planner 的静态 redirect 同时生成 HTML fallback 与根 `/_redirects` 中的显式 301 规则；超过 Cloudflare Pages 的 2,000 条静态规则或单条 1,000 字符时构建失败。产品 `/404/` 路由保留，同时复制顶层 `/404.html` 供 Cloudflare Pages 缺失路由响应采用；本地 preview server 对同一 manifest 返回 301 并隐藏 manifest 文件。
+10. Quartz Graph 所需 D3 `7.9.0` 与 Pixi `8.8.1` 不进入三文件插件包：其精确 URL、版本和 SHA-256 编译进 engine trust manifest，engine 安装期下载校验并记录到依赖清单，构建期复制为 `/static/vendor/` 本地资源。输出审计只把固定上游 URL 改写到本地路径，并拒绝任何未知 jsDelivr/cdnjs/Pixi runtime URL。客户端 Route Bridge 只包含可发现的 planned routes；Explorer 目录点击固定为 `collapse`，避免动态链接绕过 unlisted 导航清洗。
 
 供应链审计对上游 lockfile 报告的两个 high 已有运行时处置：未启用的 OG image/favicon 插件及 `sharp`/libvips 在 smoke 前从已安装 engine 删除；只服务 Quartz serve 模式的 `serve-handler` 改为懒加载并删除，其传递依赖 `brace-expansion` 不进入受控 build runtime。处置项和 advisory ID 写入 `.pages-publish-dependencies.json`，缓存复用也会验证这些包继续缺席。
 
@@ -727,6 +728,7 @@ HAT 至少包含：
 - [`src/routing/route-planner.ts`](./src/routing/route-planner.ts)：现有 canonical URL、栏目、系统页、redirect 和冲突契约。
 - [`src/content/note-references.ts`](./src/content/note-references.ts)、[`src/content/local-assets.ts`](./src/content/local-assets.ts) 与 [`src/content/raw-html.ts`](./src/content/raw-html.ts)：必须保留的引用、资源和原始 HTML 安全语义。
 - [`src/runtime/quartz-engine-store.ts`](./src/runtime/quartz-engine-store.ts)、[`src/runtime/quartz-compatibility-patch.ts`](./src/runtime/quartz-compatibility-patch.ts)、[`src/runtime/managed-node-runtime.ts`](./src/runtime/managed-node-runtime.ts) 与 [`src/plugin/quartz-publication-environment.ts`](./src/plugin/quartz-publication-environment.ts)：固定运行时、动态安装、版本锁定 compatibility patch、修复、回退与生产环境接线。
+- [`src/runtime/builtin-quartz-manifest.ts`](./src/runtime/builtin-quartz-manifest.ts) 与 [`src/runtime/quartz-engine-manifest.ts`](./src/runtime/quartz-engine-manifest.ts)：固定 Quartz source/lock 及 Graph runtime assets 的 URL、版本、输出路径和 SHA-256 trust contract。
 - [`src/site-builder/quartz-listing.ts`](./src/site-builder/quartz-listing.ts)、[`src/site-builder/quartz-staging-compiler.ts`](./src/site-builder/quartz-staging-compiler.ts) 与 [`src/site-builder/quartz-output-auditor.ts`](./src/site-builder/quartz-output-auditor.ts)：`home_layout`、栏目排序、自定义 index、发现性清洗与精确 route 审计契约。
 - [`tests/quartz-architecture-boundary.test.ts`](./tests/quartz-architecture-boundary.test.ts)、[`tests/quartz-output-auditor.test.ts`](./tests/quartz-output-auditor.test.ts) 与 [`tests/quartz-site-builder-real.test.ts`](./tests/quartz-site-builder-real.test.ts)：上层依赖方向、输出安全/路由负向规则和真实 Quartz 最终产物证据。
 - [`src/runtime/environment-disk-budget.ts`](./src/runtime/environment-disk-budget.ts) 与 [`src/runtime/quartz-environment-progress.ts`](./src/runtime/quartz-environment-progress.ts)：环境磁盘门槛、安装阶段与 UI 可观察性契约。
@@ -741,6 +743,7 @@ HAT 至少包含：
 
 - [`QUARTZ-MIGRATION-SPEC.md`](./QUARTZ-MIGRATION-SPEC.md)：本改造规格。
 - [`hats/20260803-quartz-migration/guide.md`](./hats/20260803-quartz-migration/guide.md) 与 [`prepare.sh`](./hats/20260803-quartz-migration/prepare.sh)：Quartz 专项 blank HAT 指南、三文件候选包和专用 Vault 准备入口。
+- [`hats/20260803-quartz-migration/reports/20260803-151018/summary.md`](./hats/20260803-quartz-migration/reports/20260803-151018/summary.md)：本地输出、路由、可见性、执行安全与 Quartz ownership 的 scoped HAT 证据。
 
 ### Key decisions
 
@@ -756,7 +759,7 @@ HAT 至少包含：
 ### Verification evidence
 
 - 2026-08-03 对照当前仓库 `PRODUCT-SPEC.md`、`DESIGN.md`、`TASK.md`、本规格和核心实现完成逐项架构审计。
-- `npm test`：67 个 test files 通过、4 个按真实环境变量跳过；616 tests 通过、5 个跳过。
+- `npm test`：67 个 test files 通过、4 个按真实环境变量跳过；622 tests 通过、5 个跳过。
 - 使用固定 source archive 与 Node 22.23.1 执行 `tests/quartz-engine-store-real.test.ts`：真实 `npm ci`、安全裁剪、四项 compatibility patch、smoke、原子激活和断网缓存复用通过；最新复验耗时 48.71 秒，先前两次为 58.24 秒和 43.96 秒。
 - 使用裁剪后的固定 engine 执行 `tests/quartz-real-smoke.test.ts`、`tests/quartz-site-builder-real.test.ts` 与 `tests/release-benchmark.test.ts`：真实构建、Vault sandbox、Unicode/空格/大小写/冲突 route、扁平 HTML 相对资源、动态 Tag Page、canonical/noindex、redirect HTML + `_redirects` 301、Cloudflare 404 fallback、`sections/latest`、order/date、custom index、同前缀 unlisted/public route、确定性和 360 篇基准全部通过；最新基准为扫描 101 ms、构建 3.01 秒、heap 增量 29.0 MiB。
 - `npm run typecheck`、`npm run lint`、`npm run package` 和 `git diff --check` 通过；release staging 只有 `main.js`、`manifest.json`、`styles.css` 三个文件。
@@ -765,6 +768,7 @@ HAT 至少包含：
 - HAT run `20260803-140904` 在 Obsidian 1.13.4 完成三文件安装并真实安装 Node 22.23.1/Quartz engine；P0-003 复现取消后第二条 `npm ci` 仍激活 engine，overall 为 `FAIL` 并按 fail-fast 停止。根因是取消后的 `idle` 状态触发向导自动 prepare；现已将取消后的 idle 标记为显式 Repair，并增加发布中心调用链与环境状态回归测试。自动门禁通过，仍需新的 HAT run 证明真实 GUI 竞态消失。
 - HAT 定向 run `20260803-143837` 隔离原共享环境后复验取消：超过 30 秒只有一条 npm 日志、界面保持显式“重试环境准备”、active 与 engine 均未激活，证明自动重试修复有效；但仍残留 `.install-*`，overall 为 `FAIL`。根因是 AbortSignal 可让 `execFile` Promise 先于 npm 进程组完全退出而拒绝，store 的 `finally` 删除 staging 后 npm 又在同一路径收尾写入。现改为独立进程组、SIGTERM/SIGKILL 梯度终止并确认整个进程组退出后才返回，增加真实延迟退出 fixture 与 store 清理边界测试；完整门禁为 67 个 test files、618 tests、typecheck、lint、build、三文件 package、diff-check 和生产 audit 通过。原环境已恢复，失败环境保留。
 - HAT 定向 run `20260803-145147` 使用提交 `12639c3` 的三文件候选包完成第三次隔离冷启动：取消后 UI 明确报告清理完成，等待 30 秒仍无第二条 npm 日志、进程、临时目录、active 或 engine；显式 Repair 约 62 秒后原子激活固定 engine，最终环境 543,980 KiB 且无任何临时目录。HAT-P0-003 overall 为 `PASS`；原共享环境已恢复，成功隔离环境保留。
+- HAT run `20260803-151018` 在真实 Obsidian 1.13.4 与浏览器中完成本地输出回归：engine `pages-publish-quartz-5.0.0.2` 安装并校验 D3/Pixi runtime assets，环境 523,592 KiB；49 个输出文件中 Graph 仅加载本地脚本且 canvas 成功，Explorer 运行时链接保持尾斜杠，private/unlisted 发现性、安全 fixture、允许/未引用资源与本地 301/404 全部符合契约。HAT-P0-005、P0-006、P1-001 scoped `PASS`；真实断网、Cloudflare、窄屏/缩放与纯键盘保持 MANUAL。
 
 ### Open questions / risks
 

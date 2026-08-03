@@ -134,8 +134,22 @@ export class QuartzBuildRunner {
         );
       }
 
+      const files = await collectOutput(outputDirectory);
+      const runtimeAssetsDirectory = join(engineDirectory, '.pages-publish-runtime-assets');
+      try {
+        const runtimeAssets = await collectOutput(runtimeAssetsDirectory);
+        for (const [path, content] of Object.entries(runtimeAssets)) {
+          if (files[path] !== undefined) {
+            throw new QuartzBuildError(`Quartz output conflicts with pinned runtime asset ${path}.`);
+          }
+          files[path] = content;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      assertCollectedOutputBudget(files);
       return {
-        files: Object.freeze(await collectOutput(outputDirectory)),
+        files: Object.freeze(files),
         sourceDigest: staging.sourceDigest,
         engineVersion: engine.engineVersion,
         forbiddenOutputText: Object.freeze([workspace, engineDirectory]),
@@ -334,4 +348,14 @@ async function collectOutput(outputDirectory: string): Promise<Record<string, Ui
   }
   await visit(outputDirectory, '');
   return files;
+}
+
+function assertCollectedOutputBudget(files: Readonly<Record<string, Uint8Array>>): void {
+  const entries = Object.values(files);
+  if (
+    entries.length > maximumOutputFiles
+    || entries.reduce((total, content) => total + content.byteLength, 0) > maximumOutputBytes
+  ) {
+    throw new QuartzBuildError('Quartz output exceeds the publication resource budget.');
+  }
 }

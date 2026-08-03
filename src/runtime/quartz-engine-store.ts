@@ -9,7 +9,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { SupportedPlatformIdentity } from '../plugin/platform';
 import { compatibleNodeVersion } from './environment-manager';
 import { installLockedNpmProject, type LockedNpmInstallRequest } from './npm-installer';
@@ -62,6 +62,10 @@ interface VerifiedEngineRecord {
   platform: SupportedPlatformIdentity;
   sourceSha256: string;
   lockfileSha256: string;
+  runtimeAssets?: readonly {
+    outputPath: string;
+    sourceSha256: string;
+  }[];
 }
 
 export interface QuartzEngineSmokeRequest {
@@ -206,15 +210,24 @@ export class QuartzEngineStore {
           error,
         );
       }
-      verifySha256(archive, manifest.sourceSha256);
+      verifySha256(archive, manifest.sourceSha256, 'source archive');
       signal?.throwIfAborted();
       try {
         await extractTrustedTarGz(archive, temporaryDirectory);
         await verifyQuartzPackage(temporaryDirectory, manifest.quartzVersion);
         await applyQuartzEngineCompatibilityPatch(temporaryDirectory);
+        await installRuntimeAssets(
+          temporaryDirectory,
+          manifest,
+          this.dependencies.download,
+          signal,
+        );
         signal?.throwIfAborted();
       } catch (error) {
-        if (errorCode(error) === 'quartz-engine-integrity-failed') throw error;
+        if (
+          errorCode(error) === 'quartz-engine-integrity-failed'
+          || errorCode(error) === 'quartz-engine-download-failed'
+        ) throw error;
         throw new QuartzEnvironmentError(
           'quartz-engine-integrity-failed',
           'The pinned Quartz source archive did not match the trusted engine.',
@@ -467,6 +480,7 @@ async function writeDependencyInventory(
       packages,
       securityDispositions: quartzEngineSecurityDispositions,
       compatibilityPatches: quartzEngineCompatibilityPatches,
+      runtimeAssets: manifest.runtimeAssets ?? [],
     }, undefined, 2)}\n`,
     { flag: 'wx', mode: 0o600 },
   );
@@ -484,6 +498,7 @@ async function installationMatches(
     await access(join(directory, 'package-lock.json'));
     await access(join(directory, 'quartz', 'bootstrap-cli.mjs'));
     await access(join(directory, '.pages-publish-dependencies.json'));
+    await verifyInstalledRuntimeAssets(directory, expected.runtimeAssets ?? []);
     return await disabledQuartzPackagesAreAbsent(directory)
       && await quartzCompatibilityPatchesMatch(directory)
       && record.engineVersion === expected.engineVersion
@@ -503,6 +518,10 @@ function recordFromManifest(manifest: Readonly<QuartzEngineManifest>): VerifiedE
     platform: manifest.platform,
     sourceSha256: manifest.sourceSha256.toLowerCase(),
     lockfileSha256: manifest.lockfileSha256.toLowerCase(),
+    runtimeAssets: manifest.runtimeAssets?.map((asset) => ({
+      outputPath: asset.outputPath,
+      sourceSha256: asset.sourceSha256.toLowerCase(),
+    })),
   };
 }
 
@@ -522,13 +541,71 @@ function readyEngine(
   };
 }
 
-function verifySha256(content: Uint8Array, expected: string): void {
+function verifySha256(content: Uint8Array, expected: string, label: string): void {
   const actual = createHash('sha256').update(content).digest('hex');
   if (actual !== expected.toLowerCase()) {
     throw new QuartzEnvironmentError(
       'quartz-engine-integrity-failed',
-      'The Quartz source archive checksum did not match the engine manifest.',
+      `The Quartz ${label} checksum did not match the engine manifest.`,
     );
+  }
+}
+
+async function installRuntimeAssets(
+  engineDirectory: string,
+  manifest: Readonly<QuartzEngineManifest>,
+  download: QuartzEngineStoreDependencies['download'],
+  signal?: AbortSignal,
+): Promise<void> {
+  for (const asset of manifest.runtimeAssets ?? []) {
+    let content: Uint8Array;
+    try {
+      content = await download(asset.sourceUrl, signal);
+    } catch (error) {
+      rethrowAbort(error);
+      throw new QuartzEnvironmentError(
+        'quartz-engine-download-failed',
+        'A pinned Quartz runtime asset could not be downloaded.',
+        error,
+      );
+    }
+    verifySha256(content, asset.sourceSha256, 'runtime asset');
+    signal?.throwIfAborted();
+    const target = join(engineDirectory, '.pages-publish-runtime-assets', asset.outputPath);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, content, { flag: 'wx', mode: 0o600 });
+  }
+}
+
+async function verifyInstalledRuntimeAssets(
+  engineDirectory: string,
+  assets: NonNullable<VerifiedEngineRecord['runtimeAssets']>,
+): Promise<void> {
+  const root = join(engineDirectory, '.pages-publish-runtime-assets');
+  const actualPaths: string[] = [];
+  async function visit(directory: string, prefix: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relativePath = prefix.length === 0 ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isDirectory()) {
+        await visit(join(directory, entry.name), relativePath);
+      } else if (entry.isFile()) {
+        actualPaths.push(relativePath);
+      } else {
+        throw new Error('The Quartz runtime asset inventory contains an unsupported file.');
+      }
+    }
+  }
+  if (await pathExists(root)) await visit(root, '');
+  const expectedPaths = assets.map((asset) => asset.outputPath).sort();
+  actualPaths.sort();
+  if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
+    throw new Error('The Quartz runtime asset inventory does not match the engine manifest.');
+  }
+  for (const asset of assets) {
+    const content = new Uint8Array(await readFile(
+      join(root, asset.outputPath),
+    ));
+    verifySha256(content, asset.sourceSha256, 'runtime asset');
   }
 }
 

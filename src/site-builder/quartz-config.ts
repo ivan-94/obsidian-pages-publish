@@ -87,7 +87,9 @@ export function createControlledQuartzConfig(input: ControlledQuartzConfigInput)
       plugin('@quartz-community/content-page', true),
       plugin('@quartz-community/folder-page', true),
       plugin('@quartz-community/tag-page', true),
-      plugin('@quartz-community/explorer', true, undefined, undefined, layout('left', 50)),
+      plugin('@quartz-community/explorer', true, {
+        folderClickBehavior: 'collapse',
+      }, undefined, layout('left', 50)),
       plugin('@quartz-community/graph', input.graph, undefined, undefined, layout('right', 10)),
       plugin('@quartz-community/search', input.search, undefined, undefined, {
         ...layout('left', 20),

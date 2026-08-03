@@ -105,6 +105,12 @@ export function bridgeAndAuditQuartzOutput(
     ...staging.routePlan.systemRoutes.filter((route) => route.endsWith('/')),
     ...emittedDirectoryRoutes,
   ])].sort((left, right) => right.length - left.length);
+  const unlistedRoutes = new Set(
+    staging.routeManifest.articles
+      .filter((article) => article.visibility === 'unlisted')
+      .map((article) => normalizeRoutePath(article.url)),
+  );
+  const clientRoutes = routes.filter((route) => !unlistedRoutes.has(normalizeRoutePath(route)));
 
   for (const [rawPath, content] of Object.entries(raw.files)) {
     if (isDisabledQuartzComponentArtifact(rawPath)) continue;
@@ -124,11 +130,14 @@ export function bridgeAndAuditQuartzOutput(
       source = rebaseQuartzHtmlReferences(rawPath, source, contentType);
       source = rewriteQuartzRouteReferences(source, routeBridges);
       source = rewriteRouteReferences(source, routes);
+      source = localizePinnedQuartzRuntimeResources(source);
       source = sanitizeKnownQuartzOutput(source);
       source = stabilizeKnownQuartzOutput(outputPath, source);
+      source = sanitizeUnlistedHtmlMetadata(outputPath, source, staging);
       source = sanitizeUnlistedHtmlNavigation(outputPath, source, staging);
       source = ensureControlledHtmlMetadata(outputPath, source, staging);
       source = sanitizeQuartzDiscoveryOutput(outputPath, source, staging);
+      source = injectRouteContractBridge(outputPath, source, clientRoutes);
       const remoteResource = remoteRuntimeResource(source, contentType);
       if (remoteResource) {
         throw new QuartzOutputAuditError(
@@ -387,6 +396,39 @@ function sanitizeUnlistedHtmlNavigation(
     .join('');
 }
 
+function sanitizeUnlistedHtmlMetadata(
+  outputPath: string,
+  source: string,
+  staging: Readonly<QuartzStagingCompilation>,
+): string {
+  if (!outputPath.endsWith('.html')) return source;
+  const unlisted = staging.routeManifest.articles
+    .filter((article) => article.visibility === 'unlisted');
+  if (unlisted.some((article) => routeOutputPath(article.url) === outputPath)) return source;
+  const routeTokens = unlisted
+    .flatMap((article) => [article.url, article.quartzRoute])
+    .filter((route): route is string => route !== undefined)
+    .map(normalizeContentIndexSlug)
+    .filter((route) => route.length >= 2);
+  const textTokens = unlisted
+    .flatMap((article) => [article.title, article.sourcePath])
+    .filter((token) => token.length >= 2);
+  return source.replace(/<meta\b[^>]*>/giu, (tag) => {
+    const kind = /\b(?:name|property)\s*=\s*["']([^"']+)["']/iu
+      .exec(tag)?.[1]?.toLowerCase();
+    if (!['description', 'og:description', 'twitter:description'].includes(kind ?? '')) {
+      return tag;
+    }
+    const content = decodeXmlText(
+      /\bcontent\s*=\s*["']([^"']*)["']/iu.exec(tag)?.[1] ?? '',
+    );
+    return routeTokens.some((token) => containsRouteToken(content, token))
+      || textTokens.some((token) => content.includes(token))
+      ? ''
+      : tag;
+  });
+}
+
 function sanitizeQuartzDiscoveryOutput(
   outputPath: string,
   source: string,
@@ -612,12 +654,76 @@ function rewriteRouteReferences(source: string, routes: readonly string[]): stri
   for (const route of routes) {
     if (route === '/') continue;
     const withoutSlash = route.slice(0, -1);
-    output = output.replace(
-      new RegExp(`${escapeRegExp(withoutSlash)}(?!/)(?=["'<>#?\\s])`, 'gu'),
-      route,
-    );
+    const references: ReadonlyArray<readonly [string, string]> = [
+      [withoutSlash, route],
+      [encodeURI(withoutSlash), encodeURI(route)],
+    ];
+    for (const [reference, replacement] of references) {
+      output = output.replace(
+        new RegExp(`${escapeRegExp(reference)}(?!/)(?=["'<>#?\\s])`, 'gu'),
+        replacement,
+      );
+    }
   }
   return output;
+}
+
+function localizePinnedQuartzRuntimeResources(source: string): string {
+  return source
+    .replaceAll(
+      'https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js',
+      '/static/vendor/d3-7.9.0.min.js',
+    )
+    .replaceAll(
+      'https://cdn.jsdelivr.net/npm/pixi.js@8/dist/pixi.js',
+      '/static/vendor/pixi-8.8.1.min.js',
+    )
+    .replaceAll('https://files.pixijs.download/', '/static/vendor/pixi-resources/');
+}
+
+function injectRouteContractBridge(
+  outputPath: string,
+  source: string,
+  routes: readonly string[],
+): string {
+  if (!outputPath.endsWith('.html')) return source;
+  const routePairs = routes
+    .filter((route) => route.endsWith('/'))
+    .map((route) => [normalizeRoutePath(route), encodeURI(route)] as const);
+  const serializedRoutes = JSON.stringify(routePairs)
+    .replaceAll('<', '\\u003c')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029');
+  const script = [
+    '<script data-pages-publish-route-bridge data-persist="true">',
+    '(()=>{',
+    'if(document.documentElement.dataset.pagesPublishRouteBridge==="true")return;',
+    'document.documentElement.dataset.pagesPublishRouteBridge="true";',
+    `const routes=new Map(${serializedRoutes});`,
+    'const normalize=(anchor)=>{',
+    'const href=anchor.getAttribute("href");if(!href||href.startsWith("#"))return;',
+    'let url;try{url=new URL(href,location.href)}catch{return}',
+    'if(url.origin!==location.origin||!/^https?:$/.test(url.protocol))return;',
+    'let path;try{path=decodeURIComponent(url.pathname)}catch{return}',
+    'const planned=routes.get(path==="/"?path:path.replace(/\\/+$/,""));',
+    'if(!planned)return;',
+    'const target=planned+url.search+url.hash;',
+    'if(href!==target)anchor.setAttribute("href",target);',
+    '};',
+    'const scan=(root)=>{if(root.matches&&root.matches("a[href]"))normalize(root);',
+    'if(root.querySelectorAll)root.querySelectorAll("a[href]").forEach(normalize)};',
+    'scan(document);',
+    'new MutationObserver((records)=>records.forEach((record)=>{',
+    'if(record.type==="attributes")scan(record.target);',
+    'record.addedNodes.forEach((node)=>{if(node.nodeType===1)scan(node)})',
+    '})).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["href"]});',
+    'document.addEventListener("nav",()=>scan(document));',
+    'document.addEventListener("render",()=>scan(document));',
+    '})();',
+    '</script>',
+  ].join('');
+  if (/<\/body>/iu.test(source)) return source.replace(/<\/body>/iu, `${script}</body>`);
+  return `${source}${script}`;
 }
 
 function sanitizeKnownQuartzOutput(source: string): string {
@@ -747,7 +853,7 @@ function remoteRuntimeResource(source: string, contentType: string): string | un
   }
   if (contentType === 'text/javascript' || contentType === 'application/json') {
     return /(?:\b(?:import|fetch)\s*\(|\b(?:WebSocket|EventSource|Worker)\s*\()\s*["'`]https?:\/\/[^\s"'`)]+/iu.exec(source)?.[0]
-      ?? /https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/mermaid\//iu.exec(source)?.[0];
+      ?? /https:\/\/(?:cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|files\.pixijs\.download)\//iu.exec(source)?.[0];
   }
   if (contentType !== 'text/html') return undefined;
   const script = /<script\b[^>]*\bsrc\s*=\s*["']https?:\/\/[^>]*>/iu.exec(source)?.[0];

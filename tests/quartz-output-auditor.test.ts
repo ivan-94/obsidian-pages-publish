@@ -101,6 +101,7 @@ describe('Quartz output route bridge and auditor', () => {
   it('removes unlisted navigation while preserving explicit authored links', () => {
     const explorerLeak = rawOutput({
       'writing/hello.html': [
+        '<head><meta name="description" content="Hidden at /writing/hidden/"></head>',
         '<article><a href="/writing/hidden/">Explicit link</a></article>',
         '<aside class="explorer"><a href="/writing/hidden/">Hidden</a></aside>',
       ].join(''),
@@ -109,6 +110,7 @@ describe('Quartz output route bridge and auditor', () => {
 
     expect(output.files['/writing/hello/index.html']).toContain('Explicit link');
     expect(output.files['/writing/hello/index.html']).not.toContain('>Hidden</a>');
+    expect(output.files['/writing/hello/index.html']).not.toContain('name="description"');
 
     const clientDataLeak = rawOutput({
       'writing/hello.html': [
@@ -169,6 +171,79 @@ describe('Quartz output route bridge and auditor', () => {
 
     expect(output.files['/tags/index.html']).toContain('href="/tags/smoke/"');
     expect(output.files['/tags/smoke/index.html']).toBeDefined();
+  });
+
+  it('normalizes encoded Unicode links when the planned route already matches Quartz', () => {
+    const base = staging();
+    const article = {
+      sourcePath: 'Notes/中文 空格.md',
+      title: '中文 空格',
+      url: '/中文-空格/',
+      visibility: 'public' as const,
+      kind: 'article' as const,
+    };
+    const input: Readonly<QuartzStagingCompilation> = {
+      ...base,
+      contentFiles: {
+        ...base.contentFiles,
+        '中文-空格.md': '---\ntitle: 中文 空格\n---\nUnicode',
+      },
+      routePlan: {
+        ...base.routePlan,
+        articles: [
+          ...base.routePlan.articles,
+          { sourcePath: article.sourcePath, url: article.url, onlineUrl: undefined, redirects: [] },
+        ],
+      },
+      routeManifest: {
+        ...base.routeManifest,
+        articles: [...base.routeManifest.articles, article],
+      },
+    };
+    const raw = rawOutput({
+      'index.html': '<a href="/%E4%B8%AD%E6%96%87-%E7%A9%BA%E6%A0%BC">中文 空格</a>',
+      '中文-空格.html': '<article>Unicode</article>',
+    });
+
+    const output = bridgeAndAuditQuartzOutput(raw, input);
+
+    expect(output.files['/index.html']).toContain(
+      'href="/%E4%B8%AD%E6%96%87-%E7%A9%BA%E6%A0%BC/"',
+    );
+    expect(output.files['/中文-空格/index.html']).toBeDefined();
+  });
+
+  it('enforces planned directory routes for links created by Quartz client components', () => {
+    const output = bridgeAndAuditQuartzOutput(rawOutput({
+      'index.html': '<html><head></head><body>Home</body></html>',
+    }), staging());
+
+    const home = output.files['/index.html'] ?? '';
+    expect(home).toContain('data-pages-publish-route-bridge');
+    expect(home).toContain(JSON.stringify('/writing/hello/'));
+    expect(home).toContain('MutationObserver');
+  });
+
+  it('localizes the pinned Quartz graph runtime and rejects unknown CDN loads', () => {
+    const output = bridgeAndAuditQuartzOutput(rawOutput({
+      'static/graph.js': [
+        'load("https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js")',
+        'load("https://cdn.jsdelivr.net/npm/pixi.js@8/dist/pixi.js")',
+        'const decoder="https://files.pixijs.download/transcoders/basis.js"',
+      ].join(';'),
+    }), staging());
+
+    expect(output.files['/static/graph.js']).toContain('/static/vendor/d3-7.9.0.min.js');
+    expect(output.files['/static/graph.js']).toContain('/static/vendor/pixi-8.8.1.min.js');
+    expect(output.files['/static/graph.js']).not.toContain('https://cdn.jsdelivr.net');
+    expect(output.files['/static/graph.js']).not.toContain('https://files.pixijs.download');
+
+    const unknown = rawOutput({
+      'static/graph.js': 'load("https://cdn.jsdelivr.net/npm/unknown@1/index.js")',
+    });
+    expect(() => bridgeAndAuditQuartzOutput(unknown, staging())).toThrow(
+      expect.objectContaining({ code: 'quartz-unexpected-network' }),
+    );
   });
 
   it('emits a bounded Cloudflare Pages permanent redirect manifest', () => {
