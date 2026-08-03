@@ -12,6 +12,8 @@ export default defineConfig(
     'external-themes/**',
     'packages/*/dist/**',
     'hats/**/test-vault/**',
+    'hats/**/.lan-environment/**',
+    'hats/**/lan-preview/**',
     'esbuild.config.mjs',
     'versions.json',
     'package-lock.json',

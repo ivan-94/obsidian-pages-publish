@@ -23,6 +23,8 @@
 - Theme: local immutable `.tgz` under `.publish/themes/`
 - Prepare command: `hats/20260803-custom-quartz-theme/prepare.sh prepare`
 - Status: ready for human acceptance; reload Obsidian after every candidate update.
+- Rich-content baseline: 20 Markdown notes and 3 local SVG assets, including four-level nesting, short/medium/long articles, mixed Chinese/English/Unicode, tables, tasks, callouts, code, math, Mermaid, footnotes and image-text layouts.
+- LAN preview: `http://192.168.2.95:4188/` (same Wi-Fi; local process only).
 
 ## Acceptance Cases
 
@@ -56,8 +58,11 @@
 ### P1
 
 - [ ] HAT-P1-001 — 响应式、暗色、搜索、图谱和长文工具
-  - Status: READY
+  - Status: AUTOMATED PASS / HUMAN REVIEW READY
   - Human result: pending
+  - Notes: the real Quartz 5 builder emitted 96 files and 2 generated assets from 20 public/unlisted candidates with zero scan warnings. Chrome at 820×1180 verified the long-form page remains at `scrollY = 0` after Explorer hydration; direct heading anchors remain aligned at 23.3px. All three local SVG images completed decoding.
+  - Evidence: [`Chrome iPad long-form`](./human-artifacts/HAT-P1-001-rich-longform-ipad-chrome.png), [`desktop rich home`](./human-artifacts/HAT-P1-001-rich-home-desktop.png)
+  - Preview routes: `/`, `/notes/dispatches/long-form/`, `/notes/reference/markdown-kitchen-sink/`, `/notes/reference/media-layout/`, `/notes/atlas/region-%CE%B1/district-07/block-c/observation/`.
 
 - [ ] HAT-P1-002 — 200%、纯键盘和 reduced motion
   - Status: READY
@@ -92,6 +97,7 @@
 - [`../../CUSTOM-QUARTZ-THEME-SPEC.md`](../../CUSTOM-QUARTZ-THEME-SPEC.md): Theme API and AC-TH-01..15.
 - [`../../BRUTALIST-QUARTZ-THEME-DESIGN.md`](../../BRUTALIST-QUARTZ-THEME-DESIGN.md): poster/editorial/instrument visual contract.
 - User request on 2026-08-03: update the test Vault for human acceptance.
+- User request on 2026-08-03: add deeply nested, mixed-length, full-format and image-text Markdown fixtures, then expose a LAN preview for iPad acceptance.
 
 ### Produced artifacts
 
@@ -99,6 +105,9 @@
 - `test-vault/.obsidian/plugins/pages-publish/{main.js,manifest.json,styles.css}`
 - `test-vault/.obsidian/community-plugins.json`
 - [`human-artifacts/HAT-P0-002-pathless-file.png`](./human-artifacts/HAT-P0-002-pathless-file.png)
+- [`fixtures/vault-content/`](./fixtures/vault-content/): 16 deterministic rich-content notes plus 3 SVG assets; together with the four original visibility fixtures they form the 20-note Vault baseline.
+- [`../../scripts/build-hat-lan-preview.ts`](../../scripts/build-hat-lan-preview.ts): real Quartz HAT builder using a HAT-owned theme trust environment.
+- [`human-artifacts/HAT-P1-001-rich-longform-ipad-chrome.png`](./human-artifacts/HAT-P1-001-rich-longform-ipad-chrome.png)
 
 ### Key decisions
 
@@ -110,6 +119,10 @@
 ### Verification evidence
 
 - `prepare.sh prepared` checks byte identity between the release and Vault plugin files.
+- `prepare.sh prepared` also checks every rich-content fixture byte-for-byte; current baseline is 20 Markdown notes and 3 non-Markdown assets.
+- Real Quartz LAN build: Quartz 5.0.0 / `pages-publish-quartz-5.0.0.2`, 20 scanned articles, 0 warnings, 96 files, 2 generated assets.
+- HTTP/discovery smoke: five representative routes return 200, private route returns 404, and private/unlisted canaries are absent from home, content index and sitemap.
+- Chrome responsive smoke: 820×1180 long-form `scrollY = 0`; heading deep-link target top = 23.3px; three local SVGs decoded successfully.
 - `npm run lint && npm test && npm run package` passed after the pathless-file fix: 82 test files, 675 passed / 8 skipped.
 - Prior automated run: [`reports/20260803-185611/summary.md`](./reports/20260803-185611/summary.md).
 

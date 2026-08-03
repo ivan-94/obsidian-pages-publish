@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">抽象现场地图</title>
+  <desc id="desc">黑色网格上分布橙色路径、蓝色水域和黄色观察点。</desc>
+  <rect width="1200" height="640" fill="#f4f0e6"/>
+  <g stroke="#171717" stroke-width="4" fill="none">
+    <path d="M0 128h1200M0 256h1200M0 384h1200M0 512h1200"/>
+    <path d="M200 0v640M400 0v640M600 0v640M800 0v640M1000 0v640"/>
+  </g>
+  <path d="M0 490C180 420 250 590 430 480S720 210 890 300s190 40 310-90v430H0Z" fill="#2764ff" stroke="#171717" stroke-width="8"/>
+  <path d="M90 90 270 190 430 155 575 290 760 230 940 390 1110 335" fill="none" stroke="#ff5a1f" stroke-width="28" stroke-linejoin="bevel"/>
+  <g fill="#ffe600" stroke="#171717" stroke-width="8">
+    <circle cx="270" cy="190" r="28"/><circle cx="575" cy="290" r="28"/><circle cx="940" cy="390" r="28"/>
+  </g>
+  <text x="48" y="72" font-family="ui-monospace, monospace" font-size="36" font-weight="800" fill="#171717">FIELD MAP / 03</text>
+</svg>

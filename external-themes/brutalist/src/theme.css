@@ -467,6 +467,16 @@ button:hover {
     border-top: 4px solid var(--brutalist-ink);
     border-left: 0;
   }
+
+  /* Quartz scrolls the active Explorer item into view after hydration. Keep
+     that motion inside the rail at tablet widths instead of scrolling the
+     entire article away from its masthead. */
+  .brutalist-poster-tools .explorer,
+  .brutalist-editorial-index .explorer {
+    max-height: min(60vh, 640px);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 @media (max-width: 760px) {

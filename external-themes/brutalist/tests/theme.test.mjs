@@ -28,3 +28,17 @@ test('theme uses distinct poster, editorial and minimal frames', async () => {
   assert.match(source, /name: 'brutalist-minimal'/u);
   assert.match(source, /BrutalistMasthead/u);
 });
+
+test('theme confines Quartz Explorer scrolling at the tablet breakpoint', async () => {
+  const source = await readFile(join(root, 'src', 'theme.css'), 'utf8');
+  assert.match(source, /@media \(max-width: 1100px\)[\s\S]*\.brutalist-editorial-index \.explorer\s*\{[^}]*max-height:[^}]*overflow: auto;[^}]*overscroll-behavior: contain;/u);
+});
+
+test('theme cancels Explorer page scrolling without overriding hashes or user movement', async () => {
+  const source = await readFile(join(root, 'src', 'client.js'), 'utf8');
+  assert.match(source, /if \(location\.hash\) \{/u);
+  assert.match(source, /target\.scrollIntoView\(\{ block: 'start', behavior: 'instant' \}\)/u);
+  assert.match(source, /window\.scrollTo\(\{ top: 0, left: 0, behavior: 'instant' \}\)/u);
+  assert.match(source, /new MutationObserver\(\(\) => resetExplorerPageScroll\(\)\)/u);
+  assert.match(source, /navigation\?\.type === 'navigate'/u);
+});

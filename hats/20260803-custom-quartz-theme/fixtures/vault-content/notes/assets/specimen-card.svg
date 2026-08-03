@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1100" role="img" aria-labelledby="title desc">
+  <title id="title">标本记录卡 07</title>
+  <desc id="desc">纸灰背景上的黑色边框、橙色编号与蓝色抽象标本。</desc>
+  <rect width="900" height="1100" fill="#f4f0e6"/>
+  <rect x="54" y="54" width="792" height="992" fill="none" stroke="#171717" stroke-width="12"/>
+  <rect x="54" y="54" width="792" height="170" fill="#ff5a1f" stroke="#171717" stroke-width="12"/>
+  <text x="92" y="168" font-family="ui-monospace, monospace" font-size="92" font-weight="900" fill="#171717">SPECIMEN 07</text>
+  <path d="M210 420c95-130 285-130 380 0 82 112 22 290-97 345-89 41-220 0-278-94-44-72-49-181-5-251Z" fill="#2764ff" stroke="#171717" stroke-width="14"/>
+  <path d="M292 510c62-54 155-55 220-5M280 610c80 42 190 40 260-12" fill="none" stroke="#ffe600" stroke-width="22"/>
+  <g font-family="ui-monospace, monospace" fill="#171717" font-size="32" font-weight="700">
+    <text x="92" y="880">ROUTE / COAST-A</text><text x="92" y="930">STATUS / OBSERVED</text><text x="92" y="980">LOCAL ASSET / VERIFIED</text>
+  </g>
+</svg>

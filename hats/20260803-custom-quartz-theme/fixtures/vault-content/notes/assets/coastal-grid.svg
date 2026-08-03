@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">海岸采样网格</title>
+  <desc id="desc">蓝色样方、橙色轨迹与黑色编号构成的低潮现场图。</desc>
+  <rect width="1200" height="720" fill="#111"/>
+  <g stroke="#f8f3e7" stroke-width="3" opacity=".65">
+    <path d="M100 70v580M300 70v580M500 70v580M700 70v580M900 70v580M1100 70v580"/>
+    <path d="M100 70h1000M100 215h1000M100 360h1000M100 505h1000M100 650h1000"/>
+  </g>
+  <g fill="#2764ff" stroke="#f8f3e7" stroke-width="6">
+    <rect x="115" y="85" width="170" height="115"/><rect x="515" y="375" width="170" height="115"/><rect x="915" y="520" width="170" height="115"/>
+  </g>
+  <path d="M80 590 255 445 420 520 610 270 815 330 1120 120" fill="none" stroke="#ff5a1f" stroke-width="24" stroke-linecap="square"/>
+  <g fill="#ffe600" font-family="ui-monospace, monospace" font-size="42" font-weight="900">
+    <text x="135" y="155">A-01</text><text x="535" y="445">A-02</text><text x="935" y="590">B-07</text>
+  </g>
+</svg>

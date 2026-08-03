@@ -11,6 +11,7 @@ test_vault="$script_dir/test-vault"
 marker="$test_vault/.pages-publish-custom-theme-hat-v1"
 plugin_id="pages-publish"
 plugin_directory="$test_vault/.obsidian/plugins/$plugin_id"
+content_fixture_root="$script_dir/fixtures/vault-content"
 theme_root="$repo_root/external-themes/brutalist"
 theme_archive="$theme_root/artifacts/pages-publish-theme-brutalist-1.0.0.tgz"
 action="${1:-info}"
@@ -59,6 +60,13 @@ prepared() {
   for fixture in notes/field-note.md notes/second.md notes/hidden.md notes/private.md; do
     [[ -s "$test_vault/$fixture" && ! -L "$test_vault/$fixture" ]] || return 1
   done
+  local source relative target
+  while IFS= read -r -d '' source; do
+    relative="${source#"$content_fixture_root"/}"
+    target="$test_vault/$relative"
+    [[ -f "$target" && ! -L "$target" ]] || return 1
+    cmp -s "$source" "$target" || return 1
+  done < <(find "$content_fixture_root" -type f -print0)
   [[ -d "$candidate" && ! -L "$candidate" ]] || return 1
   [[ "$(find "$candidate" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" == "3" ]] || return 1
   [[ -d "$plugin_directory" && ! -L "$plugin_directory" ]] || return 1
@@ -174,6 +182,20 @@ EOF
   : > "$marker"
 }
 
+install_content_fixtures() {
+  [[ -d "$content_fixture_root" && ! -L "$content_fixture_root" ]] || {
+    printf 'HAT content fixture root is missing or unsafe: %s\n' "$content_fixture_root" >&2
+    return 1
+  }
+  local source relative target
+  while IFS= read -r -d '' source; do
+    relative="${source#"$content_fixture_root"/}"
+    target="$test_vault/$relative"
+    mkdir -p "$(dirname -- "$target")"
+    cp "$source" "$target"
+  done < <(find "$content_fixture_root" -type f -print0)
+}
+
 install_candidate() {
   local candidate temporary
   candidate="$(candidate_directory)"
@@ -218,7 +240,9 @@ install_candidate() {
 }
 
 summary() {
-  local status="$1"
+  local status="$1" note_count asset_count
+  note_count="$(find "$test_vault/notes" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  asset_count="$(find "$test_vault/notes" -type f ! -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
   cat <<EOF
 HAT_PREPARE_SUMMARY
 mode=$mode
@@ -226,7 +250,7 @@ status=$status
 app_url=Obsidian desktop; preview URL is allocated at runtime
 database=not-applicable
 schema_version=site.yml v1; Theme API v1; Quartz 5.0.0
-seed_records=notes:4,themes:1
+seed_records=notes:$note_count,assets:$asset_count,themes:1
 test_vault=$test_vault
 candidate=$(candidate_directory)
 cleanup=$script_dir/prepare.sh cleanup
@@ -245,6 +269,7 @@ case "$action" in
     (cd "$repo_root" && npm run package)
     (cd "$theme_root" && npm run pack:local)
     create_vault
+    install_content_fixtures
     install_candidate
     if prepared; then
       summary prepared
