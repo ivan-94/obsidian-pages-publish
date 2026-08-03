@@ -1,15 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { PublicationEnvironmentManager } from '../src/runtime/environment-manager';
+import {
+  compatibleNodeVersion,
+  PublicationEnvironmentManager,
+} from '../src/runtime/environment-manager';
 
 describe('publication environment manager', () => {
+  it('requires Node 22 or newer for the Quartz engine', () => {
+    expect(compatibleNodeVersion('20.19.1')).toBe(false);
+    expect(compatibleNodeVersion('22.0.0')).toBe(true);
+  });
+
   it('reuses a compatible system Node without downloading or changing it', async () => {
     const fetchRelease = vi.fn();
     const download = vi.fn();
     const manager = new PublicationEnvironmentManager({
       inspectSystemNode: async () => ({
         executable: '/usr/local/bin/node',
-        version: '20.19.1',
+        version: '22.14.0',
       }),
       fetchRelease,
       download,
@@ -25,7 +33,7 @@ describe('publication environment manager', () => {
 
     expect(status).toMatchObject({
       stage: 'ready',
-      runtime: { source: 'system', version: '20.19.1' },
+      runtime: { source: 'system', version: '22.14.0' },
       engine: { version: '1.0.0' },
     });
     expect(fetchRelease).not.toHaveBeenCalled();
@@ -44,7 +52,7 @@ describe('publication environment manager', () => {
       download,
       store: {
         read: async () => ({
-          runtime: { version: '20.19.1', sha256: 'b'.repeat(64) },
+          runtime: { version: '22.14.0', sha256: 'b'.repeat(64) },
           engine: { version: '1.0.0', sha256: 'a'.repeat(64) },
         }),
         install: async () => undefined,
@@ -53,7 +61,7 @@ describe('publication environment manager', () => {
 
     await expect(manager.prepare()).resolves.toMatchObject({
       stage: 'ready',
-      runtime: { source: 'managed', version: '20.19.1' },
+      runtime: { source: 'managed', version: '22.14.0' },
       engine: { version: '1.0.0' },
     });
     expect(fetchRelease).not.toHaveBeenCalled();
@@ -64,8 +72,8 @@ describe('publication environment manager', () => {
     const runtimeContent = new TextEncoder().encode('managed node runtime');
     const engineContent = new TextEncoder().encode('pages publication engine');
     const runtime = {
-      version: '20.19.1',
-      url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+      version: '22.14.0',
+      url: 'https://releases.pages-publish.dev/node-22.14.0.tar.gz',
       sha256: sha256(runtimeContent),
     };
     const engine = {
@@ -86,7 +94,7 @@ describe('publication environment manager', () => {
 
     await expect(manager.prepare()).resolves.toMatchObject({
       stage: 'ready',
-      runtime: { source: 'managed', version: '20.19.1' },
+      runtime: { source: 'managed', version: '22.14.0' },
       engine: { version: '1.0.0' },
     });
     expect(download).toHaveBeenCalledWith(runtime.url);
@@ -102,7 +110,7 @@ describe('publication environment manager', () => {
 
   it('keeps the last verified environment when a repair download fails checksum validation', async () => {
     const verified = {
-      runtime: { version: '20.19.1', sha256: 'b'.repeat(64) },
+      runtime: { version: '22.14.0', sha256: 'b'.repeat(64) },
       engine: { version: '1.0.0', sha256: 'a'.repeat(64) },
     };
     const install = vi.fn(async () => undefined);
@@ -110,8 +118,8 @@ describe('publication environment manager', () => {
       inspectSystemNode: async () => undefined,
       fetchRelease: async () => ({
         runtime: {
-          version: '20.19.2',
-          url: 'https://releases.pages-publish.dev/node-20.19.2.tar.gz',
+          version: '22.14.1',
+          url: 'https://releases.pages-publish.dev/node-22.14.1.tar.gz',
           sha256: 'c'.repeat(64),
         },
         engine: {
@@ -127,7 +135,7 @@ describe('publication environment manager', () => {
     await expect(manager.repair()).rejects.toThrow('runtime download checksum');
     expect(install).not.toHaveBeenCalled();
     await expect(manager.prepare()).resolves.toMatchObject({
-      runtime: { source: 'managed', version: '20.19.1' },
+      runtime: { source: 'managed', version: '22.14.0' },
       engine: { version: '1.0.0' },
     });
   });
@@ -136,8 +144,8 @@ describe('publication environment manager', () => {
     const runtimeContent = new TextEncoder().encode('signed runtime');
     const engineContent = new TextEncoder().encode('signed engine');
     const runtime = {
-      version: '20.19.1',
-      url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+      version: '22.14.0',
+      url: 'https://releases.pages-publish.dev/node-22.14.0.tar.gz',
       sha256: sha256(runtimeContent),
       signature: 'runtime-signature',
     };
@@ -199,8 +207,8 @@ describe('publication environment manager', () => {
       },
       fetchRelease: async () => ({
         runtime: {
-          version: '20.19.1',
-          url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+          version: '22.14.0',
+          url: 'https://releases.pages-publish.dev/node-22.14.0.tar.gz',
           sha256: sha256(runtimeContent),
         },
         engine: {
@@ -247,8 +255,8 @@ describe('publication environment manager', () => {
         }
         return {
           runtime: {
-            version: '20.19.1',
-            url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+            version: '22.14.0',
+            url: 'https://releases.pages-publish.dev/node-22.14.0.tar.gz',
             sha256: sha256(runtimeContent),
           },
           engine: {
@@ -280,8 +288,8 @@ describe('publication environment manager', () => {
     let releaseInspection: (() => void) | undefined;
     const fetchRelease = vi.fn(async () => ({
       runtime: {
-        version: '20.19.1',
-        url: 'https://releases.pages-publish.dev/node-20.19.1.tar.gz',
+        version: '22.14.0',
+        url: 'https://releases.pages-publish.dev/node-22.14.0.tar.gz',
         sha256: sha256(runtimeContent),
       },
       engine: {
@@ -295,7 +303,7 @@ describe('publication environment manager', () => {
         await new Promise<void>((resolve) => {
           releaseInspection = resolve;
         });
-        return { executable: '/usr/local/bin/node', version: '20.19.1' };
+        return { executable: '/usr/local/bin/node', version: '22.14.0' };
       },
       fetchRelease,
       download: async (url) => (url.includes('node-') ? runtimeContent : engineContent),
@@ -313,11 +321,11 @@ describe('publication environment manager', () => {
     releaseInspection?.();
 
     await expect(prepare).resolves.toMatchObject({
-      runtime: { source: 'system', version: '20.19.1' },
+      runtime: { source: 'system', version: '22.14.0' },
       engine: { version: '1.0.0' },
     });
     await expect(repair).resolves.toMatchObject({
-      runtime: { source: 'managed', version: '20.19.1' },
+      runtime: { source: 'managed', version: '22.14.0' },
       engine: { version: '1.0.1' },
     });
     expect(fetchRelease).toHaveBeenCalledTimes(1);

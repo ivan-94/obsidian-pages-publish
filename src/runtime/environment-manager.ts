@@ -231,7 +231,6 @@ export function compatibleNodeVersion(version: string): boolean {
   const match = /^v?(\d+)\.(\d+)\.(\d+)$/u.exec(version);
   if (!match) return false;
   const major = Number(match[1]);
-  const minor = Number(match[2]);
-  return major > 20 || (major === 20 && minor >= 19);
+  return major >= 22;
 }
 import { createHash } from 'node:crypto';
