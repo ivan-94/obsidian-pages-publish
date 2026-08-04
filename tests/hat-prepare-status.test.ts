@@ -118,11 +118,17 @@ describe('S17 HAT prepare status', () => {
   it('emits a not-run summary when an explicitly selected Vault lacks the HAT marker', async () => {
     const root = await temporaryDirectory();
     const vault = join(root, 'unrecognised-vault');
+    const fakeBin = join(root, 'bin');
     await mkdir(vault, { recursive: true });
+    await mkdir(fakeBin, { recursive: true });
+    const fakeNpm = join(fakeBin, 'npm');
+    await writeFile(fakeNpm, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+    await execFile('chmod', ['+x', fakeNpm]);
 
     const result = await runExpectingFailure('bash', [prepareScript, 'prepare'], {
       env: {
         ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
         PAGES_PUBLISH_HAT_ALLOW_EXTERNAL_TEST_VAULT: '1',
         PAGES_PUBLISH_HAT_TEST_VAULT: vault,
       },
@@ -131,7 +137,7 @@ describe('S17 HAT prepare status', () => {
     expect(result.code).toBe(1);
     expect(result.stdout).toContain('status=not-run');
     expect(result.stderr).toContain('Refusing to initialise an unrecognised test Vault');
-  }, 10_000);
+  });
 });
 
 function hatEnvironment(vault: string, candidate: string): NodeJS.ProcessEnv {
