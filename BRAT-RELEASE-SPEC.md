@@ -41,11 +41,12 @@
 - GitHub Actions 仓库变量 `PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID` 已配置；Release 构建缺失该值时仍会 fail-closed。
 - GitHub CI 与 `0.1.0-beta.1` Release workflow 已在 GitHub runner 中通过。
 - `0.1.0-beta.1` GitHub pre-release 已发布，并提供 BRAT 所需的三个独立附件。
+- `0.1.0-beta.2` patch 已发布：OAuth 和外部链接改用 macOS 系统浏览器，并准确识别 Cloudflare 浏览器会话丢失。
 
 ### 3.2 剩余验收
 
 - 尚未通过真实 BRAT 完成安装和跨版本升级验收。
-- `0.1.0-beta.1` 可完成首次安装验收；跨版本升级需等待 `0.1.0-beta.2` 候选版本。
+- `0.1.0-beta.2` 已可用于执行从 `0.1.0-beta.1` 升级及 Cloudflare OAuth 重试验收。
 
 ## 4. 发布范围
 
@@ -285,8 +286,9 @@ CI 必须在受支持的 Node 版本上运行，不依赖开发者机器上的�
 ### Produced artifacts
 
 - [`BRAT-RELEASE-SPEC.md`](./BRAT-RELEASE-SPEC.md)：本发布规格。
-- <https://github.com/ivan-94/obsidian-pages-publish>：已推送源码并发布 `0.1.0-beta.1` 的公开仓库。
+- <https://github.com/ivan-94/obsidian-pages-publish>：已推送源码并发布 `0.1.0-beta.1`、`0.1.0-beta.2` 的公开仓库。
 - <https://github.com/ivan-94/obsidian-pages-publish/releases/tag/0.1.0-beta.1>：首个 BRAT pre-release 及三个安装附件。
+- <https://github.com/ivan-94/obsidian-pages-publish/releases/tag/0.1.0-beta.2>：Cloudflare OAuth 系统浏览器修复 patch。
 
 ### Key decisions
 
@@ -306,10 +308,12 @@ CI 必须在受支持的 Node 版本上运行，不依赖开发者机器上的�
 - 2026-08-04：GitHub repository variable `PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID` 配置成功，命令未输出变量值。
 - 2026-08-04：[Release run 30898536890](https://github.com/ivan-94/obsidian-pages-publish/actions/runs/30898536890) 通过，并创建 `0.1.0-beta.1` pre-release。
 - 2026-08-04：从公开 Release 重新下载并验证三个附件；SHA-256 分别为 `main.js` `2505963858ce000a0fb4bcdbdd9f133ed3e48ac9af54421bdb418d64863e19d5`、`manifest.json` `a1f1ebed2e29c78cc77f3035c8ed493e272b205f1d0703f342037f6863387fed`、`styles.css` `79015c6e2341a741d7c01d6c87ee6c6d9db23decac32e32a1cc7a351fff6927f`。
+- 2026-08-04：[CI run 30901357106](https://github.com/ivan-94/obsidian-pages-publish/actions/runs/30901357106) 和 [Release run 30901448306](https://github.com/ivan-94/obsidian-pages-publish/actions/runs/30901448306) 通过，并创建 `0.1.0-beta.2` pre-release。
+- 2026-08-04：重新下载 `0.1.0-beta.2` 并验证版本、系统浏览器边界和 OAuth Client ID；附件 SHA-256 分别为 `main.js` `a636d43a4cadcd31ceb71b78363624fc99eb8a70687e3b2f5af4af3bd5420f7d`、`manifest.json` `d12a440376127f4b24ea3e624debd4c073cd965292e5f2454b81847993c0cec8`、`styles.css` `79015c6e2341a741d7c01d6c87ee6c6d9db23decac32e32a1cc7a351fff6927f`。
 
 ### Open questions / risks
 
 - 首个真实 BRAT 安装结论等待用户验收。
-- 跨版本 BRAT 升级路径需在 `0.1.0-beta.2` 发布时验收。
+- 从 `0.1.0-beta.1` 到 `0.1.0-beta.2` 的真实 BRAT 升级和 OAuth 重试等待用户验收。
 - GitHub Actions 提示当前固定的 checkout/setup-node action runtime 仍声明 Node 20，并由 runner 强制切换到 Node 24；本次运行通过，但需后续升级固定 SHA。
 - 失败恢复、URL 迁移/下线、完整键盘矩阵和多账号矩阵仍不是当前核心主链路 HAT 的完整通过项。
