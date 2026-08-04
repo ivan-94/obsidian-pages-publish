@@ -131,6 +131,17 @@ describe('external Brutalist theme real Quartz integration', () => {
       expect(preview.files['/notes/hidden-dispatch/index.html']).toContain('noindex');
       expect(Object.values(preview.files).join('\n')).toContain('brutalist-reading-progress');
       expect(Object.values(preview.files).join('\n')).toContain('--brutalist-paper');
+      expect(preview.files['/index.html']).toContain(
+        'data-pages-publish-brutalist-cascade="true"',
+      );
+      expect(preview.files['/index.html']).toContain(
+        '/static/pages-publish-theme/dist/assets/brutalist-cascade.css',
+      );
+      expect(preview.assets['/static/pages-publish-theme/dist/assets/brutalist-cascade.css'])
+        .toBeDefined();
+      expect(new TextDecoder().decode(
+        preview.assets['/static/pages-publish-theme/dist/assets/brutalist-cascade.css']!.content,
+      )).not.toContain('@layer quartz-base');
       expect(preview.files['/index.html']).toContain('Content-Security-Policy');
       expect(preview.files['/static/contentIndex.json']).not.toContain('Hidden dispatch');
       expect(preview.files['/sitemap.xml']).not.toContain('hidden-dispatch');

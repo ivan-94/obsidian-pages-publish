@@ -1,0 +1,764 @@
+.brutalist-tool-rail {
+  --brutalist-rail-action-height: 48px;
+  --brutalist-index-row-font: 600 0.76rem/1.3 var(--bodyFont);
+}
+
+.brutalist-rail-controls {
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+.brutalist-rail-controls .brutalist-shell-control {
+  flex: 1;
+  min-height: 44px;
+  border: 0 !important;
+}
+
+.brutalist-rail-controls .brutalist-shell-control + .brutalist-shell-control {
+  border-left: var(--stroke-structural) solid var(--brutalist-ink) !important;
+}
+
+.brutalist-rail-controls .brutalist-shell-control[data-brutalist-action^="close"] {
+  display: none;
+}
+
+.brutalist-navigation-controls .brutalist-shell-control[data-brutalist-action="navigation"] {
+  min-height: var(--brutalist-rail-action-height);
+  background: var(--brutalist-index);
+}
+
+.brutalist-index-label,
+.brutalist-kicker {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  color: #151515;
+  font: 800 0.64rem/1.25 var(--codeFont);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.brutalist-index-label {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 0;
+  min-height: var(--brutalist-rail-action-height);
+  margin-bottom: var(--space-2);
+  padding: 0;
+  border-bottom: var(--stroke-structural) solid var(--brutalist-ink);
+  background: var(--brutalist-index);
+}
+
+.brutalist-index-label > span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-inline: var(--space-3);
+}
+
+.brutalist-index-label > span + span {
+  border-left: var(--stroke-subtle) solid var(--brutalist-ink);
+}
+
+.brutalist-kicker {
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: var(--space-4);
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  background: var(--brutalist-ink);
+  color: var(--brutalist-paper);
+}
+
+.brutalist-tool-rail .flex-component {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 !important;
+  margin-bottom: var(--space-3);
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+.brutalist-tool-rail .flex-component > div {
+  display: flex;
+  align-self: stretch !important;
+  justify-self: stretch !important;
+  min-width: 0;
+}
+
+.brutalist-tool-rail .flex-component > div + div {
+  border-left: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+.brutalist-tool-rail .flex-component :where(.search, .darkmode) {
+  flex: 1 1 auto;
+}
+
+.brutalist-tool-rail .search-button,
+.brutalist-tool-rail .darkmode {
+  width: 100%;
+  min-width: 44px;
+  min-height: var(--brutalist-rail-action-height);
+  border: 0 !important;
+  background: transparent;
+  box-shadow: none;
+}
+
+.brutalist-tool-rail .search-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+}
+
+.brutalist-tool-rail .search-button p {
+  display: block;
+  margin: 0;
+  color: inherit;
+  font: 800 0.67rem/1 var(--codeFont);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.brutalist-tool-rail .search-button svg {
+  width: 18px;
+  stroke: currentColor;
+}
+
+.brutalist-tool-rail .darkmode svg {
+  width: 20px;
+  fill: currentColor;
+}
+
+.brutalist-tool-rail .search-button:hover,
+.brutalist-tool-rail .darkmode:hover {
+  background: var(--brutalist-index);
+  color: #151515;
+}
+
+.brutalist-tool-rail :where(.explorer, .graph, .toc, .backlinks) {
+  border-top: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+.brutalist-tool-rail .explorer {
+  border-bottom: var(--stroke-subtle) solid color-mix(in srgb, var(--brutalist-ink) 54%, transparent);
+}
+
+.brutalist-tool-rail :where(.explorer .title-button, .toc-header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-1);
+  border: 0 !important;
+  background: transparent;
+  box-shadow: none;
+  color: var(--brutalist-ink);
+  font: 800 0.66rem/1.2 var(--codeFont);
+  letter-spacing: 0.07em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.brutalist-tool-rail :where(.explorer .title-button, .toc-header):hover {
+  translate: none;
+  background: var(--brutalist-index);
+  color: #151515;
+}
+
+.brutalist-tool-rail :where(.explorer h2, .toc h3) {
+  margin: 0;
+  font: inherit;
+}
+
+.brutalist-tool-rail .explorer-content,
+.brutalist-tool-rail .toc-content {
+  margin: 0;
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.brutalist-tool-rail .explorer[data-brutalist-index-expanded="false"] .explorer-content {
+  display: none;
+}
+
+.brutalist-tool-rail .explorer-ul,
+.brutalist-tool-rail .toc-content {
+  scrollbar-width: thin;
+}
+
+.brutalist-tool-rail .explorer-content,
+.brutalist-tool-rail .explorer-ul {
+  max-width: 100%;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.brutalist-tool-rail .explorer-content::-webkit-scrollbar,
+.brutalist-tool-rail .explorer-ul::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.brutalist-tool-rail .explorer li,
+.brutalist-tool-rail .toc li {
+  min-width: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.brutalist-tool-rail .explorer ul,
+.brutalist-tool-rail .toc ul {
+  margin: 0;
+  padding: 0;
+}
+
+.brutalist-tool-rail .explorer .folder-outer {
+  min-width: 0;
+  margin-left: 0.72rem;
+  padding-left: 0.55rem;
+  border-left: var(--stroke-subtle) solid color-mix(in srgb, var(--brutalist-ink) 42%, transparent);
+}
+
+.brutalist-tool-rail .explorer :where(a, .folder-button) {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px var(--space-2);
+  border: 0 !important;
+  background: transparent;
+  box-shadow: none;
+  color: var(--brutalist-ink);
+  font: var(--brutalist-index-row-font);
+  text-align: left;
+  text-decoration: none;
+  line-break: strict;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.brutalist-tool-rail .explorer .folder-button {
+  color: var(--brutalist-ink);
+  font: var(--brutalist-index-row-font);
+  letter-spacing: 0;
+}
+
+.brutalist-tool-rail .explorer .explorer-ul > li:not(.overflow-end) > .folder-container .folder-button {
+  color: var(--brutalist-signal);
+  font-weight: 800;
+}
+
+.brutalist-tool-rail .explorer a.nav-file-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.brutalist-tool-rail .explorer .folder-container {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+}
+
+.brutalist-tool-rail .explorer .folder-icon {
+  width: 14px;
+  transition: transform 140ms ease;
+}
+
+.brutalist-tool-rail .explorer :where(a, .folder-button):hover {
+  background: color-mix(in srgb, var(--brutalist-index) 52%, transparent);
+  color: #151515;
+}
+
+.brutalist-tool-rail .explorer a[aria-current="page"],
+.brutalist-tool-rail .explorer a.active,
+.brutalist-tool-rail .explorer a.is-active,
+.brutalist-tool-rail .explorer .active > a {
+  min-height: 40px;
+  padding-left: var(--space-3);
+  border-left: var(--stroke-emphasis) solid var(--brutalist-signal) !important;
+  background: var(--brutalist-index);
+  color: #151515;
+  font-weight: 800;
+}
+
+.brutalist-tool-rail .toc a {
+  display: block;
+  min-height: 40px;
+  padding: 9px 0 9px var(--space-2);
+  border-left: var(--stroke-subtle) solid transparent;
+  color: color-mix(in srgb, var(--brutalist-ink) 76%, var(--brutalist-muted));
+  font: 700 0.82rem/1.4 var(--bodyFont);
+  /* Quartz's default TOC dims inactive entries with opacity. A section list
+     is navigation, not disabled chrome: keep every target readable and use
+     the active signal, weight and rule below for hierarchy instead. */
+  opacity: 1;
+  text-decoration: none;
+}
+
+/* Article utilities -------------------------------------------------------
+   Quartz still owns the TOC links, scroll spy and graph renderer. The theme
+   adds only a compact, two-level navigation grammar around those primitives. */
+.brutalist-utility-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: start;
+  gap: var(--space-2);
+  min-height: 68px;
+  margin-bottom: 0;
+  padding-bottom: var(--space-3);
+  border: 0;
+  border-bottom: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+.brutalist-outline-heading {
+  min-width: 0;
+}
+
+.brutalist-outline-heading__label {
+  display: inline-block;
+  margin-bottom: 5px;
+  padding: 4px 7px 3px;
+  background: var(--brutalist-index);
+  color: #151515;
+  font: 800 0.58rem/1 var(--codeFont);
+  letter-spacing: 0.09em;
+}
+
+.brutalist-outline-heading__title {
+  margin: 0;
+  color: var(--brutalist-ink);
+  font: 800 1.35rem/1.05 var(--displayFont);
+  letter-spacing: -0.025em;
+}
+
+.brutalist-outline-heading__meta {
+  margin: 5px 0 0;
+  color: var(--brutalist-muted);
+  font: 700 0.57rem/1.2 var(--codeFont);
+  letter-spacing: 0.06em;
+}
+
+.brutalist-utility-controls .brutalist-shell-control {
+  grid-column: 2;
+  grid-row: 1;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: var(--stroke-structural) solid var(--brutalist-ink) !important;
+  font: 700 1.4rem/1 var(--bodyFont);
+}
+
+.brutalist-tool-rail .toc {
+  display: block;
+  height: auto;
+  min-height: 0;
+  align-self: start;
+  overflow: hidden;
+  border-top: 0;
+}
+
+.brutalist-tool-rail .toc-header {
+  display: none;
+}
+
+.brutalist-tool-rail .toc-content {
+  position: relative;
+  max-height: 100%;
+  padding: 0 0 var(--space-2);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--brutalist-signal) var(--brutalist-ink);
+}
+
+.brutalist-tool-rail .toc-content::before {
+  position: absolute;
+  inset: 15px auto 15px 15px;
+  width: 1px;
+  background: color-mix(in srgb, var(--brutalist-ink) 34%, transparent);
+  content: '';
+}
+
+.brutalist-tool-rail .toc-content > li {
+  position: relative;
+  min-height: 42px;
+  padding: 0 !important;
+}
+
+.brutalist-tool-rail .toc-content > li.brutalist-toc-parent {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.brutalist-toc-branch-toggle {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  min-height: 42px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: var(--brutalist-panel);
+  box-shadow: none;
+}
+
+.brutalist-toc-branch-toggle::after {
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--brutalist-signal);
+  border-bottom: 2px solid var(--brutalist-signal);
+  content: '';
+  rotate: 45deg;
+  transition: rotate 120ms ease;
+}
+
+.brutalist-toc-branch-toggle[aria-expanded="false"]::after {
+  rotate: -45deg;
+}
+
+.brutalist-toc-branch-toggle:hover,
+.brutalist-toc-branch-toggle:focus-visible {
+  translate: none;
+  background: var(--brutalist-index);
+}
+
+.brutalist-tool-rail .toc-content > li.brutalist-toc-parent > a,
+.brutalist-tool-rail .toc-content > li.brutalist-toc-leaf > a,
+.brutalist-tool-rail .toc-content > li.brutalist-toc-child > a {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 64px 8px 10px;
+  border: 0;
+  color: var(--brutalist-ink);
+  font: 700 14px/1.3 var(--bodyFont);
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.brutalist-tool-rail .toc-content > li.brutalist-toc-leaf > a {
+  padding-left: 32px;
+}
+
+.brutalist-tool-rail .toc-content > li.brutalist-toc-child {
+  min-height: 40px;
+  margin-left: 32px;
+}
+
+.brutalist-tool-rail .toc-content > li.brutalist-toc-child::after {
+  position: absolute;
+  inset: 0 auto auto -17px;
+  width: 16px;
+  height: 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brutalist-ink) 42%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--brutalist-ink) 42%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.brutalist-tool-rail .toc-content > li.brutalist-toc-child > a {
+  min-height: 40px;
+  padding-left: 10px;
+  color: color-mix(in srgb, var(--brutalist-ink) 72%, var(--brutalist-muted));
+  font-size: 14px;
+}
+
+.brutalist-tool-rail .toc a:hover {
+  border-left-color: transparent;
+  background: color-mix(in srgb, var(--brutalist-index) 45%, transparent);
+  color: var(--brutalist-ink);
+}
+
+.brutalist-tool-rail .toc a.in-view:not(:hover):not([aria-current="location"]) {
+  background: transparent;
+}
+
+.brutalist-tool-rail .toc a[aria-current="location"] {
+  position: relative;
+  padding-block: 9px;
+  border-left: var(--stroke-emphasis) solid var(--brutalist-signal);
+  background: color-mix(in srgb, var(--brutalist-index) 64%, transparent);
+  color: var(--brutalist-ink);
+  font-weight: 800;
+}
+
+.brutalist-tool-rail .toc a[aria-current="location"]::after {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  color: var(--brutalist-ink);
+  content: 'CURRENT';
+  font: 800 0.5rem/1 var(--codeFont);
+  letter-spacing: 0.06em;
+  translate: 0 -50%;
+}
+
+/* The article title is already the reader's dominant orientation cue. Once
+   Quartz has real section links, do not repeat a multi-line H1 inside the
+   compact navigation list. */
+.brutalist-tool-rail .toc-content:has(.depth-1) > .depth-0 {
+  display: none;
+}
+
+.brutalist-tool-rail .graph {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  padding-block: var(--space-3) 0;
+  border-top: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+.brutalist-tool-rail .graph > h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--brutalist-ink);
+  font: 800 0.72rem/1.2 var(--codeFont);
+  letter-spacing: 0.04em;
+}
+
+.brutalist-tool-rail .graph > h3::before {
+  content: 'RELATION MAP / ';
+}
+
+/* Focus mode promotes the same utility rail to a drawer on wide screens.
+   Keep its geometry identical to the tablet drawer instead of falling back
+   to the legacy narrow, whole-panel scroller. */
+:root[data-reading-mode="focused"][data-overlay="outline"] :is(.brutalist-poster-utility, .brutalist-editorial-tools) {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  gap: 12px;
+  width: min(400px, 92vw);
+  padding: 16px;
+  overflow: hidden;
+  border: 0;
+  border-left: var(--stroke-emphasis) solid var(--brutalist-ink);
+}
+
+:root[data-reading-mode="focused"][data-overlay="outline"] :is(.brutalist-poster-utility, .brutalist-editorial-tools) .brutalist-rail-content {
+  display: contents;
+}
+
+:root[data-reading-mode="focused"][data-overlay="outline"] .brutalist-tool-rail .graph-outer {
+  height: clamp(220px, 30dvh, 280px);
+  min-height: 220px;
+}
+
+.brutalist-tool-rail .graph-outer {
+  position: relative;
+  height: 116px;
+  min-height: 0;
+  overflow: hidden;
+  border: var(--stroke-subtle) solid color-mix(in srgb, var(--brutalist-ink) 60%, transparent);
+  background: var(--brutalist-panel-quiet);
+}
+
+.brutalist-tool-rail .graph-container {
+  min-height: 0;
+  opacity: 0.64;
+}
+
+.brutalist-tool-rail .global-graph-icon {
+  position: absolute !important;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto !important;
+  min-width: 76px !important;
+  min-height: 40px;
+  padding: 0 var(--space-2);
+  border: var(--stroke-structural) solid #151515 !important;
+  background: var(--brutalist-index) !important;
+  color: #151515 !important;
+  box-shadow: 2px 2px 0 var(--brutalist-ink);
+  font: 800 0.58rem/1 var(--codeFont);
+  letter-spacing: 0.06em;
+}
+
+.brutalist-tool-rail .global-graph-icon::after {
+  content: 'OPEN';
+}
+
+.brutalist-tool-rail .global-graph-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.brutalist-tool-rail .global-graph-icon:hover {
+  translate: 1px 1px;
+  box-shadow: none;
+}
+
+:root[data-left-rail="hidden"] .brutalist-editorial-index,
+:root[data-left-rail="hidden"] .brutalist-poster-tools {
+  display: none;
+}
+
+:root[data-right-rail="hidden"] .brutalist-editorial-tools,
+:root[data-right-rail="hidden"] .brutalist-poster-utility {
+  display: none;
+}
+
+/* Expanded navigation rail
+   ------------------------
+   These rules are deliberately scoped to the left navigation rail. The
+   article stage, masthead and right-side tools keep their own layout system. */
+:is(.brutalist-poster-tools, .brutalist-editorial-index).brutalist-tool-rail {
+  --brutalist-compact-control: 48px;
+  --brutalist-compact-row: 42px;
+  --brutalist-compact-gap: 12px;
+  padding: 16px 22px 16px 16px;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .brutalist-navigation-controls {
+  min-height: var(--brutalist-compact-control);
+  margin-bottom: var(--brutalist-compact-gap);
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index)
+  .brutalist-navigation-controls
+  .brutalist-shell-control[data-brutalist-action='navigation'] {
+  min-height: var(--brutalist-compact-control);
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .brutalist-index-label {
+  display: none;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .flex-component {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: var(--brutalist-compact-control);
+  margin-bottom: var(--brutalist-compact-gap);
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .flex-component > div {
+  display: flex;
+  min-width: 0;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .flex-component > div + div {
+  border-left: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) :where(.search-button, .darkmode) {
+  width: 100%;
+  min-height: var(--brutalist-compact-control);
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .search-button p {
+  font-size: 0;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .search-button p::after {
+  content: 'SEARCH';
+  font: 800 12px/1 var(--codeFont);
+  letter-spacing: 0.04em;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .darkmode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .darkmode::after {
+  content: 'MODE';
+  font: 800 12px/1 var(--codeFont);
+  letter-spacing: 0.04em;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .darkmode svg {
+  position: static;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  transform: none;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer {
+  border-top-width: var(--stroke-subtle);
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .title-button {
+  min-height: 40px;
+  padding: 0 var(--space-2);
+  border-bottom: var(--stroke-subtle) solid var(--brutalist-ink) !important;
+  font-size: 12px;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .title-button h2 {
+  font-size: 0;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .title-button h2::after {
+  content: 'BROWSE INDEX';
+  font: 800 12px/1 var(--codeFont);
+  letter-spacing: 0.04em;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer-content {
+  padding: 14px 0 6px;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .folder-container {
+  grid-template-columns: 26px minmax(0, 1fr);
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .folder-outer {
+  margin-left: 7px;
+  padding-left: 14px;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer :where(a, .folder-button) {
+  min-height: var(--brutalist-compact-row);
+  padding: 10px 6px;
+  font: 600 14px/1.25 var(--bodyFont) !important;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .folder-button,
+:is(.brutalist-poster-tools, .brutalist-editorial-index)
+  .explorer
+  .explorer-ul
+  > li:not(.overflow-end)
+  > .folder-container
+  .folder-button {
+  font-weight: 700 !important;
+}
+
+/* Quartz gives the nested folder label its own font size. Keep the visual
+   hierarchy in weight, not scale, so folders and leaf pages share 14px. */
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .folder-title {
+  font: inherit !important;
+}
+
+:is(.brutalist-poster-tools, .brutalist-editorial-index) .explorer .folder-button.active,
+:is(.brutalist-poster-tools, .brutalist-editorial-index)
+  .explorer
+  .folder-button:focus:not(:focus-visible) {
+  background: transparent;
+}
+
+@media (max-width: 1023px) {
+  .brutalist-tool-rail .toc a {
+    min-height: 44px;
+    padding-block: 10px;
+    font-size: 0.88rem;
+  }
+
+  .brutalist-tool-rail .global-graph-icon {
+    min-height: 44px;
+  }
+}

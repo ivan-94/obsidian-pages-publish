@@ -1,0 +1,536 @@
+.brutalist-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  display: none;
+  border: 0;
+  background: color-mix(in srgb, var(--brutalist-ink) 58%, transparent);
+  cursor: default;
+}
+
+:root[data-overlay="navigation"] .brutalist-overlay-backdrop,
+:root[data-overlay="outline"] .brutalist-overlay-backdrop,
+:root[data-overlay="search"] .brutalist-overlay-backdrop,
+:root[data-overlay="graph"] .brutalist-overlay-backdrop,
+:root[data-overlay="image"] .brutalist-overlay-backdrop {
+  display: block;
+}
+
+.search-container {
+  position: fixed !important;
+  inset: 50% auto auto 50% !important;
+  z-index: 70 !important;
+  width: min(720px, calc(100vw - 48px)) !important;
+  max-height: min(720px, calc(100dvh - 96px)) !important;
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  border: var(--stroke-emphasis) solid var(--brutalist-ink) !important;
+  background: var(--brutalist-paper) !important;
+  box-shadow: 10px 10px 0 var(--brutalist-ink) !important;
+  /* Quartz keeps this DOM node mounted after a route swap. It belongs to the
+     theme state machine, so a native stale-open state may never float over a
+     newly rendered article. The active overlay rule below is its sole reveal. */
+  display: none !important;
+}
+
+/* The Search panel is portalled only while it is active. Keep its controls
+   out of the scrolling region on desktop as well as mobile: long result sets
+   must never push the query or CLOSE target out of reach. */
+:root[data-overlay="search"] .search-container {
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden !important;
+}
+
+:root[data-overlay="search"] .search-space {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-4) !important;
+  overflow: hidden;
+}
+
+:root[data-overlay="search"] .search-space > input {
+  flex: 0 0 auto;
+}
+
+.brutalist-search-dialog-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 62px;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--stroke-structural) solid var(--brutalist-ink);
+  background: var(--brutalist-index);
+  color: #151515 !important;
+}
+
+.brutalist-search-dialog-bar p {
+  margin: 0;
+  color: #151515 !important;
+  font: 800 0.74rem/1.2 var(--codeFont);
+  letter-spacing: 0.07em;
+  text-shadow: none;
+}
+
+.brutalist-search-dialog-bar button {
+  display: inline-grid;
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: var(--space-3);
+  place-items: center;
+  border: var(--stroke-structural) solid #151515 !important;
+  background: #151515;
+  color: #f8f4eb;
+  box-shadow: none;
+  font: 800 0.64rem/1 var(--codeFont);
+}
+
+.search-space input {
+  width: 100%;
+  min-height: 52px;
+  padding-inline: var(--space-3);
+  border: var(--stroke-structural) solid var(--brutalist-ink) !important;
+  font-size: 1rem;
+}
+
+.search-layout {
+  display: grid !important;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+:root[data-overlay="search"] .search-layout.display-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.search-layout .results-container,
+.search-layout .preview-container {
+  min-width: 0;
+}
+
+:root[data-overlay="search"] .search-layout .results-container,
+:root[data-overlay="search"] .search-layout .preview-container {
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.search-layout .results-container {
+  border-top: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+.search-layout .result-card,
+.search-result-card {
+  display: block;
+  margin: 0 !important;
+  padding: var(--space-4) !important;
+  border: 0 !important;
+  border-bottom: var(--stroke-subtle) solid var(--brutalist-ink) !important;
+  box-shadow: none !important;
+}
+
+.search-layout .result-card:is(:hover, :focus, :focus-within, .focus),
+.search-result-card:is(:hover, :focus, :focus-within, .focus) {
+  background: var(--brutalist-index) !important;
+  color: #151515 !important;
+}
+
+/* Quartz marks keyboard selection with `.focus`, not :focus. Every text
+   layer must move with the acid selection ground; inheriting a light Quartz
+   token makes the selected result unreadable. */
+.search-layout .result-card:is(:hover, :focus, :focus-within, .focus) :where(h3, p, li, .card-title, .card-description),
+.search-result-card:is(:hover, :focus, :focus-within, .focus) :where(h3, p, li, .card-title, .card-description) {
+  color: #151515 !important;
+}
+
+.search-layout .result-card:is(:hover, :focus, :focus-within, .focus) .highlight,
+.search-result-card:is(:hover, :focus, :focus-within, .focus) .highlight {
+  background: #151515 !important;
+  color: #f8f4eb !important;
+}
+
+.search-layout .result-card :where(h3, p),
+.search-result-card :where(h3, p) {
+  margin-block: 0 var(--space-2);
+}
+
+.search-layout .card-title {
+  color: var(--brutalist-ink);
+  font: 800 1rem/1.15 var(--headerFont);
+  letter-spacing: -0.025em;
+}
+
+.search-layout .card-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--brutalist-muted);
+  font: 600 0.76rem/1.45 var(--bodyFont);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.search-layout .highlight {
+  padding-inline: 0.12em;
+  background: var(--brutalist-index);
+  color: #151515;
+}
+
+.search-layout .preview-container {
+  max-height: 28rem;
+  overflow: auto;
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  background: var(--brutalist-panel-quiet);
+}
+
+.search-layout .preview-inner {
+  padding: var(--space-4);
+}
+
+.search-layout .preview-container {
+  display: grid;
+  align-content: start;
+}
+
+/* Search preview is deliberately a read-only projection, not a second
+   interactive article. The original Quartz render stays available as a source
+   for the client projection but is hidden from visual and keyboard order. */
+.brutalist-search-preview-summary {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.brutalist-search-preview-summary :where(p, h2) {
+  margin: 0;
+}
+
+.brutalist-search-preview-summary__eyebrow {
+  color: var(--brutalist-muted);
+  font: 800 0.62rem/1.2 var(--codeFont);
+  letter-spacing: 0.08em;
+}
+
+.brutalist-search-preview-summary__location {
+  overflow: hidden;
+  color: var(--brutalist-muted);
+  font: 700 0.7rem/1.35 var(--codeFont);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brutalist-search-preview-summary__title {
+  color: var(--brutalist-ink);
+  font: 900 clamp(1.45rem, 3.4vw, 2.1rem)/0.98 var(--headerFont);
+  letter-spacing: -0.045em;
+  line-break: strict;
+}
+
+.brutalist-search-preview-summary__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.brutalist-search-preview-summary__tags span {
+  padding: 3px 6px;
+  background: color-mix(in srgb, var(--brutalist-index) 54%, transparent);
+  color: var(--brutalist-ink);
+  font: 800 0.58rem/1.2 var(--codeFont);
+  letter-spacing: 0.05em;
+}
+
+.brutalist-search-preview-summary__excerpt {
+  color: var(--brutalist-ink);
+  font: 600 0.94rem/1.55 var(--bodyFont);
+}
+
+.brutalist-search-preview-summary__open {
+  display: inline-grid;
+  justify-self: start;
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: var(--space-3);
+  place-items: center;
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  background: var(--brutalist-index);
+  color: #151515;
+  font: 800 0.64rem/1 var(--codeFont);
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.brutalist-search-preview-summary__open:is(:hover, :focus-visible) {
+  background: var(--brutalist-ink);
+  color: var(--brutalist-paper);
+}
+
+.search-layout:empty {
+  display: grid;
+  min-height: 14rem;
+  place-items: center;
+  color: var(--brutalist-muted);
+  font: 700 0.76rem/1.5 var(--codeFont);
+  text-align: center;
+}
+
+.search-layout:empty::before {
+  content: '输入关键词，搜索公开内容';
+}
+
+.brutalist-search-dialog-hint {
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  color: var(--brutalist-muted);
+  font: 700 0.76rem/1.5 var(--codeFont);
+}
+
+.search-layout:not(.display-results) {
+  display: none !important;
+}
+
+.search-container:has(.search-layout.display-results) .brutalist-search-dialog-hint {
+  display: none;
+}
+
+@media (max-width: 759px) {
+  /* A full-screen modal needs a permanent exit path. The shell and toolbar
+     never scroll; only the result list does, so CLOSE and the query remain
+     available even at the end of a long result set. */
+  :root[data-overlay="search"] .search-container {
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden !important;
+  }
+
+  :root[data-overlay="search"] .search-space {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    width: 100% !important;
+    min-height: 0;
+    margin: 0 !important;
+    overflow: hidden;
+  }
+
+  :root[data-overlay="search"] .search-space > input {
+    flex: 0 0 auto;
+  }
+
+  :root[data-overlay="search"] .search-layout {
+    display: block !important;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :root[data-overlay="search"] .search-layout .results-container {
+    height: 100% !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  :root[data-overlay="search"] .search-layout .preview-container {
+    display: none !important;
+  }
+}
+
+.global-graph-outer {
+  position: fixed !important;
+  inset: 50% auto auto 50% !important;
+  z-index: 71 !important;
+  width: min(1080px, calc(100vw - 64px));
+  max-height: min(760px, calc(100dvh - 96px));
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  border: var(--stroke-emphasis) solid var(--brutalist-ink);
+  background: var(--brutalist-paper);
+  box-shadow: 10px 10px 0 var(--brutalist-ink);
+}
+
+.global-graph-container {
+  min-height: min(72dvh, 680px);
+}
+
+.brutalist-graph-status {
+  position: absolute;
+  inset: 52px 0 0;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  border-top: var(--stroke-structural) solid var(--brutalist-ink);
+  background: var(--brutalist-paper);
+  color: var(--brutalist-ink);
+  text-align: center;
+}
+
+.brutalist-graph-status strong {
+  font: 800 0.75rem/1.2 var(--codeFont);
+  letter-spacing: 0.075em;
+}
+
+.brutalist-graph-status p {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--brutalist-muted);
+  font-size: 0.92rem;
+}
+
+.brutalist-graph-status[data-state="loading"] strong::before {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 0.6em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: '';
+  animation: brutalist-graph-spin 0.8s linear infinite;
+}
+
+.brutalist-graph-status[data-state="error"] {
+  border-left: var(--stroke-emphasis) solid var(--brutalist-alert);
+}
+
+.brutalist-graph-status[data-state="error"] strong {
+  color: var(--brutalist-alert);
+}
+
+.brutalist-graph-status button {
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: var(--space-3);
+  border: var(--stroke-structural) solid var(--brutalist-ink) !important;
+  background: var(--brutalist-index);
+  color: #151515;
+  box-shadow: var(--shadow-control);
+  font: 800 0.7rem/1 var(--codeFont);
+}
+
+@keyframes brutalist-graph-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.brutalist-graph-dialog-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--stroke-structural) solid var(--brutalist-ink);
+  /* Quartz applies general graph-panel div styles after theme styles. */
+  background: #151515 !important;
+  color: #f2eee4 !important;
+}
+
+.brutalist-graph-dialog-bar p {
+  margin: 0;
+  color: #f2eee4 !important;
+  font: 800 0.68rem/1.2 var(--codeFont);
+  letter-spacing: 0.07em;
+}
+
+.brutalist-graph-dialog-bar button {
+  display: inline-grid;
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: var(--space-3);
+  place-items: center;
+  border: var(--stroke-structural) solid var(--brutalist-paper) !important;
+  background: var(--brutalist-index);
+  color: #151515;
+  box-shadow: none;
+  font: 800 0.64rem/1 var(--codeFont);
+}
+
+.brutalist-image-dialog {
+  position: fixed;
+  inset: 50% auto auto 50%;
+  z-index: 72;
+  display: grid;
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  padding: var(--space-5);
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  border: var(--stroke-emphasis) solid var(--brutalist-ink);
+  background: var(--brutalist-paper);
+  box-shadow: 10px 10px 0 var(--brutalist-ink);
+}
+
+.brutalist-image-dialog > img {
+  max-width: 100%;
+  max-height: calc(100dvh - 150px);
+  margin: auto;
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  object-fit: contain;
+}
+
+.brutalist-image-dialog__close {
+  justify-self: end;
+  margin-bottom: var(--space-3);
+  padding-inline: var(--space-3);
+  border: var(--stroke-structural) solid var(--brutalist-ink) !important;
+  background: var(--brutalist-index);
+  color: #151515;
+  box-shadow: var(--shadow-control);
+}
+
+.brutalist-image-dialog__caption {
+  margin: var(--space-3) 0 0;
+  color: var(--brutalist-muted);
+  font-size: 0.78rem;
+}
+
+.brutalist-image-dialog__status,
+.brutalist-image-dialog__fallback {
+  margin: 0 auto var(--space-3);
+  text-align: center;
+}
+
+.brutalist-image-dialog__status {
+  color: var(--brutalist-muted);
+  font: 700 0.72rem/1.4 var(--codeFont);
+  letter-spacing: 0.045em;
+}
+
+.brutalist-image-dialog__fallback {
+  width: min(100%, 42rem);
+  padding: var(--space-5);
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  background: color-mix(in srgb, var(--brutalist-alert) 10%, var(--brutalist-paper));
+  color: var(--brutalist-ink);
+}
+
+:root[data-overlay="navigation"] .brutalist-shell-control[data-brutalist-action="navigation"],
+:root[data-overlay="outline"] .brutalist-shell-control[data-brutalist-action="outline"],
+:root[data-reading-mode="focused"] .brutalist-shell-control[data-brutalist-action="focus"] {
+  background: var(--brutalist-index);
+  color: #151515;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

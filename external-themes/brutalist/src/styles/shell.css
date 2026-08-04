@@ -1,0 +1,357 @@
+.brutalist-frame-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: var(--shell-header-height);
+  overflow: clip;
+  border-bottom: var(--stroke-emphasis) solid var(--brutalist-ink);
+  /* A reading header is a foreground plane, not a translucent ornament.
+     Opacity here lets large headings ghost through the controls while
+     scrolling, which erodes both reading focus and control legibility. */
+  background: var(--brutalist-panel);
+}
+
+.brutalist-masthead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 64px;
+  align-items: stretch;
+  height: var(--shell-header-height);
+}
+
+.brutalist-masthead > * {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.brutalist-wordmark {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: var(--space-2) var(--space-5);
+  font-family: var(--headerFont);
+  font-size: clamp(1.18rem, 0.82rem + 1.55vw, 2.7rem);
+  font-weight: 900;
+  letter-spacing: -0.055em;
+  line-height: 0.9;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+  /* The persistent masthead is redrawn as Quartz swaps page shells. Keep the
+     mark in its own paint context and avoid stacking its clipping region with
+     the header's clip; that combination can flash a partial glyph run. */
+  isolation: isolate;
+  transform: translateZ(0);
+}
+
+.brutalist-wordmark__long {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.brutalist-wordmark__short {
+  display: none;
+}
+
+.brutalist-reading-context {
+  display: none;
+  min-width: 0;
+}
+
+.brutalist-edition {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border-left: var(--stroke-structural) solid var(--brutalist-ink);
+  color: var(--brutalist-muted);
+  font: 700 0.67rem/1.2 var(--codeFont);
+  letter-spacing: 0.08em;
+}
+
+.brutalist-shell-controls,
+.brutalist-rail-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.brutalist-shell-control {
+  display: inline-grid;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  place-items: center;
+  border: 0 !important;
+  border-left: var(--stroke-structural) solid var(--brutalist-ink) !important;
+  background: transparent;
+  box-shadow: none;
+  color: var(--brutalist-ink);
+  font: 800 0.64rem/1 var(--codeFont);
+  letter-spacing: 0.04em;
+}
+
+.brutalist-shell-control:hover,
+.brutalist-shell-control[aria-expanded="true"] {
+  translate: none;
+  background: var(--brutalist-index);
+  color: #151515;
+}
+
+/* The sticky masthead deliberately clips its contents to avoid a route-swap
+   paint leak. Put keyboard focus inside each target so the shared 4px focus
+   ring remains completely visible instead of losing its top and bottom edge
+   at the header boundary. */
+.brutalist-frame-header :where(a, button):focus-visible {
+  position: relative;
+  z-index: 1;
+  outline-offset: -5px;
+}
+
+.brutalist-registration {
+  width: 64px;
+  margin: 0 !important;
+  border-left: var(--stroke-structural) solid var(--brutalist-ink);
+  object-fit: cover;
+}
+
+.brutalist-poster-frame,
+.brutalist-editorial-frame {
+  display: grid;
+  grid-template-columns: var(--shell-left-track) minmax(0, 1fr) var(--shell-right-track);
+  min-height: calc(100vh - var(--shell-header-height));
+  border-bottom: var(--stroke-emphasis) solid var(--brutalist-ink);
+}
+
+/* The poster frame contains the masthead as its first child (unlike the
+   editorial frame). Give every direct child an explicit grid area: implicit
+   grid placement would move the stage into the third column when a rail is
+   collapsed, leaving the homepage blank and horizontally scrollable. */
+.brutalist-poster-frame {
+  grid-template-areas:
+    'masthead masthead masthead'
+    'navigation stage utility';
+  grid-template-rows: auto minmax(calc(100vh - var(--shell-header-height)), 1fr);
+}
+
+.brutalist-poster-frame > .brutalist-frame-header {
+  grid-area: masthead;
+  min-width: 0;
+}
+
+.brutalist-poster-tools {
+  grid-area: navigation;
+}
+
+.brutalist-poster-stage {
+  grid-area: stage;
+}
+
+.brutalist-poster-utility {
+  grid-area: utility;
+}
+
+.brutalist-editorial-index {
+  grid-column: 1;
+}
+
+.brutalist-editorial-frame > .brutalist-main {
+  grid-column: 2;
+}
+
+.brutalist-editorial-tools {
+  grid-column: 3;
+}
+
+.brutalist-tool-rail {
+  position: relative;
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--brutalist-panel);
+}
+
+#quartz-body .brutalist-tool-rail {
+  height: auto;
+}
+
+.brutalist-poster-tools,
+.brutalist-editorial-index {
+  border-right: var(--stroke-emphasis) solid var(--brutalist-ink);
+}
+
+.brutalist-poster-utility,
+.brutalist-editorial-tools {
+  border-left: var(--stroke-emphasis) solid var(--brutalist-ink);
+}
+
+.brutalist-rail-content {
+  min-width: 0;
+}
+
+.brutalist-poster-stage {
+  position: relative;
+  min-width: 0;
+  padding: clamp(var(--space-6), 5vw, var(--space-8));
+  background: var(--brutalist-paper);
+}
+
+.brutalist-issue-number {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  z-index: 0;
+  color: color-mix(in srgb, var(--brutalist-signal) 72%, transparent);
+  font-family: var(--headerFont);
+  font-size: clamp(7rem, 18vw, 22rem);
+  font-weight: 900;
+  letter-spacing: -0.12em;
+  line-height: 0.72;
+  pointer-events: none;
+}
+
+.brutalist-poster-stage .brutalist-main {
+  position: relative;
+  z-index: 1;
+}
+
+.brutalist-poster-stage article > h1:first-child,
+.brutalist-poster-stage .article-title {
+  max-width: 12ch;
+  margin: 0 0 var(--space-7);
+  font-size: clamp(3.1rem, 7vw, 8.4rem);
+  letter-spacing: -0.07em;
+  line-height: 0.87;
+  text-transform: uppercase;
+}
+
+.brutalist-editorial-frame > .brutalist-main {
+  min-width: 0;
+  padding: clamp(var(--space-6), 5vw, 96px) clamp(var(--space-4), 5vw, 88px) clamp(var(--space-7), 7vw, 112px);
+  background: var(--brutalist-panel);
+}
+
+.brutalist-minimal-frame {
+  display: grid;
+  min-height: 70vh;
+  place-items: center;
+  padding: var(--space-7) var(--space-5);
+  background: var(--brutalist-signal);
+  color: #151515;
+}
+
+.brutalist-minimal-frame .brutalist-main {
+  width: min(900px, 100%);
+  padding: clamp(var(--space-5), 6vw, var(--space-8));
+  border: var(--stroke-emphasis) solid #151515;
+  background: #f8f4eb;
+  box-shadow: 12px 12px 0 #151515;
+  color: #151515;
+}
+
+.brutalist-frame-footer {
+  background: var(--brutalist-ink);
+  color: var(--brutalist-paper);
+}
+
+.brutalist-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  font: 700 0.68rem/1.35 var(--codeFont);
+  letter-spacing: 0.04em;
+}
+
+.brutalist-reading-progress {
+  --brutalist-progress: 0%;
+  position: fixed;
+  inset: 0 auto auto 0;
+  z-index: 100;
+  width: var(--brutalist-progress);
+  height: 5px;
+  background: var(--brutalist-signal);
+  pointer-events: none;
+  transition: width 100ms linear;
+}
+
+:root[data-left-rail="hidden"] {
+  --shell-left-track: 0px;
+}
+
+:root[data-right-rail="hidden"] {
+  --shell-right-track: 0px;
+}
+
+:root[data-reading-mode="focused"] {
+  --shell-left-track: 0px;
+  --shell-right-track: 0px;
+  --shell-header-height: 48px;
+}
+
+:root[data-reading-mode="focused"] .brutalist-wordmark {
+  padding-inline: var(--space-3);
+  font-size: clamp(0.85rem, 2.9vw, 1.05rem);
+}
+
+:root[data-reading-mode="focused"] .brutalist-masthead {
+  grid-template-columns: minmax(9rem, 18rem) minmax(0, 1fr) auto;
+}
+
+:root[data-reading-mode="focused"] .brutalist-reading-context {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-inline: var(--space-4);
+  border-left: var(--stroke-structural) solid var(--brutalist-ink);
+  color: var(--brutalist-muted);
+  font: 700 0.67rem/1.2 var(--codeFont);
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-reading-mode="focused"] .brutalist-edition,
+:root[data-reading-mode="focused"] .brutalist-registration,
+:root[data-reading-mode="focused"] .brutalist-shell-control[data-brutalist-action="search"],
+:root[data-reading-mode="focused"] .brutalist-shell-control[data-brutalist-action="navigation"] {
+  display: none;
+}
+
+:root[data-reading-mode="focused"] .brutalist-poster-tools,
+:root[data-reading-mode="focused"] .brutalist-editorial-index,
+:root[data-reading-mode="focused"] .brutalist-poster-utility,
+:root[data-reading-mode="focused"] .brutalist-editorial-tools {
+  display: block;
+  padding: 0;
+  overflow: clip;
+  visibility: hidden;
+  pointer-events: none;
+  border: 0;
+}
+
+:root[data-reading-mode="focused"][data-overlay="navigation"] .brutalist-poster-tools,
+:root[data-reading-mode="focused"][data-overlay="navigation"] .brutalist-editorial-index,
+:root[data-reading-mode="focused"][data-overlay="outline"] .brutalist-poster-utility,
+:root[data-reading-mode="focused"][data-overlay="outline"] .brutalist-editorial-tools {
+  position: fixed;
+  inset: var(--shell-header-height) auto 0 0;
+  z-index: 60;
+  width: min(360px, 88vw);
+  padding: var(--space-4);
+  overflow: auto;
+  visibility: visible;
+  pointer-events: auto;
+  border-right: var(--stroke-emphasis) solid var(--brutalist-ink);
+  background: var(--brutalist-panel);
+  box-shadow: 8px 0 0 var(--brutalist-ink);
+}
+
+:root[data-reading-mode="focused"][data-overlay="outline"] .brutalist-poster-utility,
+:root[data-reading-mode="focused"][data-overlay="outline"] .brutalist-editorial-tools {
+  inset: var(--shell-header-height) 0 0 auto;
+  border: 0;
+  border-left: var(--stroke-emphasis) solid var(--brutalist-ink);
+  box-shadow: -8px 0 0 var(--brutalist-ink);
+}

@@ -1,0 +1,152 @@
+:root {
+  color-scheme: light;
+  --brutalist-paper: #f0ece2;
+  --brutalist-panel: #f8f4eb;
+  --brutalist-panel-quiet: #e8e2d7;
+  --brutalist-ink: #151515;
+  --brutalist-signal: #ff4b17;
+  --brutalist-index: #ffe600;
+  --brutalist-focus: #0067ff;
+  --brutalist-alert: #ff2e68;
+  --brutalist-muted: #67645e;
+  --stroke-subtle: 1px;
+  --stroke-structural: 2px;
+  --stroke-emphasis: 4px;
+  --shadow-control: 3px 3px 0 var(--brutalist-ink);
+  --shadow-feature: 7px 7px 0 var(--brutalist-ink);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 72px;
+  --rail-compact: 56px;
+  --rail-expanded: 335px;
+  --rail-utility: 232px;
+  --article-measure: 76ch;
+  --shell-header-height: 68px;
+  --shell-left-track: var(--rail-expanded);
+  --shell-right-track: var(--rail-utility);
+  --light: var(--brutalist-paper);
+  --lightgray: #d8d2c6;
+  --gray: var(--brutalist-muted);
+  --darkgray: var(--brutalist-ink);
+  --dark: var(--brutalist-ink);
+  --secondary: var(--brutalist-signal);
+  --tertiary: var(--brutalist-focus);
+  --highlight: color-mix(in srgb, var(--brutalist-index) 55%, transparent);
+}
+
+:root[saved-theme="dark"] {
+  color-scheme: dark;
+  --brutalist-paper: #151515;
+  --brutalist-panel: #1e1e1c;
+  --brutalist-panel-quiet: #292925;
+  --brutalist-ink: #f2eee4;
+  --brutalist-signal: #ff5a1f;
+  --brutalist-index: #d8ff00;
+  --brutalist-focus: #80adff;
+  --brutalist-alert: #ff5b93;
+  --brutalist-muted: #b6b0a6;
+  --light: var(--brutalist-paper);
+  --lightgray: #343434;
+  --gray: var(--brutalist-muted);
+  --darkgray: var(--brutalist-ink);
+  --dark: var(--brutalist-ink);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  border-radius: 0 !important;
+}
+
+html {
+  /* Quartz's base `100vw` includes a desktop scrollbar and can create a
+     phantom 15px horizontal offset on narrow reading pages. */
+  width: 100%;
+  font-size: 14px;
+  overflow-x: clip;
+  background: var(--brutalist-paper);
+  color: var(--brutalist-ink);
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+body {
+  margin: 0;
+  min-width: 0;
+  background:
+    linear-gradient(color-mix(in srgb, var(--brutalist-ink) 22%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--brutalist-ink) 22%, transparent) 1px, transparent 1px),
+    var(--brutalist-paper);
+  background-size: 64px 64px;
+  color: var(--brutalist-ink);
+  font-size: 1rem;
+  line-height: 1.72;
+}
+
+#quartz-root,
+#quartz-body {
+  max-width: none;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  background: var(--brutalist-index);
+  color: #151515;
+}
+
+:where(a, button, input, summary, [tabindex]):focus-visible {
+  outline: 4px solid var(--brutalist-focus) !important;
+  outline-offset: 3px;
+}
+
+button:not(.brutalist-toc-branch-toggle),
+input,
+select {
+  min-height: 44px;
+  border: var(--stroke-structural) solid var(--brutalist-ink) !important;
+  background: var(--brutalist-panel);
+  color: var(--brutalist-ink);
+  font: 700 0.78rem/1.1 var(--codeFont);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  translate: 1px 1px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.brutalist-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -1,0 +1,444 @@
+@media (min-width: 1280px) {
+  .brutalist-editorial-index,
+  .brutalist-editorial-tools,
+  .brutalist-poster-tools,
+  .brutalist-poster-utility {
+    position: sticky;
+    top: var(--shell-header-height);
+    align-self: start;
+    max-height: calc(100vh - var(--shell-header-height));
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* Quartz reveals a deeply nested active Explorer item with scrollIntoView.
+     The desktop rail used to be the nearest scroll owner, so entering a deep
+     note could move the whole utility stack (NAV, Search and theme toggle)
+     underneath the masthead. Keep that stable shell fixed; only the tree is
+     allowed to follow its active row. */
+  :root[data-reading-mode="standard"][data-left-rail="expanded"] :is(.brutalist-editorial-index, .brutalist-poster-tools) {
+    overflow: hidden;
+  }
+
+  :root[data-reading-mode="standard"][data-left-rail="expanded"] :is(.brutalist-editorial-index, .brutalist-poster-tools) .brutalist-rail-content {
+    display: flex;
+    flex-direction: column;
+    block-size: calc(100dvh - var(--shell-header-height) - var(--space-4) * 2);
+    min-block-size: 0;
+  }
+
+  :root[data-reading-mode="standard"][data-left-rail="expanded"] .brutalist-tool-rail .explorer {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  :root[data-reading-mode="standard"][data-left-rail="expanded"] .brutalist-tool-rail .explorer-content {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 1279px) {
+  :root {
+    --shell-left-track: 0px;
+    --shell-right-track: 0px;
+  }
+
+  .brutalist-edition {
+    display: none;
+  }
+
+  .brutalist-shell-control[data-brutalist-action="navigation"] {
+    display: grid;
+  }
+
+  .brutalist-editorial-index,
+  .brutalist-poster-tools {
+    display: none;
+  }
+
+  .brutalist-editorial-tools,
+  .brutalist-poster-utility {
+    display: none;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-editorial-index,
+  :root[data-overlay="navigation"] .brutalist-poster-tools {
+    position: fixed;
+    inset: var(--shell-header-height) auto 0 0;
+    z-index: 60;
+    display: block;
+    width: min(360px, 88vw);
+    max-height: none;
+    padding: var(--space-4);
+    overflow: auto;
+    visibility: visible;
+    pointer-events: auto;
+    border-right: var(--stroke-emphasis) solid var(--brutalist-ink);
+    background: var(--brutalist-panel);
+    box-shadow: 8px 0 0 var(--brutalist-ink);
+  }
+
+  :root[data-overlay="navigation"] .brutalist-editorial-index .brutalist-rail-content > *,
+  :root[data-overlay="navigation"] .brutalist-poster-tools .brutalist-rail-content > * {
+    display: block;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-editorial-index .brutalist-index-label,
+  :root[data-overlay="navigation"] .brutalist-poster-tools .brutalist-index-label {
+    display: none !important;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-editorial-index .brutalist-rail-content > .flex-component,
+  :root[data-overlay="navigation"] .brutalist-poster-tools .brutalist-rail-content > .flex-component {
+    display: grid !important;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-editorial-index .brutalist-navigation-controls,
+  :root[data-overlay="navigation"] .brutalist-poster-tools .brutalist-navigation-controls {
+    display: flex;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-navigation-controls .brutalist-shell-control[data-brutalist-action="navigation"] {
+    display: none;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-rail-controls .brutalist-shell-control[data-brutalist-action="close-navigation"] {
+    display: grid;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-tool-rail .mobile-explorer {
+    display: none !important;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-tool-rail .explorer-content {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  :root[data-overlay="navigation"] .brutalist-tool-rail .explorer-ul {
+    width: auto !important;
+    max-height: min(58dvh, 640px);
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
+  :root[data-overlay="outline"] .brutalist-editorial-tools,
+  :root[data-overlay="outline"] .brutalist-poster-utility {
+    position: fixed;
+    inset: var(--shell-header-height) 0 0 auto;
+    z-index: 60;
+    display: grid;
+    grid-template-rows: auto auto auto;
+    align-content: start;
+    gap: 12px;
+    width: min(400px, 92vw);
+    max-height: none;
+    padding: 16px;
+    overflow: hidden;
+    visibility: visible;
+    pointer-events: auto;
+    border-left: var(--stroke-emphasis) solid var(--brutalist-ink);
+    background: var(--brutalist-panel);
+    box-shadow: -8px 0 0 var(--brutalist-ink);
+  }
+
+  :root[data-overlay="outline"] .brutalist-rail-controls .brutalist-shell-control[data-brutalist-action="outline"] {
+    display: none;
+  }
+
+  :root[data-overlay="outline"] .brutalist-rail-controls .brutalist-shell-control[data-brutalist-action="close-outline"] {
+    display: grid;
+  }
+
+  :root[data-overlay="outline"] :is(.brutalist-editorial-tools, .brutalist-poster-utility) .brutalist-rail-content {
+    display: contents;
+  }
+
+  :root[data-overlay="outline"] .brutalist-outline-heading__title {
+    font-size: 1.8rem;
+  }
+
+  :root[data-overlay="outline"] .brutalist-tool-rail .graph-outer {
+    height: clamp(220px, 30dvh, 280px);
+    min-height: 220px;
+  }
+
+  :root[data-overlay="outline"] .brutalist-tool-rail .toc-content {
+    height: auto;
+    max-height: min(40dvh, 360px);
+  }
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --shell-left-track: 0px;
+  }
+
+  .brutalist-shell-control[data-brutalist-action="navigation"] {
+    display: grid;
+  }
+
+  .brutalist-editorial-index,
+  .brutalist-poster-tools {
+    display: none;
+  }
+
+  .brutalist-editorial-tools,
+  .brutalist-poster-utility {
+    display: block;
+    padding: 0;
+    overflow: clip;
+    visibility: hidden;
+    pointer-events: none;
+    border: 0;
+  }
+
+  .brutalist-editorial-frame > .brutalist-main,
+  .brutalist-poster-stage {
+    padding-inline: clamp(var(--space-5), 6vw, var(--space-8));
+  }
+}
+
+@media (max-width: 759px) {
+  :root {
+    --shell-header-height: 60px;
+  }
+
+  body {
+    background-size: 40px 40px;
+  }
+
+  .brutalist-masthead {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  /* In focused reading, reserve a deliberate, bounded slot for the article
+     title instead of letting the publication wordmark consume the whole bar.
+     The running title then remains a useful orientation cue on a phone. */
+  :root[data-reading-mode="focused"] .brutalist-masthead {
+    grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr) auto;
+  }
+
+  :root[data-reading-mode="focused"] .brutalist-reading-context {
+    padding-inline: var(--space-2);
+    font-size: 0.58rem;
+    letter-spacing: 0.02em;
+  }
+
+  :root[data-reading-mode="focused"] .brutalist-wordmark {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  :root[data-reading-mode="focused"] .brutalist-wordmark__long {
+    display: none;
+  }
+
+  :root[data-reading-mode="focused"] .brutalist-wordmark__short {
+    display: block;
+    font: 900 0.72rem/1 var(--headerFont);
+    letter-spacing: -0.06em;
+  }
+
+  .brutalist-wordmark {
+    padding-inline: var(--space-3);
+    font-size: clamp(0.78rem, 3.6vw, 0.96rem);
+    letter-spacing: -0.04em;
+  }
+
+  .brutalist-registration {
+    display: none;
+  }
+
+  .brutalist-shell-controls {
+    overflow: hidden;
+  }
+
+  .brutalist-shell-control {
+    min-width: 44px;
+    padding: 0 var(--space-2);
+    font-size: 0.55rem;
+  }
+
+  .brutalist-masthead .brutalist-shell-control > [data-mobile-label] {
+    font-size: 0;
+  }
+
+  .brutalist-masthead .brutalist-shell-control > [data-mobile-label]::after {
+    content: attr(data-mobile-label);
+    font: 800 0.55rem/1 var(--codeFont);
+  }
+
+  .brutalist-editorial-frame,
+  .brutalist-poster-frame {
+    display: block;
+    min-height: calc(100vh - var(--shell-header-height));
+  }
+
+  .brutalist-editorial-index,
+  .brutalist-poster-tools,
+  .brutalist-editorial-tools,
+  .brutalist-poster-utility {
+    display: none;
+  }
+
+  :root[data-reading-mode="focused"] .brutalist-editorial-index,
+  :root[data-reading-mode="focused"] .brutalist-poster-tools,
+  :root[data-reading-mode="focused"] .brutalist-editorial-tools,
+  :root[data-reading-mode="focused"] .brutalist-poster-utility {
+    display: none;
+  }
+
+  /* This block deliberately follows the phone's hidden-rail baseline above.
+     A drawer is an exception to that baseline: after its state is active it
+     must win over both the standard and focused reading declarations. */
+  :root[data-overlay="navigation"] .brutalist-editorial-index,
+  :root[data-overlay="navigation"] .brutalist-poster-tools {
+    position: fixed;
+    inset: var(--shell-header-height) auto 0 0;
+    z-index: 60;
+    display: block;
+    width: min(360px, 88vw);
+    max-height: none;
+    padding: var(--space-4);
+    overflow: auto;
+    visibility: visible;
+    pointer-events: auto;
+    border-right: var(--stroke-emphasis) solid var(--brutalist-ink);
+    background: var(--brutalist-panel);
+    box-shadow: 8px 0 0 var(--brutalist-ink);
+  }
+
+  :root[data-overlay="outline"] .brutalist-editorial-tools,
+  :root[data-overlay="outline"] .brutalist-poster-utility {
+    position: fixed;
+    inset: var(--shell-header-height) 0 0 auto;
+    z-index: 60;
+    display: grid;
+    grid-template-rows: auto auto auto;
+    align-content: start;
+    gap: 12px;
+    width: min(400px, 92vw);
+    max-height: none;
+    padding: 16px;
+    overflow: hidden;
+    visibility: visible;
+    pointer-events: auto;
+    border: 0;
+    border-left: var(--stroke-emphasis) solid var(--brutalist-ink);
+    background: var(--brutalist-panel);
+    box-shadow: -8px 0 0 var(--brutalist-ink);
+  }
+
+  .brutalist-editorial-frame > .brutalist-main,
+  .brutalist-poster-stage {
+    padding: var(--space-6) var(--space-4) var(--space-7);
+  }
+
+  .brutalist-issue-number {
+    position: static;
+    margin-bottom: var(--space-4);
+    font-size: 6.5rem;
+    line-height: 0.76;
+  }
+
+  .brutalist-poster-stage article > h1:first-child,
+  .brutalist-poster-stage .article-title {
+    max-width: 100%;
+    font-size: clamp(2.6rem, 14vw, 4.8rem);
+  }
+
+  .brutalist-main .article-title {
+    /* Keep a long CJK title emphatic without forcing single characters such
+       as “部 / 署” onto separate display lines. */
+    font-size: clamp(2rem, 8.8vw, 2.75rem);
+    line-height: 1;
+    text-wrap: pretty;
+  }
+
+  .brutalist-before-body .tags {
+    display: flex;
+    margin: var(--space-2) 0 0;
+  }
+
+  .brutalist-main h2 {
+    font-size: 1.58rem;
+  }
+
+  .brutalist-main :where(blockquote, .callout) {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .search-container {
+    inset: 0 !important;
+    width: 100vw !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: 100dvh !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    transform: none;
+  }
+
+  .global-graph-outer {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    border: 0;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .brutalist-footer {
+    display: grid;
+  }
+}
+
+@media (max-width: 479px) {
+  :root[data-overlay="outline"] .brutalist-tool-rail .toc a[aria-current="location"]::after {
+    display: none;
+  }
+
+  :root[data-overlay="outline"] .brutalist-tool-rail .toc-content > li.brutalist-toc-parent > a,
+  :root[data-overlay="outline"] .brutalist-tool-rail .toc-content > li.brutalist-toc-leaf > a,
+  :root[data-overlay="outline"] .brutalist-tool-rail .toc-content > li.brutalist-toc-child > a {
+    padding-right: 10px;
+  }
+}
+
+@media (max-width: 359px) {
+  .brutalist-wordmark {
+    font-size: 0.61rem;
+    letter-spacing: -0.055em;
+  }
+}
+
+@media print {
+  .brutalist-frame-header,
+  .brutalist-editorial-index,
+  .brutalist-editorial-tools,
+  .brutalist-frame-footer,
+  .brutalist-reading-progress {
+    display: none !important;
+  }
+
+  .brutalist-editorial-frame {
+    display: block;
+    border: 0;
+  }
+
+  .brutalist-editorial-frame > .brutalist-main {
+    padding: 0;
+  }
+}

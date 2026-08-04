@@ -1,0 +1,552 @@
+.brutalist-main {
+  min-width: 0;
+}
+
+.brutalist-before-body,
+.brutalist-main article,
+.brutalist-after-body {
+  width: min(var(--article-measure), 100%);
+  margin-inline: auto;
+}
+
+.brutalist-before-body {
+  container-type: inline-size;
+  container-name: article-header;
+}
+
+.brutalist-main > article h1:first-of-type {
+  display: none;
+}
+
+.brutalist-main .article-title {
+  max-width: 100%;
+  margin: 0.22em 0 0.28em;
+  color: var(--brutalist-ink);
+  font-size: clamp(2.75rem, 8cqi, 5.5rem);
+  font-weight: 900;
+  letter-spacing: -0.057em;
+  line-height: 0.96;
+  line-break: strict;
+  overflow-wrap: normal;
+  text-wrap: balance;
+  word-break: normal;
+  /* Chrome's phrase-aware CJK breaking keeps terms such as “部署” intact.
+     Older engines keep the conservative normal-breaking fallback above. */
+  word-break: auto-phrase;
+}
+
+.brutalist-main .article-title .brutalist-title-phrase {
+  white-space: nowrap;
+}
+
+.brutalist-before-body .breadcrumb-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0 0 var(--space-2);
+  color: var(--brutalist-muted);
+  font: 700 0.68rem/1.35 var(--codeFont);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.brutalist-before-body .breadcrumb-element {
+  display: flex;
+  align-items: center;
+}
+
+.brutalist-before-body .breadcrumb-element:last-child,
+.brutalist-before-body .breadcrumb-element:nth-last-child(2) > p {
+  display: none;
+}
+
+.brutalist-before-body .breadcrumb-element a {
+  background: transparent;
+  color: inherit;
+}
+
+.brutalist-before-body .breadcrumb-element a:hover {
+  color: #151515;
+}
+
+.brutalist-before-body .content-meta,
+.brutalist-before-body .tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--brutalist-muted);
+  font: 700 0.68rem/1.4 var(--codeFont);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.brutalist-before-body .tags {
+  margin-left: var(--space-2);
+}
+
+.brutalist-before-body .tags a {
+  padding: 2px 5px;
+  border: var(--stroke-subtle) solid color-mix(in srgb, var(--brutalist-ink) 54%, transparent);
+  text-decoration: none;
+}
+
+.brutalist-before-body .tags a:hover {
+  border-color: var(--brutalist-ink);
+}
+
+.brutalist-main article {
+  margin-top: var(--space-6);
+}
+
+.brutalist-main article > :first-child {
+  margin-top: 0;
+}
+
+.brutalist-main article :where(p, li) {
+  max-width: 72ch;
+}
+
+.brutalist-main article p {
+  margin-block: 0 1.22em;
+}
+
+.brutalist-main article :where(ul, ol) {
+  padding-left: 1.35em;
+}
+
+.brutalist-main :where(h2, h3, h4) {
+  scroll-margin-top: calc(var(--shell-header-height) + var(--space-5));
+  color: var(--brutalist-ink);
+  font-weight: 900;
+  letter-spacing: -0.026em;
+  line-height: 1.08;
+}
+
+.brutalist-main h2 {
+  position: relative;
+  margin-top: 2.45em;
+  padding-top: var(--space-3);
+  border-top: var(--stroke-emphasis) solid var(--brutalist-ink);
+  font-size: clamp(1.55rem, 3.4cqi, 2.65rem);
+}
+
+.brutalist-main h2::before {
+  display: inline-block;
+  width: 0.76em;
+  height: 0.76em;
+  margin-right: 0.42em;
+  background: var(--brutalist-index);
+  content: '';
+}
+
+.brutalist-main h3 {
+  margin-top: 2.1em;
+  font-size: clamp(1.22rem, 2.4cqi, 1.7rem);
+}
+
+.brutalist-main h4 {
+  margin-top: 1.9em;
+  font-size: 1.08rem;
+}
+
+.brutalist-main :where(blockquote, .callout) {
+  margin: var(--space-6) 0;
+  padding: var(--space-4) var(--space-5);
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  border-left: var(--stroke-emphasis) solid var(--brutalist-signal);
+  background: color-mix(in srgb, var(--brutalist-panel-quiet) 76%, transparent);
+}
+
+.brutalist-main blockquote > :last-child,
+.brutalist-main .callout-content > :last-child {
+  margin-bottom: 0;
+}
+
+.brutalist-main .callout[data-callout="warning"] {
+  border-left-color: var(--brutalist-index);
+}
+
+.brutalist-main .callout[data-callout="danger"],
+.brutalist-main .callout[data-callout="failure"] {
+  border-left-color: var(--brutalist-alert);
+}
+
+.brutalist-main :where(pre, table, .mermaid) {
+  max-width: 100%;
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  background: var(--brutalist-panel);
+}
+
+.brutalist-main pre {
+  padding: var(--space-4);
+  overflow: auto;
+  box-shadow: var(--shadow-control);
+}
+
+.brutalist-main code {
+  font-size: 0.86em;
+}
+
+.brutalist-main :not(pre) > code {
+  padding: 0.1em 0.28em;
+  border: var(--stroke-subtle) solid color-mix(in srgb, var(--brutalist-ink) 54%, transparent);
+  background: var(--brutalist-panel-quiet);
+}
+
+.brutalist-main .table-container {
+  max-width: 100%;
+  width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-color: var(--brutalist-signal) var(--brutalist-panel-quiet);
+}
+
+.brutalist-main table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.brutalist-main :where(th, td) {
+  min-width: 8rem;
+  padding: var(--space-2) var(--space-3);
+  border: var(--stroke-subtle) solid var(--brutalist-ink);
+}
+
+.brutalist-main th {
+  background: var(--brutalist-ink);
+  color: var(--brutalist-paper);
+  font: 800 0.72rem/1.3 var(--codeFont);
+  text-align: left;
+}
+
+/* This hint is created only when the table truly overflows. It prevents a
+   touch reader from mistaking the cropped right columns for absent data,
+   while the focusable region also gives keyboard readers the same access. */
+.brutalist-scroll-hint {
+  margin: var(--space-2) 0 var(--space-5);
+  color: var(--brutalist-muted);
+  font: 800 0.62rem/1.2 var(--codeFont);
+  letter-spacing: 0.08em;
+  text-align: right;
+}
+
+.brutalist-main .callout.is-collapsible > .callout-title {
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.brutalist-main .callout.is-collapsible > .callout-title:hover {
+  color: var(--brutalist-ink);
+  background: color-mix(in srgb, var(--brutalist-index) 28%, transparent);
+}
+
+.brutalist-main :where(figure, .image-embed) {
+  width: min(100%, 92ch);
+  margin: var(--space-6) auto;
+}
+
+.brutalist-main :where(img, video) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+}
+
+/* Article images open a labelled full-size viewer. The cursor, focus ring and
+   restrained hover offset make that affordance visible without adding noisy
+   permanent controls to every piece of visual content. */
+.brutalist-main article img[data-brutalist-image-preview="true"] {
+  cursor: zoom-in;
+}
+
+.brutalist-main article img[data-brutalist-image-preview="true"]:hover {
+  outline: var(--stroke-structural) solid var(--brutalist-signal);
+  outline-offset: var(--space-1);
+}
+
+.brutalist-main article img[data-brutalist-image-failed="true"] {
+  display: none;
+}
+
+.brutalist-image-fallback {
+  display: grid;
+  gap: var(--space-2);
+  width: min(100%, 92ch);
+  min-height: 7.5rem;
+  margin: var(--space-6) auto;
+  padding: var(--space-4) var(--space-5);
+  align-content: center;
+  border: var(--stroke-structural) solid var(--brutalist-ink);
+  border-left: var(--stroke-emphasis) solid var(--brutalist-alert);
+  background: var(--brutalist-panel-quiet);
+  color: var(--brutalist-ink);
+}
+
+.brutalist-image-fallback__label {
+  color: var(--brutalist-ink);
+  font: 800 0.68rem/1.2 var(--codeFont);
+  letter-spacing: 0.08em;
+}
+
+.brutalist-image-fallback__detail {
+  margin: 0;
+  font: 700 0.9rem/1.45 var(--bodyFont);
+}
+
+.brutalist-main img[alt="Mermaid diagram"] {
+  padding: var(--space-3);
+  background: #f8f4eb;
+  box-shadow: var(--shadow-control);
+}
+
+.brutalist-main figcaption {
+  margin-top: var(--space-2);
+  color: var(--brutalist-muted);
+  font: 600 0.72rem/1.45 var(--bodyFont);
+}
+
+/* Quartz renders tag discovery with PageList rather than an article body.
+   It is still a content surface: give its real links a quiet, scannable
+   catalogue grammar instead of allowing the component's generic cards to
+   interrupt the publication's reading system. Folder pages use a
+   route-manifest-controlled Markdown list, so suppress only the empty
+   Quartz counter shell left behind by the compatibility patch. */
+.brutalist-main .page-listing {
+  width: min(var(--article-measure), 100%);
+  margin: var(--space-7) auto 0;
+  padding-top: var(--space-4);
+  border-top: var(--stroke-emphasis) solid var(--brutalist-ink);
+}
+
+.brutalist-main .page-listing:not(:has(.section-ul)) {
+  display: none;
+}
+
+.brutalist-main .page-listing > p:first-child {
+  width: fit-content;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border: var(--stroke-subtle) solid color-mix(in srgb, var(--brutalist-ink) 56%, transparent);
+  background: var(--brutalist-panel-quiet);
+  color: var(--brutalist-muted);
+  font: 800 0.65rem/1.3 var(--codeFont);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.brutalist-main .page-listing :where(.section-ul, .section-ul ul) {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: var(--stroke-subtle) solid var(--brutalist-ink);
+}
+
+.brutalist-main .page-listing .section-li {
+  min-width: 0;
+  margin: 0;
+  border-bottom: var(--stroke-subtle) solid var(--brutalist-ink);
+  list-style: none;
+}
+
+.brutalist-main .page-listing .section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-left: var(--stroke-emphasis) solid transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.brutalist-main .page-listing .section:hover,
+.brutalist-main .page-listing .section:focus-within {
+  border-left-color: var(--brutalist-signal);
+  background: color-mix(in srgb, var(--brutalist-index) 20%, transparent);
+}
+
+.brutalist-main .page-listing .section .meta:empty {
+  display: none;
+}
+
+.brutalist-main .page-listing .section .desc h3 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--brutalist-ink);
+  font-size: clamp(1.08rem, 2.3cqi, 1.46rem);
+  letter-spacing: -0.026em;
+  line-height: 1.08;
+}
+
+.brutalist-main .page-listing .section .desc h3::before {
+  display: none;
+}
+
+.brutalist-main .page-listing .section .desc h3 a {
+  display: block;
+  min-height: 44px;
+  padding: var(--space-2) 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.brutalist-main .page-listing .section .desc h3 a:hover {
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 3px;
+}
+
+.brutalist-main .page-listing .section .tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.brutalist-main .page-listing .section .tags a {
+  display: grid;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  place-items: center;
+  border: var(--stroke-subtle) solid color-mix(in srgb, var(--brutalist-ink) 56%, transparent);
+  background: var(--brutalist-panel);
+  color: var(--brutalist-muted);
+  font: 800 0.62rem/1 var(--codeFont);
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.brutalist-main .page-listing .section .tags a:hover,
+.brutalist-main .page-listing .section .tags a:focus-visible {
+  border-color: var(--brutalist-ink);
+  background: var(--brutalist-ink);
+  color: var(--brutalist-paper);
+}
+
+/* Quartz's tag index repeats a tag heading and a PageList for every known
+   tag. Those headings are an index key, not article sections: keep them
+   compact so a large vocabulary remains a usable catalogue rather than a
+   stack of competing display headings. */
+body[data-slug="tags/index"] .brutalist-main > .popover-hint > div > div > h2 {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  margin: var(--space-6) 0 0;
+  padding: 0 var(--space-3);
+  border-top: var(--stroke-structural) solid var(--brutalist-ink);
+  border-left: var(--stroke-emphasis) solid var(--brutalist-signal);
+  background: var(--brutalist-panel-quiet);
+  font: 800 0.72rem/1 var(--codeFont);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+body[data-slug="tags/index"] .brutalist-main > .popover-hint > div > div > h2::before {
+  display: none;
+}
+
+body[data-slug="tags/index"] .brutalist-main > .popover-hint > div > div > h2 a {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  color: inherit;
+  text-decoration: none;
+}
+
+body[data-slug="tags/index"] .brutalist-main > .popover-hint > div > div > h2 a:hover {
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+body[data-slug="tags/index"] .brutalist-main .page-listing {
+  margin-top: var(--space-3);
+}
+
+/* The index contains each article once per tag. Keep the tag's direct route
+   as the heading link, then make its repeated local list an explicit native
+   disclosure. This shortens both visual scanning and the keyboard tab path
+   without hiding any content from readers who ask to inspect a group. */
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure {
+  display: block;
+  margin: 0;
+  border-top: var(--stroke-subtle) solid var(--brutalist-ink);
+  border-bottom: var(--stroke-subtle) solid var(--brutalist-ink);
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  cursor: pointer;
+  list-style: none;
+  color: var(--brutalist-muted);
+  font: 800 0.65rem/1 var(--codeFont);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure > summary::after {
+  flex: 0 0 auto;
+  color: var(--brutalist-ink);
+  content: '+';
+  font: 900 1.2rem/1 var(--headerFont);
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure[open] > summary {
+  background: color-mix(in srgb, var(--brutalist-index) 22%, transparent);
+  color: var(--brutalist-ink);
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure[open] > summary::after {
+  content: '−';
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure > summary:hover {
+  background: var(--brutalist-index);
+  color: #151515;
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure__count {
+  margin-left: auto;
+  color: inherit;
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure .page-listing {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border-top: 0;
+}
+
+body[data-slug="tags/index"] .brutalist-tag-index-disclosure .page-listing > p:first-child {
+  display: none;
+}
+
+.brutalist-after-body {
+  margin-top: var(--space-8);
+  padding-top: var(--space-5);
+  border-top: var(--stroke-emphasis) solid var(--brutalist-ink);
+}
+
+.brutalist-after-body .backlinks {
+  color: var(--brutalist-muted);
+}
+
+.brutalist-after-body .backlinks h3 {
+  font-size: 1rem;
+}

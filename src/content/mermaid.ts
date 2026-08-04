@@ -21,15 +21,27 @@ export function renderSafeMermaid(source: string): string | undefined {
   if (unsafeMermaidLine(source) !== undefined) return undefined;
   try {
     const rendered = renderMermaidSVG(source, {
-      bg: 'transparent',
-      fg: 'currentColor',
+      // Generated diagrams are emitted as external <img> assets. CSS custom
+      // properties and currentColor do not cross that document boundary, so
+      // give the asset its own neutral, high-contrast canvas.
+      bg: '#f8f4eb',
+      fg: '#151515',
       font: 'system-ui, sans-serif',
-      transparent: true,
+      transparent: false,
     }).replace(/^\s*@import[^\n]*(?:\n|$)/gimu, '');
     if (unsafeRenderedSvg(rendered)) return undefined;
-    return rendered.replace(
+    const annotated = rendered.replace(
       '<svg ',
-      '<svg data-pages-mermaid role="img" aria-label="Mermaid diagram" focusable="false" ',
+      // SVG is XML, unlike HTML: a bare boolean data attribute makes the
+      // generated asset invalid and Chromium renders it as a broken image.
+      '<svg data-pages-mermaid="true" role="img" aria-label="Mermaid diagram" focusable="false" ',
+    );
+    // A standalone SVG cannot inherit the host page's background. Paint an
+    // explicit neutral canvas before its chart primitives, so dark readers do
+    // not get near-black edges and labels on a dark page.
+    return annotated.replace(
+      /(<svg\b[^>]*>)/u,
+      '$1\n<rect width="100%" height="100%" fill="#f8f4eb"/>',
     );
   } catch {
     return undefined;

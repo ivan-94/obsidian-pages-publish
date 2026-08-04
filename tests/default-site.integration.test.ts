@@ -326,7 +326,8 @@ describe('built-in default site', () => {
     expect(article).toContain('<code class="language-ts">');
     expect(article).toContain('data-callout="note"');
     expect(article).toContain('Publishing note');
-    expect(article).toContain('data-pages-mermaid');
+    expect(article).toContain('data-pages-mermaid="true"');
+    expect(article).toContain('<rect width="100%" height="100%" fill="#f8f4eb"/>');
     expect(article).toContain('<svg');
   });
 
@@ -370,7 +371,8 @@ describe('built-in default site', () => {
     const article = preview.files['/notes/diagram/index.html']!;
 
     expect(article).toContain('<svg');
-    expect(article).toContain('data-pages-mermaid');
+    expect(article).toContain('data-pages-mermaid="true"');
+    expect(article).toContain('<rect width="100%" height="100%" fill="#f8f4eb"/>');
     expect(article).toContain('data-pages-mermaid-fallback');
     expect(article).not.toMatch(/href=["']javascript:/iu);
     expect(article).not.toMatch(/\son[a-z]+\s*=/iu);

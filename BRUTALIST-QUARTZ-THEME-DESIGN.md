@@ -1,6 +1,10 @@
 # Brutalist Quartz Theme UI Design
 
-> Status: implemented on 2026-08-03 in the external `@pages-publish-theme/brutalist` package; automated visual HAT passed with manual accessibility review remaining.
+> Status: baseline implemented on 2026-08-03 in the external
+> `@pages-publish-theme/brutalist` package; automated visual HAT passed with
+> manual accessibility review remaining. Production-level shell behaviour,
+> responsive allocation, overlays and visual quality gates are specified in
+> [`BRUTALIST-THEME-PRODUCTION-SPEC.md`](./BRUTALIST-THEME-PRODUCTION-SPEC.md).
 
 ## 1. Design decision
 
