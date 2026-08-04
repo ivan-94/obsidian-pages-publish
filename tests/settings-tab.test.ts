@@ -24,6 +24,7 @@ const mockedObsidian = vi.hoisted(() => {
     setText(text: string): void { this.text = text; }
   }
   const buttons: ButtonComponent[] = [];
+  const dropdowns: DropdownComponent[] = [];
   const descriptions: string[] = [];
   const notices: string[] = [];
   class ButtonComponent {
@@ -56,8 +57,42 @@ const mockedObsidian = vi.hoisted(() => {
       await this.click?.();
     }
   }
+  class DropdownComponent {
+    readonly options = new Map<string, string>();
+    value = '';
+    private change: ((value: string) => void) | undefined;
+
+    constructor() {
+      dropdowns.push(this);
+    }
+
+    addOption(value: string, label: string): this {
+      this.options.set(value, label);
+      return this;
+    }
+    setValue(value: string): this {
+      this.value = value;
+      return this;
+    }
+    onChange(change: (value: string) => void): this {
+      this.change = change;
+      return this;
+    }
+    trigger(value: string): void {
+      this.value = value;
+      this.change?.(value);
+    }
+  }
   class Setting {
-    constructor(private readonly container: ElementModel) {}
+    readonly settingEl: ElementModel;
+    readonly descEl: ElementModel;
+    readonly controlEl: ElementModel;
+
+    constructor(private readonly container: ElementModel) {
+      this.settingEl = container;
+      this.descEl = container;
+      this.controlEl = container;
+    }
     setName(): this { return this; }
     setHeading(): this { return this; }
     setDesc(value: string): this { descriptions.push(value); return this; }
@@ -75,8 +110,21 @@ const mockedObsidian = vi.hoisted(() => {
       callback(new ButtonComponent(this.container));
       return this;
     }
+    addDropdown(callback: (dropdown: DropdownComponent) => void): this {
+      callback(new DropdownComponent());
+      return this;
+    }
   }
-  return { ElementModel, ButtonComponent, Setting, buttons, descriptions, notices };
+  return {
+    ElementModel,
+    ButtonComponent,
+    DropdownComponent,
+    Setting,
+    buttons,
+    dropdowns,
+    descriptions,
+    notices,
+  };
 });
 
 vi.mock('obsidian', () => ({
@@ -104,8 +152,71 @@ import {
   settingsRemoteActionAvailability,
 } from '../src/plugin/settings-tab';
 import { openSiteConfigForRepair } from '../src/plugin/site-config-repair-view';
+import type { SiteConfigV1 } from '../src/config/site-config';
 
 describe('settings custom-domain status check', () => {
+  it('offers the reviewed built-in themes and writes one mutually exclusive theme draft', () => {
+    mockedObsidian.dropdowns.length = 0;
+    const draft: SiteConfigV1 = {
+      version: 1,
+      site: { name: 'Theme Site', homeLayout: 'latest' },
+      contentRoots: [{ path: 'Notes', publicRoot: '/notes' }],
+      assets: { exclude: [] },
+      features: { search: true, graph: true },
+      cloudflare: { projectName: 'theme-site' },
+    };
+    const tab = new PagesPublishSettingTab(
+      { app: {} } as never,
+      '/vault',
+      {} as never,
+    );
+    const controls = tab as unknown as {
+      session: {
+        update(change: (value: typeof draft) => void): {
+          status: 'dirty';
+          draft: typeof draft;
+          canSave: true;
+          revision: string;
+        };
+      };
+      renderThemeSettings(
+        container: InstanceType<typeof mockedObsidian.ElementModel>,
+        sections: Map<string, InstanceType<typeof mockedObsidian.ElementModel>>,
+        state: {
+          status: 'clean';
+          canSave: true;
+          draft: typeof draft;
+          revision: string;
+        },
+      ): void;
+    };
+    controls.session = {
+      update: (change) => {
+        change(draft);
+        return { status: 'dirty', draft, canSave: true, revision: 'revision' };
+      },
+    };
+
+    controls.renderThemeSettings(
+      new mockedObsidian.ElementModel(),
+      new Map(),
+      { status: 'clean', canSave: true, draft, revision: 'revision' },
+    );
+
+    const dropdown = mockedObsidian.dropdowns[0];
+    expect([...dropdown!.options.entries()]).toEqual([
+      ['quartz-default', 'Quartz 默认主题'],
+      ['minimal', 'Minimal'],
+      ['tokyo-night', 'Tokyo Night'],
+      ['catppuccin', 'Catppuccin'],
+      ['things', 'Things'],
+    ]);
+    dropdown!.trigger('catppuccin');
+    expect(draft).toMatchObject({
+      site: { theme: { source: 'builtin', id: 'catppuccin' } },
+    });
+  });
+
   it('reads a pathless Obsidian file selection as bounded theme archive bytes', async () => {
     const archive = Uint8Array.of(31, 139, 8, 0);
 

@@ -88,6 +88,28 @@ describe('Quartz build runner', () => {
     await expect(runner.run(readyEngine(engineDirectory), input)).resolves.toBeDefined();
   });
 
+  it('builds a curated built-in theme without using the external theme resolver', async () => {
+    const engineDirectory = await fakeEngine([
+      "const builtinConfig = await readFile(join(process.cwd(), 'quartz.config.yaml'), 'utf8')",
+      "if (!builtinConfig.includes('@quartz-themes/core') || !builtinConfig.includes('theme: minimal')) process.exit(12)",
+    ]);
+    const buildRoot = await mkdtemp(join(tmpdir(), 'pages-quartz-builds-'));
+    const runner = new QuartzBuildRunner({ rootDirectory: buildRoot });
+    const base = staging();
+    const input: Readonly<QuartzStagingCompilation> = {
+      ...base,
+      config: {
+        ...base.config,
+        site: {
+          ...base.config.site,
+          theme: { source: 'builtin', id: 'minimal' },
+        },
+      },
+    };
+
+    await expect(runner.run(readyEngine(engineDirectory), input)).resolves.toBeDefined();
+  });
+
   it.skipIf(process.platform !== 'darwin')(
     'denies Vault reads to native child processes as well as the Quartz Node process',
     async () => {

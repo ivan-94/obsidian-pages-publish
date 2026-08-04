@@ -19,8 +19,10 @@ import {
   assertThemePackageName,
   normalizeThemeOptions,
   ThemeContractError,
+  type ExternalThemeReference,
   type SiteThemeReference,
 } from '../theme/theme-contract';
+import { isBuiltinThemeId } from '../theme/builtin-theme-catalog';
 
 export interface SiteConfigV1 {
   version: 1;
@@ -905,6 +907,18 @@ function parseSiteTheme(value: unknown): SiteThemeReference | undefined {
   }
   try {
     const source = stringValue(value.source);
+    if (source === 'builtin') {
+      assertKnownThemeKeys(value, ['source', 'id']);
+      const id = requiredThemeString(value.id, 'site.theme.id');
+      if (!isBuiltinThemeId(id)) {
+        throw new SiteConfigValidationError([{
+          code: 'unknown-builtin-theme',
+          path: 'site.theme.id',
+          message: `Built-in theme ${JSON.stringify(id)} is not in the reviewed catalog.`,
+        }]);
+      }
+      return { source, id };
+    }
     if (source === 'npm') {
       assertKnownThemeKeys(
         value,
@@ -944,7 +958,7 @@ function parseSiteTheme(value: unknown): SiteThemeReference | undefined {
       {
         code: 'invalid-theme-source',
         path: 'site.theme.source',
-        message: 'site.theme.source must be npm or local.',
+        message: 'site.theme.source must be builtin, npm, or local.',
       },
     ]);
   } catch (error) {
@@ -965,6 +979,9 @@ function parseSiteTheme(value: unknown): SiteThemeReference | undefined {
 }
 
 function toRawTheme(theme: SiteThemeReference): Record<string, unknown> {
+  if (theme.source === 'builtin') {
+    return { source: theme.source, id: theme.id };
+  }
   const options = sortThemeOptions(theme.options);
   if (theme.source === 'npm') {
     return {
@@ -984,7 +1001,7 @@ function toRawTheme(theme: SiteThemeReference): Record<string, unknown> {
 }
 
 function sortThemeOptions(
-  options: SiteThemeReference['options'],
+  options: ExternalThemeReference['options'],
 ): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(options)

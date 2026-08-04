@@ -2,7 +2,7 @@ import type { ReadyQuartzEngine } from '../runtime/quartz-engine-store';
 import { QuartzBuildRunner } from '../site-builder/quartz-build-runner';
 import { bridgeAndAuditQuartzOutput } from '../site-builder/quartz-output-auditor';
 import type { QuartzStagingCompilation } from '../site-builder/quartz-staging-compiler';
-import type { SiteThemeReference, ThemeOptions } from './theme-contract';
+import type { ExternalThemeReference, ThemeOptions } from './theme-contract';
 import { themeOptionsFromSchemaDefaults } from './theme-options-schema';
 import type {
   InstalledTheme,
@@ -69,7 +69,7 @@ export function createQuartzThemeSmoke(
 function smokeReference(
   receipt: ThemeInstallReceipt,
   options: ThemeOptions,
-): SiteThemeReference {
+): ExternalThemeReference {
   return receipt.source.kind === 'npm'
     ? {
       source: 'npm',
@@ -87,7 +87,7 @@ function smokeReference(
 }
 
 function smokeStaging(
-  theme: SiteThemeReference,
+  theme: ExternalThemeReference,
 ): Readonly<QuartzStagingCompilation> {
   return {
     config: {

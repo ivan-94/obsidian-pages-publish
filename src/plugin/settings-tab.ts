@@ -32,7 +32,17 @@ import type {
 } from '../theme/theme-management';
 import { MAX_LOCAL_THEME_BYTES } from '../theme/theme-installer';
 import type { ThemeOptionSchema } from '../theme/theme-options-schema';
-import type { JsonValue, SiteThemeReference } from '../theme/theme-contract';
+import {
+  isExternalThemeReference,
+  type ExternalThemeReference,
+  type JsonValue,
+  type SiteThemeReference,
+} from '../theme/theme-contract';
+import {
+  BUILTIN_THEME_CATALOG,
+  builtinTheme,
+  isBuiltinThemeId,
+} from '../theme/builtin-theme-catalog';
 
 const PAGES_PUBLISH_VIEW_TYPE = 'pages-publish-center';
 
@@ -622,18 +632,55 @@ export class PagesPublishSettingTab extends PluginSettingTab {
     const section = new Setting(container).setName('站点主题').setHeading();
     sections.set('theme', section.settingEl);
     const reference = state.draft.site.theme;
+    const externalReference = reference !== undefined && isExternalThemeReference(reference)
+      ? reference
+      : undefined;
+
+    new Setting(container)
+      .setName('内置主题')
+      .setDesc('内置主题随受控 Quartz 环境固定安装；选择只形成草稿，保存后用于下次预览和发布。')
+      .addDropdown((dropdown) => {
+        dropdown.addOption('quartz-default', 'Quartz 默认主题');
+        for (const theme of BUILTIN_THEME_CATALOG) {
+          dropdown.addOption(theme.id, theme.displayName);
+        }
+        if (externalReference !== undefined) {
+          dropdown.addOption('external-theme', '自定义主题（当前草稿）');
+        }
+        dropdown
+          .setValue(reference?.source === 'builtin'
+            ? reference.id
+            : externalReference === undefined
+              ? 'quartz-default'
+              : 'external-theme')
+          .onChange((selected) => {
+            if (selected === 'external-theme') return;
+            if (selected !== 'quartz-default' && !isBuiltinThemeId(selected)) return;
+            this.pendingThemeCandidate = undefined;
+            this.updateDraft((draft) => {
+              if (selected === 'quartz-default') {
+                delete draft.site.theme;
+              } else {
+                draft.site.theme = { source: 'builtin', id: selected };
+              }
+            });
+            this.themePanelKey = undefined;
+            this.update();
+          });
+      });
+
     if (!this.themeManagement) {
       new Setting(container)
-        .setName('Quartz 默认主题')
-        .setDesc('当前宿主未接入外部主题管理；站点继续使用受控 Quartz 默认主题。');
+        .setName('自定义主题不可用')
+        .setDesc('当前宿主未接入外部主题管理；Quartz 默认主题和内置主题仍可使用。');
       return;
     }
 
-    const key = themeReferenceKey(reference);
+    const key = themeReferenceKey(externalReference);
     if (this.themePanelKey !== key && this.themePanelLoadingKey !== key) {
       this.themePanelLoadingKey = key;
       const manager = this.themeManagement;
-      void manager.panelState(reference).then((panel) => {
+      void manager.panelState(externalReference).then((panel) => {
         if (this.themePanelLoadingKey !== key) return;
         this.themePanelLoadingKey = undefined;
         this.themePanelKey = key;
@@ -655,7 +702,12 @@ export class PagesPublishSettingTab extends PluginSettingTab {
     }
 
     const panel = this.themePanelKey === key ? this.themePanelState : undefined;
-    if (reference === undefined) {
+    if (reference?.source === 'builtin') {
+      const current = builtinTheme(reference.id);
+      new Setting(container)
+        .setName(current.displayName)
+        .setDesc(`内置主题 · ${current.packageName}@${current.version} · 无需额外安装或执行信任`);
+    } else if (reference === undefined) {
       new Setting(container)
         .setName('当前主题')
         .setDesc('Quartz 默认主题 · 无外部包 · 永远可作为恢复路径');
@@ -678,20 +730,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
         .setDesc('正在校验固定版本、完整性、文件 inventory 和执行信任。');
     }
 
-    new Setting(container)
-      .setName('恢复默认主题')
-      .setDesc('只形成未保存草稿；保存后下次预览和发布使用 Quartz 默认主题。')
-      .addButton((button) => button
-        .setButtonText('使用 Quartz 默认主题')
-        .setDisabled(reference === undefined)
-        .onClick(() => {
-          this.pendingThemeCandidate = undefined;
-          this.updateDraft((draft) => {
-            delete draft.site.theme;
-          });
-          this.themePanelKey = undefined;
-          this.update();
-        }));
+    new Setting(container).setName('自定义主题').setHeading();
 
     let npmPackage = '';
     let npmVersion = '';
@@ -808,19 +847,19 @@ export class PagesPublishSettingTab extends PluginSettingTab {
     }
 
     const configured = panel?.configured;
-    if (reference && configured?.optionsSchema) {
+    if (externalReference && configured?.optionsSchema) {
       new Setting(container).setName('主题选项').setHeading();
       for (const [name, optionSchema] of Object.entries(
         configured.optionsSchema.properties ?? {},
       )) {
-        this.renderThemeOption(container, reference, name, optionSchema);
+        this.renderThemeOption(container, externalReference, name, optionSchema);
       }
     }
 
     if ((panel?.installed.length ?? 0) > 0) {
       new Setting(container).setName('已验证版本').setHeading();
       for (const installed of panel?.installed ?? []) {
-        const isActive = reference?.integrity === installed.integrity;
+        const isActive = externalReference?.integrity === installed.integrity;
         new Setting(container)
           .setName(`${installed.displayName} ${installed.version}`)
           .setDesc(`${installed.reference.source} · ${shortIntegrity(installed.integrity)} · ${installed.trusted ? '已信任' : '未信任'}`)
@@ -844,7 +883,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
             .setDisabled(isActive || this.themeOperation !== undefined)
             .onClick(async () => {
               try {
-                await this.themeManagement!.uninstall(installed, reference);
+                await this.themeManagement!.uninstall(installed, externalReference);
                 this.themePanelKey = undefined;
                 new Notice('未使用的主题缓存版本已卸载；Vault 内本地 .tgz 未删除。');
                 this.update();
@@ -855,7 +894,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
       }
     }
 
-    if (reference) {
+    if (externalReference) {
       new Setting(container)
         .setName('主题维护与预览')
         .setDesc('修复会重新取得同一精确工件并校验完整性；预览使用已保存配置，不会部署。')
@@ -866,7 +905,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
             const repaired = await this.runThemeOperation(
               '正在修复主题',
               async (signal) => {
-                await this.themeManagement!.repair(reference, signal);
+                await this.themeManagement!.repair(externalReference, signal);
                 return true;
               },
             );
@@ -891,7 +930,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
 
   private renderThemeOption(
     container: HTMLElement,
-    reference: SiteThemeReference,
+    reference: ExternalThemeReference,
     name: string,
     schema: ThemeOptionSchema,
   ): void {
@@ -945,7 +984,7 @@ export class PagesPublishSettingTab extends PluginSettingTab {
   private updateThemeOption(name: string, value: JsonValue): void {
     this.updateDraft((draft) => {
       const theme = draft.site.theme;
-      if (!theme) return;
+      if (!theme || !isExternalThemeReference(theme)) return;
       theme.options = { ...theme.options, [name]: value };
     });
   }

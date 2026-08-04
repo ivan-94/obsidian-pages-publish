@@ -1,10 +1,12 @@
 import { stringify } from 'yaml';
+import type { BuiltinThemeId } from '../theme/builtin-theme-catalog';
 
 export interface ControlledQuartzConfigInput {
   siteName: string;
   baseUrl: string;
   search: boolean;
   graph: boolean;
+  builtinTheme?: BuiltinThemeId;
   theme?: ControlledQuartzThemeConfig;
 }
 
@@ -37,6 +39,13 @@ export function createControlledQuartzConfig(input: ControlledQuartzConfigInput)
     code: 'SFMono-Regular, Consolas, Liberation Mono, monospace',
   };
   const plugins = [
+    ...(input.builtinTheme === undefined
+      ? []
+      : [plugin('@quartz-themes/core', true, {
+        theme: input.builtinTheme,
+        mode: 'both',
+        themeFonts: false,
+      }, 10)]),
     plugin('@quartz-community/note-properties', true, {
       includeAll: false,
       includedProperties: ['description', 'tags'],

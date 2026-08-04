@@ -66,7 +66,14 @@ async function runNpmCi(
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
       request.nodeExecutable,
-      [request.npmCliPath, 'ci', '--include=dev', '--no-audit', '--no-fund'],
+      [
+        request.npmCliPath,
+        'ci',
+        '--include=dev',
+        '--legacy-peer-deps',
+        '--no-audit',
+        '--no-fund',
+      ],
       {
         cwd: request.sourceDirectory,
         detached: true,

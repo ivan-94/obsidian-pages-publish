@@ -16,7 +16,7 @@ import { promisify } from 'node:util';
 import type { ReadyQuartzEngine } from '../runtime/quartz-engine-store';
 import { siteCanonicalOrigin } from '../site/discovery';
 import { rethrowAbort } from '../runtime/quartz-environment-error';
-import type { SiteThemeReference } from '../theme/theme-contract';
+import type { ExternalThemeReference } from '../theme/theme-contract';
 import {
   materializeQuartzThemeAdapter,
   type MaterializedQuartzTheme,
@@ -46,7 +46,7 @@ export interface QuartzRawBuildOutput {
 
 export interface QuartzThemeResolverBoundary {
   resolve(
-    reference: SiteThemeReference,
+    reference: ExternalThemeReference,
     engine: ReadyQuartzEngine,
     signal?: AbortSignal,
   ): Promise<ResolvedBuildTheme>;
@@ -92,14 +92,15 @@ export class QuartzBuildRunner {
       await prepareQuartzWorkspace(workspace, engineDirectory);
       let theme: MaterializedQuartzTheme | undefined;
       let themeStorePackageDirectory: string | undefined;
-      if (staging.config.site.theme !== undefined) {
+      const configuredTheme = staging.config.site.theme;
+      if (configuredTheme !== undefined && configuredTheme.source !== 'builtin') {
         if (this.input.themeResolver === undefined) {
           throw new QuartzBuildError(
             'The configured external theme cannot be resolved by this publication environment.',
           );
         }
         const resolvedTheme = await this.input.themeResolver.resolve(
-          staging.config.site.theme,
+          configuredTheme,
           engine,
           signal,
         );
@@ -124,6 +125,9 @@ export class QuartzBuildRunner {
           baseUrl: new URL(canonicalOrigin).host,
           search: staging.config.features.search,
           graph: staging.config.features.graph,
+          ...(configuredTheme?.source === 'builtin'
+            ? { builtinTheme: configuredTheme.id }
+            : {}),
           ...(theme === undefined ? {} : { theme: theme.config }),
         }),
         { flag: 'wx', mode: 0o600 },

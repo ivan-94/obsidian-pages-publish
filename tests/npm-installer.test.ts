@@ -27,7 +27,7 @@ describe('locked npm installer', () => {
       [
         "import { writeFile } from 'node:fs/promises'",
         "import { join } from 'node:path'",
-        "const expected = ['ci', '--include=dev', '--no-audit', '--no-fund']",
+        "const expected = ['ci', '--include=dev', '--legacy-peer-deps', '--no-audit', '--no-fund']",
         'if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(expected)) process.exit(9)',
         "if (process.env.npm_config_registry !== 'https://registry.npmjs.org/') process.exit(10)",
         "if (process.env.npm_config_replace_registry_host !== 'never') process.exit(11)",

@@ -7,6 +7,7 @@ import {
   applyQuartzEngineCompatibilityPatch,
   quartzCompatibilityPatchesMatch,
 } from '../src/runtime/quartz-compatibility-patch';
+import { BUILTIN_THEME_CATALOG } from '../src/theme/builtin-theme-catalog';
 
 describe('Quartz engine compatibility patch', () => {
   it('confines both Sass resolvers to the controlled workspace node_modules', async () => {
@@ -41,6 +42,19 @@ describe('Quartz engine compatibility patch', () => {
     expect(patched).toContain('await import("serve-handler")');
     await expect(readFile(join(directory, 'quartz', 'util', 'glob.ts'), 'utf8'))
       .resolves.toContain('pages-publish-controlled-content-root');
+    const packageJson = JSON.parse(
+      await readFile(join(directory, 'package.json'), 'utf8'),
+    ) as { dependencies: Record<string, string> };
+    const packageLock = JSON.parse(
+      await readFile(join(directory, 'package-lock.json'), 'utf8'),
+    ) as { packages: Record<string, { version?: string; integrity?: string }> };
+    for (const theme of BUILTIN_THEME_CATALOG) {
+      expect(packageJson.dependencies[theme.packageName]).toBe(theme.version);
+      expect(packageLock.packages[`node_modules/${theme.packageName}`]).toMatchObject({
+        version: theme.version,
+        integrity: theme.integrity,
+      });
+    }
   });
 
   it('fails closed when the pinned upstream source shape changes', async () => {
@@ -71,6 +85,7 @@ describe('Quartz engine compatibility patch', () => {
       join(packageDirectory, 'dist', 'index.js'),
       'before\nconst pageListContent = PageList(listProps);\nafter',
     );
+    await writeInstalledBuiltinThemeFixtures(directory);
 
     await applyInstalledQuartzCompatibilityPatch(directory);
 
@@ -108,6 +123,7 @@ describe('Quartz engine compatibility patch', () => {
       join(packageDirectory, 'dist', 'index.js'),
       'const pageListContent = PageList(listProps);',
     );
+    await writeInstalledBuiltinThemeFixtures(directory);
 
     await applyQuartzEngineCompatibilityPatch(directory);
     await applyInstalledQuartzCompatibilityPatch(directory);
@@ -124,4 +140,46 @@ async function writeGlobFixture(directory: string): Promise<void> {
     join(directory, 'quartz', 'util', 'glob.ts'),
     'await globby(pattern, { cwd, ignore: ignorePatterns, gitignore: true, })',
   );
+  await writeFile(
+    join(directory, 'package.json'),
+    `${JSON.stringify({
+      dependencies: {
+        '@quartz-community/unlisted-pages': '^0.1.0',
+        '@quartz-themes/core': '^1.0.0',
+        'ansi-truncate': '^1.4.0',
+      },
+    }, undefined, 2)}\n`,
+  );
+  await writeFile(
+    join(directory, 'package-lock.json'),
+    `${JSON.stringify({
+      name: '@jackyzha0/quartz',
+      version: '5.0.0',
+      lockfileVersion: 3,
+      packages: {
+        '': {
+          dependencies: {
+            '@quartz-community/unlisted-pages': '^0.1.0',
+            '@quartz-themes/core': '^1.0.0',
+            'ansi-truncate': '^1.4.0',
+          },
+        },
+        'node_modules/@quartz-themes/core': {
+          version: '1.1.0',
+          integrity: 'sha512-core-fixture',
+        },
+      },
+    }, undefined, 2)}\n`,
+  );
+}
+
+async function writeInstalledBuiltinThemeFixtures(directory: string): Promise<void> {
+  for (const theme of BUILTIN_THEME_CATALOG) {
+    const packageDirectory = join(directory, 'node_modules', ...theme.packageName.split('/'));
+    await mkdir(packageDirectory, { recursive: true });
+    await writeFile(
+      join(packageDirectory, 'package.json'),
+      JSON.stringify({ name: theme.packageName, version: theme.version }),
+    );
+  }
 }

@@ -1,3 +1,5 @@
+import type { BuiltinThemeId } from './builtin-theme-catalog';
+
 export const PAGES_PUBLISH_THEME_API_VERSION = 1 as const;
 
 export const PAGES_PUBLISH_THEME_CAPABILITIES = [
@@ -34,7 +36,19 @@ export interface LocalThemeReference {
   options: ThemeOptions;
 }
 
-export type SiteThemeReference = NpmThemeReference | LocalThemeReference;
+export interface BuiltinThemeReference {
+  source: 'builtin';
+  id: BuiltinThemeId;
+}
+
+export type ExternalThemeReference = NpmThemeReference | LocalThemeReference;
+export type SiteThemeReference = BuiltinThemeReference | ExternalThemeReference;
+
+export function isExternalThemeReference(
+  reference: SiteThemeReference,
+): reference is ExternalThemeReference {
+  return reference.source === 'npm' || reference.source === 'local';
+}
 
 export const THEME_LAYOUT_SLOTS = [
   'header',

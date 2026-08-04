@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 import type { ReadyQuartzEngine } from '../src/runtime/quartz-engine-store';
 import { QuartzBuildRunner } from '../src/site-builder/quartz-build-runner';
 import { QuartzSiteBuilder } from '../src/site-builder/quartz-site-builder';
+import {
+  BUILTIN_THEME_CATALOG,
+  type BuiltinThemeId,
+} from '../src/theme/builtin-theme-catalog';
 
 const engineDirectory = process.env.PAGES_PUBLISH_QUARTZ_ENGINE;
 const nodeExecutable = process.env.PAGES_PUBLISH_NODE22;
@@ -123,9 +127,42 @@ describe('real Quartz SiteBuilder integration', () => {
     },
     60_000,
   );
+
+  it.skipIf(!engineDirectory || !nodeExecutable)(
+    'builds every reviewed built-in theme without runtime installation',
+    async () => {
+      const renderedStyles = new Map<BuiltinThemeId, string>();
+      for (const theme of BUILTIN_THEME_CATALOG) {
+        const vaultRoot = await fixtureVault('latest', theme.id);
+        const buildRoot = await mkdtemp(join(tmpdir(), `pages-real-${theme.id}-theme-`));
+        const builder = new QuartzSiteBuilder({
+          environment: { ensureReady: async () => readyEngine() },
+          runner: new QuartzBuildRunner({
+            rootDirectory: buildRoot,
+            deniedReadRoots: [vaultRoot],
+          }),
+        });
+
+        const preview = await builder.build({ vaultRoot, renderMode: 'published' });
+        const themeStylesheet = Object.entries(preview.files)
+          .filter(([path]) => path.endsWith('.css'))
+          .find(([, source]) => source.includes('--font-default-obsidian'));
+        expect(themeStylesheet).toBeDefined();
+        expect(themeStylesheet?.[1]).toContain('obsidian-theme');
+        expect(preview.files['/writing/hello/index.html']).toContain(themeStylesheet?.[0]);
+        renderedStyles.set(theme.id, themeStylesheet?.[1] ?? '');
+      }
+
+      expect(new Set(renderedStyles.values())).toHaveLength(BUILTIN_THEME_CATALOG.length);
+    },
+    120_000,
+  );
 });
 
-async function fixtureVault(homeLayout: 'latest' | 'sections' = 'latest'): Promise<string> {
+async function fixtureVault(
+  homeLayout: 'latest' | 'sections' = 'latest',
+  theme?: BuiltinThemeId,
+): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'pages-real-quartz-vault-'));
   await mkdir(join(root, '.publish'), { recursive: true });
   await mkdir(join(root, 'Notes'), { recursive: true });
@@ -138,6 +175,9 @@ async function fixtureVault(homeLayout: 'latest' | 'sections' = 'latest'): Promi
       'site:',
       '  name: Real Quartz Site',
       `  home_layout: ${homeLayout}`,
+      ...(theme === undefined
+        ? []
+        : ['  theme:', '    source: builtin', `    id: ${theme}`]),
       'content_roots:',
       '  - path: Notes',
       '    public_root: /writing',
@@ -211,7 +251,7 @@ async function fixtureVault(homeLayout: 'latest' | 'sections' = 'latest'): Promi
 function readyEngine(): ReadyQuartzEngine {
   return {
     engineDirectory: engineDirectory!,
-    engineVersion: 'pages-publish-quartz-5.0.0.1',
+    engineVersion: 'pages-publish-quartz-5.0.0.3',
     quartzVersion: '5.0.0',
     platform: 'darwin-arm64',
     nodeExecutable: nodeExecutable!,

@@ -1,5 +1,5 @@
 import type { ReadyQuartzEngine } from '../runtime/quartz-engine-store';
-import type { SiteThemeReference } from './theme-contract';
+import type { ExternalThemeReference } from './theme-contract';
 import {
   themeOptionsFromSchemaDefaults,
   type ThemeOptionsSchema,
@@ -9,7 +9,7 @@ import { ThemeStore, type InstalledTheme } from './theme-store';
 import { ThemeTrustStore } from './theme-trust-store';
 
 export interface ThemeCandidate {
-  reference: SiteThemeReference;
+  reference: ExternalThemeReference;
   packageName: string;
   displayName: string;
   version: string;
@@ -35,7 +35,7 @@ export class ThemeManagementService {
   ) {}
 
   async panelState(
-    configured?: SiteThemeReference,
+    configured?: ExternalThemeReference,
     signal?: AbortSignal,
   ): Promise<ThemePanelState> {
     const engine = await this.ensureEngine(signal);
@@ -135,12 +135,12 @@ export class ThemeManagementService {
     await this.trust.confirm(installed.receipt);
   }
 
-  async repair(reference: SiteThemeReference, signal?: AbortSignal): Promise<void> {
+  async repair(reference: ExternalThemeReference, signal?: AbortSignal): Promise<void> {
     const engine = await this.ensureEngine(signal);
     await this.installer.repair(this.vaultRoot, reference, engine.quartzVersion, signal);
   }
 
-  async uninstall(candidateInput: ThemeCandidate, active?: SiteThemeReference): Promise<void> {
+  async uninstall(candidateInput: ThemeCandidate, active?: ExternalThemeReference): Promise<void> {
     await this.store.uninstall({
       packageName: candidateInput.packageName,
       version: candidateInput.version,
@@ -152,7 +152,7 @@ export class ThemeManagementService {
   }
 }
 
-function candidate(installed: InstalledTheme, reference: SiteThemeReference): ThemeCandidate {
+function candidate(installed: InstalledTheme, reference: ExternalThemeReference): ThemeCandidate {
   const normalizedReference = structuredClone(reference);
   if (
     installed.optionsSchema !== undefined &&
@@ -176,7 +176,7 @@ function candidate(installed: InstalledTheme, reference: SiteThemeReference): Th
   };
 }
 
-function referenceForInstalled(installed: InstalledTheme): SiteThemeReference {
+function referenceForInstalled(installed: InstalledTheme): ExternalThemeReference {
   return installed.receipt.source.kind === 'npm'
     ? {
       source: 'npm',

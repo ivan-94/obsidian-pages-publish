@@ -35,4 +35,33 @@ describe('controlled Quartz configuration', () => {
     expect(source).not.toContain('comments');
     expect(source).not.toContain('@quartz-community/latex');
   });
+
+  it('enables only the selected curated built-in theme with offline-safe options', () => {
+    const source = createControlledQuartzConfig({
+      siteName: 'Themed Site',
+      baseUrl: 'notes.example.com',
+      search: true,
+      graph: true,
+      builtinTheme: 'tokyo-night',
+    });
+    const config = parse(source) as {
+      plugins: Array<{
+        source: string;
+        enabled: boolean;
+        options?: Record<string, unknown>;
+      }>;
+    };
+
+    expect(config.plugins.find((plugin) => plugin.source === '@quartz-themes/core'))
+      .toEqual({
+        source: '@quartz-themes/core',
+        enabled: true,
+        order: 10,
+        options: {
+          theme: 'tokyo-night',
+          mode: 'both',
+          themeFonts: false,
+        },
+      });
+  });
 });

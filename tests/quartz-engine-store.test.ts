@@ -11,6 +11,7 @@ import {
 } from '../src/runtime/quartz-engine-store';
 import type { QuartzEngineManifest } from '../src/runtime/quartz-engine-manifest';
 import type { LockedNpmInstallRequest } from '../src/runtime/npm-installer';
+import { BUILTIN_THEME_CATALOG } from '../src/theme/builtin-theme-catalog';
 
 describe('Quartz engine store', () => {
   it('installs, smoke-checks, and atomically activates an exact engine', async () => {
@@ -381,7 +382,7 @@ function engineManifest(
     quartzVersion: '5.0.0',
     sourceUrl: 'https://github.com/jackyzha0/quartz/archive/0123456789abcdef0123456789abcdef01234567.tar.gz',
     sourceSha256: sha256(archive),
-    lockfileSha256: sha256(lockfile),
+    lockfileSha256: sha256(patchedFixtureLockfile(lockfile)),
     nodeRange: '>=22',
     npmVersionRange: '>=10.9.2',
     platform: 'darwin-arm64',
@@ -391,8 +392,18 @@ function engineManifest(
 function sourceArchive(lockfile: Uint8Array): Uint8Array {
   return tarGz([
     { name: 'quartz-source/', type: 'directory' },
-    { name: 'quartz-source/package.json', body: '{"name":"@jackyzha0/quartz","version":"5.0.0"}' },
-    { name: 'quartz-source/package-lock.json', body: Buffer.from(lockfile).toString('utf8') },
+    {
+      name: 'quartz-source/package.json',
+      body: JSON.stringify({
+        name: '@jackyzha0/quartz',
+        version: '5.0.0',
+        dependencies: { '@quartz-themes/core': '^1.0.0' },
+      }),
+    },
+    {
+      name: 'quartz-source/package-lock.json',
+      body: JSON.stringify(sourceFixtureLockfile(lockfile)),
+    },
     { name: 'quartz-source/quartz/', type: 'directory' },
     { name: 'quartz-source/quartz/cli/', type: 'directory' },
     {
@@ -419,7 +430,52 @@ function sourceArchive(lockfile: Uint8Array): Uint8Array {
       name: 'quartz-source/node_modules/@quartz-community/folder-page/dist/index.js',
       body: 'const pageListContent = PageList(listProps);',
     },
+    ...BUILTIN_THEME_CATALOG.map((theme) => ({
+      name: `quartz-source/node_modules/${theme.packageName}/package.json`,
+      body: JSON.stringify({ name: theme.packageName, version: theme.version }),
+    })),
   ]);
+}
+
+interface FixturePackageLock {
+  lockfileVersion: number;
+  packages: Record<string, {
+    dependencies?: Record<string, string>;
+    version?: string;
+    resolved?: string;
+    integrity?: string;
+    license?: string;
+  }>;
+  [key: string]: unknown;
+}
+
+function sourceFixtureLockfile(input: Uint8Array): FixturePackageLock {
+  const parsed = JSON.parse(Buffer.from(input).toString('utf8')) as Partial<FixturePackageLock>;
+  const packages = parsed.packages ?? {};
+  packages[''] = {
+    ...packages[''],
+    dependencies: {
+      ...packages['']?.dependencies,
+      '@quartz-themes/core': '^1.0.0',
+    },
+  };
+  packages['node_modules/@quartz-themes/core'] = { version: '1.1.0' };
+  return { ...parsed, lockfileVersion: 3, packages };
+}
+
+function patchedFixtureLockfile(input: Uint8Array): Uint8Array {
+  const lockfile = sourceFixtureLockfile(input);
+  const rootDependencies = lockfile.packages['']!.dependencies!;
+  for (const theme of BUILTIN_THEME_CATALOG) {
+    rootDependencies[theme.packageName] = theme.version;
+    lockfile.packages[`node_modules/${theme.packageName}`] = {
+      version: theme.version,
+      resolved: `https://registry.npmjs.org/${theme.packageName}/-/${theme.id}-${theme.version}.tgz`,
+      integrity: theme.integrity,
+      license: 'MIT',
+    };
+  }
+  return Buffer.from(`${JSON.stringify(lockfile, undefined, 2)}\n`);
 }
 
 function sha256(content: Uint8Array): string {

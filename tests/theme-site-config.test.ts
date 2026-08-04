@@ -64,6 +64,28 @@ describe('site theme configuration', () => {
     expect(loaded.config.site.theme).toBeUndefined();
   });
 
+  it('loads and stably serializes a curated built-in theme reference', async () => {
+    const vault = await createVault(configSource([
+      '  theme:',
+      '    source: builtin',
+      '    id: tokyo-night',
+    ]));
+    const loaded = await loadSiteConfigFromDirectory(vault);
+    if (loaded.status !== 'editable') throw new Error('Expected editable config.');
+
+    expect(loaded.config.site.theme).toEqual({
+      source: 'builtin',
+      id: 'tokyo-night',
+    });
+
+    await saveSiteConfigToDirectory(vault, loaded.config, {
+      expectedRevision: loaded.revision,
+    });
+    const saved = await readFile(join(vault, '.publish', 'site.yml'), 'utf8');
+    expect(saved).toContain('source: builtin');
+    expect(saved).toContain('id: tokyo-night');
+  });
+
   it('loads and stably serializes an exact npm theme reference', async () => {
     const vault = await createVault(configSource([
       '  theme:',
@@ -157,6 +179,16 @@ describe('site theme configuration', () => {
   });
 
   it.each([
+    {
+      name: 'unknown built-in theme',
+      theme: [
+        '  theme:',
+        '    source: builtin',
+        '    id: unreviewed-theme',
+      ],
+      code: 'unknown-builtin-theme',
+      path: 'site.theme.id',
+    },
     {
       name: 'version range',
       theme: [

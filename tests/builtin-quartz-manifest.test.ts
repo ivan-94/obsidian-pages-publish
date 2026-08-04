@@ -10,10 +10,10 @@ describe('built-in Quartz engine manifest', () => {
 
       expect(validateQuartzEngineManifest(manifest, platform)).toEqual(manifest);
       expect(manifest).toMatchObject({
-        engineVersion: 'pages-publish-quartz-5.0.0.2',
+        engineVersion: 'pages-publish-quartz-5.0.0.3',
         quartzVersion: '5.0.0',
         sourceSha256: '69380b2e3acf3590ad144304e4e97be621562b1ab14512c2537ad348d707c3aa',
-        lockfileSha256: 'bca1aff728d3257b8ca6989f9a4d9913836ab1f1a034505d3e3c481b3dab3e05',
+        lockfileSha256: '1f9861ba0628e86f85a4989546d2201b8d3a64c198db5c6d6ca8cdcb9d061e5c',
       });
       expect(manifest.runtimeAssets).toHaveLength(2);
       expect(Object.isFrozen(manifest)).toBe(true);

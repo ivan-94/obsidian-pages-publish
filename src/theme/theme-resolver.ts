@@ -1,6 +1,6 @@
 import type { ReadyQuartzEngine } from '../runtime/quartz-engine-store';
 import type {
-  SiteThemeReference,
+  ExternalThemeReference,
   ThemeOptions,
 } from './theme-contract';
 import { validateThemeOptionsAgainstSchema } from './theme-options-schema';
@@ -34,7 +34,7 @@ export class InstalledThemeResolver {
   ) {}
 
   async resolve(
-    reference: SiteThemeReference,
+    reference: ExternalThemeReference,
     engine: ReadyQuartzEngine,
     signal?: AbortSignal,
   ): Promise<ResolvedBuildTheme> {
