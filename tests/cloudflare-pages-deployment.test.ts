@@ -142,6 +142,45 @@ describe('Cloudflare Pages direct-upload deployment adapter', () => {
     expect(JSON.stringify(requests.map((request) => request.body))).not.toContain('api-token-not-to-log');
   });
 
+  it('uploads audited Mermaid SVG files with an SVG media type', async () => {
+    let upload: Array<{ metadata: { contentType: string } }> | undefined;
+    const adapter = new CloudflarePagesHttpDeploymentAdapter({
+      accountId: 'account-1',
+      projectName: 'deploy-wiki',
+      credential: async () => 'api-token',
+      http: {
+        request: async (input) => {
+          if (input.path.endsWith('/upload-token')) return { jwt: jwt({}) };
+          if (input.path === '/pages/assets/check-missing') {
+            if (typeof input.body !== 'string') throw new Error('Expected a JSON request body.');
+            return (JSON.parse(input.body) as { hashes: string[] }).hashes;
+          }
+          if (input.path === '/pages/assets/upload') {
+            if (typeof input.body !== 'string') throw new Error('Expected a JSON request body.');
+            upload = JSON.parse(input.body) as Array<{
+              metadata: { contentType: string };
+            }>;
+            return {};
+          }
+          if (input.path === '/pages/assets/upsert-hashes') return {};
+          if (input.path.endsWith('/deployments')) return { id: 'deployment-1' };
+          return {};
+        },
+      },
+    });
+
+    await adapter.upload({
+      scanDigest: 'scan-1',
+      files: {
+        '/assets/pages-publish/mermaid.svg':
+          '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>',
+      },
+      assets: {},
+    });
+
+    expect(upload?.[0]?.metadata.contentType).toBe('image/svg+xml');
+  });
+
   it('keeps each missing-asset upload batch within the Wrangler 2,000-file limit', async () => {
     const uploadBatches: Array<Array<{ key: string }>> = [];
     const request = vi.fn(async (input: { path: string; body?: unknown }) => {

@@ -116,6 +116,24 @@ describe('local preview server', () => {
     expect(await response.text()).toContain('color-scheme');
   });
 
+  it('serves audited Mermaid SVG files with an SVG media type', async () => {
+    const server = new LocalPreviewServer();
+    servers.push(server);
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>';
+
+    const session = await server.start({
+      '/index.html': '<img src="/assets/pages-publish/mermaid.svg" alt="Mermaid diagram">',
+      '/assets/pages-publish/mermaid.svg': svg,
+    });
+
+    const response = await fetch(`${session.url}assets/pages-publish/mermaid.svg`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/svg+xml');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await response.text()).toBe(svg);
+  });
+
   it('serves Quartz scripts and indexes with executable-safe media types', async () => {
     const server = new LocalPreviewServer();
     servers.push(server);

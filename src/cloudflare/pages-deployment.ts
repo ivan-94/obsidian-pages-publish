@@ -281,6 +281,7 @@ function contentTypeFor(path: string): string {
   if (path.endsWith('.js')) return 'text/javascript; charset=utf-8';
   if (path.endsWith('.json')) return 'application/json; charset=utf-8';
   if (path.endsWith('.xml')) return 'application/xml; charset=utf-8';
+  if (path.endsWith('.svg')) return 'image/svg+xml';
   if (path.endsWith('.txt')) return 'text/plain; charset=utf-8';
   return 'application/octet-stream';
 }

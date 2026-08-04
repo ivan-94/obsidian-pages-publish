@@ -149,6 +149,7 @@ function contentTypeForGeneratedFile(path: string): string {
   }
   if (path.endsWith('.webmanifest')) return 'application/manifest+json; charset=utf-8';
   if (path.endsWith('.xml')) return 'application/xml; charset=utf-8';
+  if (path.endsWith('.svg')) return 'image/svg+xml';
   if (path.endsWith('.txt')) return 'text/plain; charset=utf-8';
   return 'text/html; charset=utf-8';
 }
