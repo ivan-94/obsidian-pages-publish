@@ -1,6 +1,6 @@
 # Pages Publish BRAT 发布规格
 
-> 文档状态：Ready for execution
+> 文档状态：Released — awaiting user BRAT HAT
 >
 > 发布渠道：GitHub Releases + BRAT
 >
@@ -37,15 +37,15 @@
 - 自动化测试、TypeScript 类型检查和 ESLint 当前通过。
 - Cloudflare 首次发布、更新发布以及 public/unlisted/private 边界已有 `PASS_WITH_NOTES` 实机证据。
 - GitHub 公开仓库已创建：<https://github.com/ivan-94/obsidian-pages-publish>。
-- 本地 Git `origin` 已指向该仓库，但尚未推送代码。
+- `main` 已推送到公开仓库，并设为默认分支。
 - GitHub Actions 仓库变量 `PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID` 已配置；Release 构建缺失该值时仍会 fail-closed。
+- GitHub CI 与 `0.1.0-beta.1` Release workflow 已在 GitHub runner 中通过。
+- `0.1.0-beta.1` GitHub pre-release 已发布，并提供 BRAT 所需的三个独立附件。
 
-### 3.2 发布前缺口
+### 3.2 剩余验收
 
-- 当前主题相关开发改动尚未整理为干净提交。
-- GitHub 仓库仍为空，没有默认分支。
-- CI 与 Release workflow 已生成，但尚未在远端 GitHub runner 中执行。
 - 尚未通过真实 BRAT 完成安装和跨版本升级验收。
+- `0.1.0-beta.1` 可完成首次安装验收；跨版本升级需等待 `0.1.0-beta.2` 候选版本。
 
 ## 4. 发布范围
 
@@ -257,16 +257,16 @@ CI 必须在受支持的 Node 版本上运行，不依赖开发者机器上的�
 
 ## 12. 首次上架交付清单
 
-- [ ] 当前功能改动完成 review 并提交。
+- [x] 当前功能改动完成 review 并提交。
 - [x] Canonical repository URL 全部更新。
 - [x] README、LICENSE、CHANGELOG 完成。
-- [ ] CI workflow 通过。
-- [ ] Release workflow 在测试 tag 上通过。
+- [x] CI workflow 通过。
+- [x] Release workflow 在 `0.1.0-beta.1` tag 上通过。
 - [x] `0.1.0-beta.1` 的版本字段一致。
-- [ ] Release 三个附件存在且 hash 已记录。
-- [ ] BRAT 安装说明可由不了解源码的测试者执行。
+- [x] Release 三个附件存在且 hash 已记录。
+- [x] BRAT 安装说明可由不了解源码的测试者执行。
 - [ ] 用户完成真实 BRAT 安装验收。
-- [ ] 已知问题和反馈入口写入 Release Notes。
+- [x] 已知问题和反馈入口写入 Release Notes。
 
 ## Source Manifest
 
@@ -285,7 +285,8 @@ CI 必须在受支持的 Node 版本上运行，不依赖开发者机器上的�
 ### Produced artifacts
 
 - [`BRAT-RELEASE-SPEC.md`](./BRAT-RELEASE-SPEC.md)：本发布规格。
-- <https://github.com/ivan-94/obsidian-pages-publish>：已创建但尚未推送代码的公开发布仓库。
+- <https://github.com/ivan-94/obsidian-pages-publish>：已推送源码并发布 `0.1.0-beta.1` 的公开仓库。
+- <https://github.com/ivan-94/obsidian-pages-publish/releases/tag/0.1.0-beta.1>：首个 BRAT pre-release 及三个安装附件。
 
 ### Key decisions
 
@@ -296,17 +297,19 @@ CI 必须在受支持的 Node 版本上运行，不依赖开发者机器上的�
 
 ### Verification evidence
 
-- 2026-08-04：`npm test` 通过，结果为 78 files passed、5 skipped；683 tests passed、9 skipped。
+- 2026-08-04：`npm test` 通过，结果为 78 files passed、5 skipped；685 tests passed、9 skipped。
 - 2026-08-04：`npm run typecheck` 通过。
 - 2026-08-04：`npm run lint` 通过。
 - 2026-08-04：当前 release staging 中的三个文件与项目根对应文件 SHA-256 一致。
-- 2026-08-04：GitHub 仓库创建成功，公开可访问，本地 `origin` 已配置；代码尚未推送。
+- 2026-08-04：[GitHub CI run 30898447427](https://github.com/ivan-94/obsidian-pages-publish/actions/runs/30898447427) 通过 npm 10 干净安装、测试、typecheck、lint、生产构建和 diff-check。
 - 2026-08-04：`npm run package -- "0.1.0-beta.1"` 通过，生成的候选目录严格包含三个附件，manifest 版本与 tag 参数一致。
 - 2026-08-04：GitHub repository variable `PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID` 配置成功，命令未输出变量值。
+- 2026-08-04：[Release run 30898536890](https://github.com/ivan-94/obsidian-pages-publish/actions/runs/30898536890) 通过，并创建 `0.1.0-beta.1` pre-release。
+- 2026-08-04：从公开 Release 重新下载并验证三个附件；SHA-256 分别为 `main.js` `2505963858ce000a0fb4bcdbdd9f133ed3e48ac9af54421bdb418d64863e19d5`、`manifest.json` `a1f1ebed2e29c78cc77f3035c8ed493e272b205f1d0703f342037f6863387fed`、`styles.css` `79015c6e2341a741d7c01d6c87ee6c6d9db23decac32e32a1cc7a351fff6927f`。
 
 ### Open questions / risks
 
-- 当前工作树仍包含未提交的主题相关改动，必须在首次推送前完成 review 和提交收口。
-- CI 和 Release workflow 尚未在 GitHub runner 中验证。
 - 首个真实 BRAT 安装结论等待用户验收。
+- 跨版本 BRAT 升级路径需在 `0.1.0-beta.2` 发布时验收。
+- GitHub Actions 提示当前固定的 checkout/setup-node action runtime 仍声明 Node 20，并由 runner 强制切换到 Node 24；本次运行通过，但需后续升级固定 SHA。
 - 失败恢复、URL 迁移/下线、完整键盘矩阵和多账号矩阵仍不是当前核心主链路 HAT 的完整通过项。
