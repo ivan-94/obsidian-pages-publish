@@ -1,0 +1,72 @@
+name: Release BRAT beta
+
+on:
+  push:
+    tags:
+      - "*.*.*-beta.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Type-check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Require the public Cloudflare OAuth client
+        env:
+          PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID: ${{ vars.PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID }}
+        run: test -n "${PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID}"
+      - name: Build and stage the tagged package
+        env:
+          PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID: ${{ vars.PAGES_PUBLISH_CLOUDFLARE_OAUTH_CLIENT_ID }}
+        run: npm run package -- "${GITHUB_REF_NAME}"
+      - name: Verify staged assets and record checksums
+        env:
+          RELEASE_DIRECTORY: release/pages-publish-${{ github.ref_name }}
+        run: |
+          test -f "${RELEASE_DIRECTORY}/main.js"
+          test -f "${RELEASE_DIRECTORY}/manifest.json"
+          test -f "${RELEASE_DIRECTORY}/styles.css"
+          test "$(find "${RELEASE_DIRECTORY}" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "3"
+          {
+            echo "## BRAT release assets"
+            echo '```text'
+            shasum -a 256 \
+              "${RELEASE_DIRECTORY}/main.js" \
+              "${RELEASE_DIRECTORY}/manifest.json" \
+              "${RELEASE_DIRECTORY}/styles.css"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+      - name: Create GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIRECTORY: release/pages-publish-${{ github.ref_name }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "${RELEASE_DIRECTORY}/main.js" \
+            "${RELEASE_DIRECTORY}/manifest.json" \
+            "${RELEASE_DIRECTORY}/styles.css" \
+            --verify-tag \
+            --prerelease \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

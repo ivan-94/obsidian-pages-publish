@@ -51,6 +51,28 @@ describe('release package staging', () => {
     );
   });
 
+  it('refuses to stage a GitHub release whose tag disagrees with its manifest', async () => {
+    const root = await pluginProject();
+    const dist = await mkdtemp(join(tmpdir(), 'pages-publish-release-'));
+    directories.push(dist);
+
+    await expect(stagePluginPackage({
+      projectRoot: root,
+      distRoot: dist,
+      expectedVersion: '0.1.0-beta.2',
+    })).rejects.toThrow(/release version/i);
+  });
+
+  it('refuses a release whose package version disagrees with its manifest', async () => {
+    const root = await pluginProject({ packageVersion: '0.1.0-beta.2' });
+    const dist = await mkdtemp(join(tmpdir(), 'pages-publish-release-'));
+    directories.push(dist);
+
+    await expect(stagePluginPackage({ projectRoot: root, distRoot: dist })).rejects.toThrow(
+      /package\.json/i,
+    );
+  });
+
   it('refuses to stage when a required generated plugin asset is absent', async () => {
     const root = await pluginProject({ omit: 'main.js' });
     const dist = await mkdtemp(join(tmpdir(), 'pages-publish-release-'));
@@ -65,11 +87,17 @@ describe('release package staging', () => {
     options: {
       minAppVersion?: string;
       versionsMinAppVersion?: string;
+      packageVersion?: string;
       omit?: 'main.js' | 'styles.css';
     } = {},
   ): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), 'pages-publish-project-'));
     directories.push(root);
+    await writeFile(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'pages-publish', version: options.packageVersion ?? '0.1.0' }),
+      'utf8',
+    );
     await writeFile(
       join(root, 'manifest.json'),
       JSON.stringify({

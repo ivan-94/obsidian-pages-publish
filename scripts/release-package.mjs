@@ -11,11 +11,21 @@ const installableFiles = ['manifest.json', 'main.js', 'styles.css'];
  * <Vault>/.obsidian/plugins/<plugin-id>. No source, test, credential or cache
  * file is ever included in the installable plugin package.
  */
-export async function stagePluginPackage({ projectRoot, distRoot }) {
+export async function stagePluginPackage({ projectRoot, distRoot, expectedVersion }) {
   const manifestPath = join(projectRoot, 'manifest.json');
   const manifest = validateManifest(
     JSON.parse(await readFile(manifestPath, 'utf8')),
   );
+  const packageJson = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'));
+  if (typeof packageJson !== 'object' || packageJson === null ||
+    packageJson.version !== manifest.version) {
+    throw new Error('package.json version must match the manifest version.');
+  }
+  if (expectedVersion !== undefined && manifest.version !== expectedVersion) {
+    throw new Error(
+      `Release version ${expectedVersion} does not match manifest version ${manifest.version}.`,
+    );
+  }
   validateCompatibilityMap(
     JSON.parse(await readFile(join(projectRoot, 'versions.json'), 'utf8')),
     manifest,
@@ -86,9 +96,11 @@ function parseVersion(value) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const expectedVersion = process.argv[2];
   const result = await stagePluginPackage({
     projectRoot,
     distRoot: join(projectRoot, 'release'),
+    ...(expectedVersion === undefined ? {} : { expectedVersion }),
   });
   process.stdout.write(`Staged ${result.pluginId} ${result.version} at ${result.directory}\n`);
 }

@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a reproducible Pages Publish Beta problem
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Pages Publish. Do not include Cloudflare tokens, OAuth secrets, private note contents, or a complete Vault.
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Pages Publish version
+      placeholder: 0.1.0-beta.1
+    validations:
+      required: true
+  - type: input
+    id: obsidian-version
+    attributes:
+      label: Obsidian version
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Failure stage
+      options:
+        - BRAT installation or update
+        - Plugin loading or setup
+        - Cloudflare authorization
+        - Local preview or site build
+        - Cloudflare publish or recovery
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Describe the smallest safe test Vault and exact steps that reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include only redacted errors or logs. Never paste credentials or private note contents.
+      render: text
