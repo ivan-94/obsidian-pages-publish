@@ -170,6 +170,34 @@ describe('Cloudflare OAuth loopback callback', () => {
     await expect(get(`${redirectUri}?state=current-state&code=late-code`)).rejects.toThrow();
   });
 
+  it('identifies a lost Cloudflare browser session without reflecting provider error text', async () => {
+    const redirectUri = 'http://127.0.0.1:18985/oauth/callback';
+    const onCancellation = vi.fn(async (input: { state: string; reason: string }) =>
+      input.state === 'current-state' && input.reason === 'session_unavailable',
+    );
+    const server = new CloudflareOAuthLoopbackServer({
+      redirectUri,
+      callback: async () => undefined,
+      onCancellation,
+    });
+    await server.start();
+
+    const response = await get(
+      `${redirectUri}?error=request_forbidden&error_description=No+CSRF+value+available+in+the+session+cookie.&state=current-state`,
+    );
+
+    expect(response).toMatchObject({ status: 400 });
+    expect(response.body).toContain('browser session was lost');
+    expect(response.body).not.toContain('No CSRF value');
+    expect(onCancellation).toHaveBeenCalledWith({
+      state: 'current-state',
+      reason: 'session_unavailable',
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await expect(get(`${redirectUri}?state=current-state&code=late-code`)).rejects.toThrow();
+  });
+
   it('ignores a stale timeout after a new OAuth attempt rearms the listener', async () => {
     const redirectUri = 'http://127.0.0.1:18982/oauth/callback';
     const callbacks: Array<() => void> = [];

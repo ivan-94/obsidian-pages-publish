@@ -15,7 +15,10 @@ export interface CloudflareOAuthLoopbackTimerBoundary {
   clear(handle: number): void;
 }
 
-export type CloudflareOAuthCancellationReason = 'denied' | 'invalid_scope';
+export type CloudflareOAuthCancellationReason =
+  | 'denied'
+  | 'invalid_scope'
+  | 'session_unavailable';
 
 export class CloudflareOAuthLoopbackServer {
   private readonly callback: (input: { state: string; code: string }) => Promise<void>;
@@ -224,11 +227,17 @@ function queryParameters(url: URL): Record<string, string> {
 }
 
 function cancellationReason(error: string | null): CloudflareOAuthCancellationReason {
-  return error === 'invalid_scope' ? 'invalid_scope' : 'denied';
+  if (error === 'invalid_scope') return 'invalid_scope';
+  if (error === 'request_forbidden') return 'session_unavailable';
+  return 'denied';
 }
 
 function browserCancellationMessage(reason: CloudflareOAuthCancellationReason): string {
-  return reason === 'invalid_scope'
-    ? 'This Cloudflare OAuth client does not permit the required permissions. Return to Obsidian and update the client scopes before trying again.'
-    : 'Cloudflare authorization was cancelled or denied. Return to Obsidian and try again.';
+  if (reason === 'invalid_scope') {
+    return 'This Cloudflare OAuth client does not permit the required permissions. Return to Obsidian and update the client scopes before trying again.';
+  }
+  if (reason === 'session_unavailable') {
+    return 'The Cloudflare browser session was lost. Return to Obsidian and start a new authorization in the system browser.';
+  }
+  return 'Cloudflare authorization was cancelled or denied. Return to Obsidian and try again.';
 }

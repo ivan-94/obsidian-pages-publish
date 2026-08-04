@@ -41,6 +41,7 @@ import { isSupportedPlatform, supportedPlatformIdentity } from './plugin/platfor
 import { articleMenuAvailability, pagesPublishAction } from './plugin/safe-actions';
 import { openPluginSettingsInHost } from './plugin/settings-navigation';
 import { PagesPublishSettingTab } from './plugin/settings-tab';
+import { openInSystemBrowser } from './plugin/system-browser';
 import { createLocalMaintenanceService } from './maintenance/local-maintenance';
 import { BoundedDiagnosticLog } from './maintenance/maintenance-service';
 import {
@@ -272,7 +273,9 @@ export default class PagesPublishPlugin extends Plugin {
           if (cancelled) {
             new Notice(reason === 'invalid_scope'
               ? 'Cloudflare OAuth client 缺少所需权限（memberships.read、page.read、page.write）。请更新 client scopes 后重试。'
-              : 'Cloudflare 授权已取消，请重新开始授权。');
+              : reason === 'session_unavailable'
+                ? 'Cloudflare 浏览器授权会话已丢失。请关闭旧授权页，并从 Obsidian 重新开始授权。'
+                : 'Cloudflare 授权已取消，请重新开始授权。');
           }
           return cancelled;
         },
@@ -284,7 +287,9 @@ export default class PagesPublishPlugin extends Plugin {
     application = new PagesPublishApplication(
       vaultRoot,
       (url) => {
-        window.open(url, '_blank', 'noopener,noreferrer');
+        void openInSystemBrowser(url).catch(() => {
+          new Notice('无法打开系统浏览器。请检查 macOS 默认浏览器设置后重试。');
+        });
       },
       {
         scanTimers: {
