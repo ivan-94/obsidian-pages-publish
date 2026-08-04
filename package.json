@@ -1,6 +1,6 @@
 {
   "name": "pages-publish",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Publish selected Obsidian notes to Cloudflare Pages.",
   "main": "main.js",
   "type": "module",
