@@ -284,16 +284,18 @@ export class SiteSetupService {
     const project = await this.ensureProject(review.cloudflare);
     onProgress('domain');
     const domain = await this.ensureDomain(project, review.cloudflare.domain);
+    const confirmedConfig = structuredClone(review.config);
+    confirmedConfig.cloudflare.pagesDevDomain = new URL(project.pagesDevUrl).hostname;
     onProgress('config');
-    await this.saveConfig(review.config);
+    await this.saveConfig(confirmedConfig);
     this.resumableConfirmation = {
       planDigest,
-      config: review.config,
+      config: confirmedConfig,
       project,
       domain,
     };
     onProgress('scan');
-    const scan = await this.scan(review.config);
+    const scan = await this.scan(confirmedConfig);
     this.resumableConfirmation = undefined;
     return { stage: 'ready', project, domain, scan };
   }
@@ -393,9 +395,15 @@ export class SiteSetupService {
     }
     try {
       const url = new URL(project.pagesDevUrl);
-      const origin = `https://${project.name}.pages.dev`;
+      const hostnameLabels = url.hostname.split('.');
+      const projectSubdomain = hostnameLabels[0] ?? '';
       if (
-        url.origin !== origin ||
+        url.protocol !== 'https:' ||
+        url.port !== '' ||
+        hostnameLabels.length !== 3 ||
+        hostnameLabels[1] !== 'pages' ||
+        hostnameLabels[2] !== 'dev' ||
+        !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(projectSubdomain) ||
         url.pathname !== '/' ||
         url.search !== '' ||
         url.hash !== '' ||

@@ -70,7 +70,16 @@ export class PagesPublishView extends ItemView {
   private activeRender: Promise<void> | undefined;
   private renderAgain = false;
   private refreshPublishCenterInFlight = false;
+  private localContentMutationsInFlight = 0;
+  private publishCenterContentRefreshRequested = false;
   private sitePreviewInFlight: Promise<void> | undefined;
+  private sitePreviewBusy = false;
+  private publicationUiActive = false;
+  private refreshedPublicationDeploymentId: string | undefined;
+  private publicationFooterStatus: HTMLElement | undefined;
+  private publicationFooterActions: HTMLElement | undefined;
+  private renderedPublishCenter: PublishCenterState | undefined;
+  private renderedPublishConnection: InitialSetupConnection | undefined;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -109,15 +118,29 @@ export class PagesPublishView extends ItemView {
       // second full render here would make each scan start another scan forever.
       // Setup notifications remain coalesced because environment/OAuth changes
       // can materially advance the wizard while it is already rendering.
+      const publicationRunning = this.lastLaunchTarget === 'publish-center'
+        && this.application.getPublicationStatus().state === 'running';
       if (
         this.lastLaunchTarget === 'publish-center'
-        && (this.activeRender || this.refreshPublishCenterInFlight)
-      ) return;
+        && (
+          this.activeRender
+          || this.refreshPublishCenterInFlight
+          || this.localContentMutationsInFlight > 0
+          || this.sitePreviewBusy
+          || this.publicationUiActive
+          || publicationRunning
+        )
+      ) {
+        if (publicationRunning) {
+          this.publicationUiActive = true;
+        }
+        return;
+      }
       void this.render();
     });
     if (this.application.isPublicationAvailable()) {
-      this.unsubscribePublicationStatus = this.application.subscribePublicationStatus(() => {
-        void this.render();
+      this.unsubscribePublicationStatus = this.application.subscribePublicationStatus((status) => {
+        this.handlePublicationStatus(status);
       });
     }
     await this.render();
@@ -153,6 +176,7 @@ export class PagesPublishView extends ItemView {
 
   private async renderOnce(): Promise<void> {
     const container = this.contentEl;
+    this.clearPublicationFooterReferences();
     container.empty();
     container.addClass('pages-publish-view');
     container.createDiv({ cls: 'pages-publish-view__eyebrow', text: '发布工具' });
@@ -225,10 +249,41 @@ export class PagesPublishView extends ItemView {
   private renderCachedPublishCenter(): void {
     if (!this.lastPublishCenter) return;
     const container = this.contentEl;
+    const scrollTop = container.scrollTop;
+    this.clearPublicationFooterReferences();
     container.empty();
     container.addClass('pages-publish-view');
     container.createDiv({ cls: 'pages-publish-view__eyebrow', text: '发布工具' });
     this.renderPublishCenter(container, this.lastPublishCenter, this.lastPublishConnection);
+    container.scrollTop = scrollTop;
+  }
+
+  private clearPublicationFooterReferences(): void {
+    this.publicationFooterStatus = undefined;
+    this.publicationFooterActions = undefined;
+    this.renderedPublishCenter = undefined;
+    this.renderedPublishConnection = undefined;
+  }
+
+  private handlePublicationStatus(status: PublicationServiceStatus): void {
+    const hasMountedPublishCenter = this.lastLaunchTarget === 'publish-center'
+      && this.lastPublishCenter !== undefined;
+    if (!hasMountedPublishCenter) {
+      void this.render();
+      return;
+    }
+
+    if (status.state === 'running') this.publicationUiActive = true;
+    this.renderPublicationFooterControls();
+
+    if (status.state !== 'running') this.publicationUiActive = false;
+    if (
+      status.state === 'succeeded'
+      && this.refreshedPublicationDeploymentId !== status.deployment.deploymentId
+    ) {
+      this.refreshedPublicationDeploymentId = status.deployment.deploymentId;
+      void this.refreshPublishCenter({ content: true });
+    }
   }
 
   private async refreshPublishCenter(options: {
@@ -631,14 +686,30 @@ export class PagesPublishView extends ItemView {
     }
 
     const footer = container.createEl('footer', { cls: 'pages-publish-view__footer' });
-    const footerStatus = footer.createDiv({ cls: 'pages-publish-view__footer-status' });
+    this.publicationFooterStatus = footer.createDiv({ cls: 'pages-publish-view__footer-status' });
+    this.publicationFooterActions = footer.createDiv({ cls: 'pages-publish-view__footer-actions' });
+    this.renderedPublishCenter = center;
+    this.renderedPublishConnection = connection;
+    this.renderPublicationFooterControls();
+  }
+
+  private renderPublicationFooterControls(): void {
+    const footerStatus = this.publicationFooterStatus;
+    const footerActions = this.publicationFooterActions;
+    const center = this.renderedPublishCenter;
+    const connection = this.renderedPublishConnection;
+    if (!footerStatus || !footerActions || !center || !connection) return;
+
+    footerStatus.empty();
+    footerActions.empty();
     const publication = this.application.getPublicationStatus();
     this.renderPublicationStatus(footerStatus, publication);
-    const footerActions = footer.createDiv({ cls: 'pages-publish-view__footer-actions' });
+    const connectionBlocksPublishing = connection.state === 'expired'
+      || connection.state === 'disconnected';
     new ButtonComponent(footerActions)
       .setIcon('eye')
-      .setButtonText(this.sitePreviewInFlight ? '正在准备预览…' : '预览站点')
-      .setDisabled(this.sitePreviewInFlight !== undefined)
+      .setButtonText(this.sitePreviewBusy ? '正在准备预览…' : '预览站点')
+      .setDisabled(this.sitePreviewBusy)
       .onClick(() => this.openSitePreview());
     new ButtonComponent(footerActions)
       .setIcon('cloud-upload')
@@ -656,28 +727,30 @@ export class PagesPublishView extends ItemView {
           const currentConnection = await this.application.getInitialSetupConnection();
           if (currentConnection.state !== 'connected') {
             new Notice('Cloudflare 连接已失效；请重新授权或更新 API token 后再发布。');
-            await this.render();
+            this.lastPublishConnection = currentConnection;
+            this.renderedPublishConnection = currentConnection;
+            this.renderPublicationFooterControls();
             return;
           }
           const deployment = await this.application.publishSite();
           new Notice(`发布成功：${deployment.output.fileCount} 个文件已激活。后续编辑将进入下一次变化。`);
         } catch (error) {
           new Notice(`发布失败：${errorMessage(error)}`);
-        } finally {
-          await this.render();
         }
       });
   }
 
   private openSitePreview(): Promise<void> {
     if (this.sitePreviewInFlight) return this.sitePreviewInFlight;
+    this.sitePreviewBusy = true;
+    this.renderPublicationFooterControls();
     const operation = this.openSitePreviewExclusive();
     this.sitePreviewInFlight = operation;
-    this.renderCachedPublishCenter();
     void operation.finally(() => {
       if (this.sitePreviewInFlight === operation) {
         this.sitePreviewInFlight = undefined;
-        this.renderCachedPublishCenter();
+        this.sitePreviewBusy = false;
+        this.renderPublicationFooterControls();
       }
     }).catch(() => undefined);
     return operation;
@@ -1022,27 +1095,40 @@ export class PagesPublishView extends ItemView {
     article: PublishCenterArticle,
     included: boolean,
   ): Promise<void> {
+    this.localContentMutationsInFlight += 1;
+    let saved = false;
     try {
       const confirmTakedown = !included && Boolean(article.onlineUrl)
         ? await this.confirmTakedown(article)
         : false;
       if (!included && article.onlineUrl && !confirmTakedown) {
-        await this.render();
         return;
       }
       await this.application.setPublishCenterInclusion(article.sourcePath, included, {
         confirmTakedown,
       });
-      await this.render();
+      saved = true;
     } catch (error) {
       new Notice(`无法更新下一版选择：${errorMessage(error)}`);
-      await this.render();
+    } finally {
+      if (saved) this.publishCenterContentRefreshRequested = true;
+      this.localContentMutationsInFlight = Math.max(0, this.localContentMutationsInFlight - 1);
+      if (this.localContentMutationsInFlight === 0) {
+        if (this.publishCenterContentRefreshRequested) {
+          this.publishCenterContentRefreshRequested = false;
+          await this.refreshPublishCenter({ content: true });
+        } else {
+          this.renderCachedPublishCenter();
+        }
+      }
     }
   }
 
   private async selectArticle(article: PublishCenterArticle): Promise<void> {
     this.selectedSourcePath = article.sourcePath;
     this.selectedArticleDetail = undefined;
+    this.focusReviewOnRender = true;
+    this.renderCachedPublishCenter();
     try {
       const detail = await this.application.getCurrentArticlePanel({
         pinnedPath: article.sourcePath,
@@ -1458,7 +1544,7 @@ export class PagesPublishView extends ItemView {
         });
       container.createEl('p', {
         cls: 'pages-publish-view__setup-example',
-        text: `默认域名：${draft.cloudflare.projectName}.pages.dev`,
+        text: `Pages 项目名：${draft.cloudflare.projectName}。实际 pages.dev 域名将在 Cloudflare 确认项目后写入配置。`,
       });
       const domainActions = container.createDiv({ cls: 'pages-publish-view__setup-options' });
       new ButtonComponent(domainActions)
@@ -1510,7 +1596,7 @@ export class PagesPublishView extends ItemView {
         await this.render();
       });
       const cloudflareSummary = summary.createEl('li', {
-        text: `Cloudflare：${draft.cloudflare.account.name} · ${draft.cloudflare.action === 'create' ? '创建' : '绑定'}项目 ${draft.cloudflare.projectName} · ${draft.cloudflare.domain.kind === 'pages-dev' ? `${draft.cloudflare.projectName}.pages.dev` : draft.cloudflare.domain.hostname}`,
+        text: `Cloudflare：${draft.cloudflare.account.name} · ${draft.cloudflare.action === 'create' ? '创建' : '绑定'}项目 ${draft.cloudflare.projectName} · ${draft.cloudflare.domain.kind === 'pages-dev' ? '使用 Cloudflare 实际分配的 pages.dev 域名' : draft.cloudflare.domain.hostname}`,
       });
       new ButtonComponent(cloudflareSummary).setButtonText('编辑 Cloudflare').onClick(async () => {
         this.setupStep = 3;

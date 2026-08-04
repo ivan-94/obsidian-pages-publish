@@ -17,7 +17,6 @@ import {
   collectLocalPreviewAssets,
   type LocalAssetFileSystemBoundary,
 } from './local-assets';
-import { inspectRawHtml } from './raw-html';
 import { inspectMermaid } from './mermaid';
 import { inspectUnsupportedSyntax } from './unsupported-syntax';
 import type { ExternalLinkCandidate } from './external-link-checker';
@@ -236,19 +235,6 @@ export async function scanSiteFromDirectory(
       impact: assetIssue.impact,
       dormant: assetIssue.dormant,
       location: { path: assetIssue.sourcePath, line: assetIssue.line },
-    });
-  }
-  for (const htmlIssue of inspectRawHtml(snapshots)) {
-    issues.push({
-      severity: htmlIssue.severity,
-      code: htmlIssue.code,
-      path: htmlIssue.sourcePath,
-      line: htmlIssue.line,
-      column: htmlIssue.column,
-      message: htmlIssue.message,
-      impact: htmlIssue.impact,
-      dormant: htmlIssue.dormant,
-      location: { path: htmlIssue.sourcePath, line: htmlIssue.line },
     });
   }
   for (const mermaidIssue of inspectMermaid(snapshots)) {

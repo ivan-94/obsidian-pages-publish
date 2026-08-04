@@ -389,7 +389,7 @@ describe('current article panel state', () => {
     });
   });
 
-  it('projects locatable image and raw HTML issues for the current article', async () => {
+  it('projects locatable image issues while accepting authored raw HTML', async () => {
     const vault = await createConfiguredVault(vaults);
     await writeFile(
       join(vault, 'notes', 'current.md'),
@@ -414,16 +414,7 @@ describe('current article panel state', () => {
         dormant: false,
       }),
     );
-    expect(state.contentIssues).toContainEqual(
-      expect.objectContaining({
-        severity: 'warning',
-        code: 'unsafe-raw-html',
-        sourcePath: 'notes/current.md',
-        line: 8,
-        impact: 'Unsafe HTML will be removed from the rendered page.',
-        dormant: false,
-      }),
-    );
+    expect(state.contentIssues.some((issue) => issue.code === 'unsafe-raw-html')).toBe(false);
   });
 });
 

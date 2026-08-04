@@ -14,12 +14,14 @@ async function openWithResolvedShell(
   url: string,
   shell: SystemBrowserShell | undefined,
 ): Promise<void> {
-  const resolvedShell = shell ?? await electronSystemBrowserShell();
+  const resolvedShell = shell ?? electronSystemBrowserShell();
   await resolvedShell.openExternal(url);
 }
 
-async function electronSystemBrowserShell(): Promise<SystemBrowserShell> {
-  const electron = await import('electron');
+function electronSystemBrowserShell(): SystemBrowserShell {
+  // Obsidian loads desktop plugins as CommonJS and provides Electron at runtime.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- Electron is supplied by the Obsidian desktop host.
+  const electron = require('electron') as { shell?: SystemBrowserShell };
   if (!electron.shell) throw new Error('The Electron system browser is unavailable.');
   return electron.shell;
 }

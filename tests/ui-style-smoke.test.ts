@@ -52,7 +52,7 @@ describe('global UI responsive and accessibility smoke', () => {
     );
     expect(view).toContain("'data-label': '下一版包含'");
     expect(view).toContain("'data-label': '文章 / 路径'");
-    expect(view).toContain("cls: 'pages-publish-view__setup-example',\n        text: `默认域名：");
+    expect(view).toContain("cls: 'pages-publish-view__setup-example',\n        text: `Pages 项目名：");
   });
 
   it('composes the publish center as one continuous review workspace', async () => {

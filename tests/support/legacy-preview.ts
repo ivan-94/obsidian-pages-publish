@@ -14,7 +14,6 @@ import {
   NOTE_EMBED_LIMITS,
   noteReferenceEnvironment,
 } from '../../src/content/note-references';
-import { installRawHtmlSafetyRule } from '../../src/content/raw-html';
 import {
   degradeUnsupportedSyntax,
   installUnsupportedSyntaxRule,
@@ -58,7 +57,6 @@ installDefaultMarkdownRules(markdown);
 installUnsupportedSyntaxRule(markdown);
 installNoteReferenceRule(markdown);
 installLocalAssetRule(markdown);
-installRawHtmlSafetyRule(markdown);
 
 export async function prepareLocalPreviewFromDirectory(
   vaultRoot: string,

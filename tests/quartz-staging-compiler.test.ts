@@ -52,7 +52,7 @@ describe('Quartz immutable staging compiler', () => {
     expect(Object.keys(staging.assetFiles)).toEqual([]);
   });
 
-  it('sanitizes comments and HTML, expands only discoverable embeds, and emits safe Mermaid assets', async () => {
+  it('preserves authored raw HTML, expands only discoverable embeds, and emits safe Mermaid assets', async () => {
     const vaultRoot = await fixtureVault();
     await writeFile(
       join(vaultRoot, 'Notes', 'Embedded.md'),
@@ -70,14 +70,17 @@ describe('Quartz immutable staging compiler', () => {
     const publicPath = join(vaultRoot, 'Notes', 'Public.md');
     await writeFile(
       publicPath,
-      `${await readFile(publicPath, 'utf8')}\n%%comment-canary%%\n<iframe src="https://attacker.invalid">raw-active-token</iframe>\n![[Embedded]]\n![[Unlisted]]\n\`\`\`mermaid\ngraph TD\n  A --> B\n\`\`\`\n`,
+      `${await readFile(publicPath, 'utf8')}\n<br>\n<hr />\n%%comment-canary%%\n<iframe src="https://attacker.invalid">raw-active-token</iframe>\n![[Embedded]]\n![[Unlisted]]\n\`\`\`mermaid\ngraph TD\n  A --> B\n\`\`\`\n`,
     );
 
     const staging = await compileQuartzStaging(vaultRoot);
     const publicSource = staging.contentFiles['writing/hello.md'] ?? '';
 
     expect(publicSource).not.toContain('comment-canary');
-    expect(publicSource).not.toContain('<iframe');
+    expect(publicSource).toContain('\n<br>\n<hr />\n');
+    expect(publicSource).toContain(
+      '<iframe src="https://attacker.invalid">raw-active-token</iframe>',
+    );
     expect(publicSource).toContain('public-embedded-body-token');
     expect(publicSource).not.toContain('Direct-link content.');
     expect(publicSource).toContain('![Mermaid diagram](/assets/pages-publish/mermaid-');

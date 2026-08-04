@@ -1950,7 +1950,7 @@ describe('site content scanner', () => {
     expect(fetchBoundary).not.toHaveBeenCalled();
   });
 
-  it('removes scripts, event handlers, dangerous URLs, and active HTML bodies', async () => {
+  it('passes authored raw HTML through without publishing-policy warnings', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-scan-'));
     vaults.push(vault);
     await mkdir(join(vault, '.publish'), { recursive: true });
@@ -1960,7 +1960,7 @@ describe('site content scanner', () => {
       [
         'version: 1',
         'site:',
-        '  name: Raw HTML Safety Wiki',
+        '  name: Raw HTML Wiki',
         '  home_layout: sections',
         'content_roots:',
         '  - path: notes',
@@ -2001,17 +2001,8 @@ describe('site content scanner', () => {
       (issue) => issue.code === 'unsafe-raw-html',
     );
 
-    expect(rawHtmlWarnings.map((issue) => issue.line)).toEqual([7, 8, 9, 10]);
-    expect(rawHtmlWarnings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: 'warning',
-          impact: 'Unsafe HTML will be removed from the rendered page.',
-        }),
-      ]),
-    );
-    expect(html).toContain('safe label');
-    for (const secret of [
+    expect(rawHtmlWarnings).toEqual([]);
+    for (const authoredHtml of [
       'SCRIPT_SECRET',
       'URL_SECRET',
       'EVENT_SECRET',
@@ -2023,7 +2014,7 @@ describe('site content scanner', () => {
       'javascript:',
       'data:text/html',
     ]) {
-      expect(html).not.toContain(secret);
+      expect(html).toContain(authoredHtml);
     }
   });
 
@@ -2122,12 +2113,6 @@ describe('site content scanner', () => {
           path: 'notes/draft.md',
           dormant: true,
         }),
-        expect.objectContaining({
-          severity: 'warning',
-          code: 'unsafe-raw-html',
-          path: 'notes/draft.md',
-          dormant: true,
-        }),
       ]),
     );
     expect(active.issues).toEqual(
@@ -2138,14 +2123,10 @@ describe('site content scanner', () => {
           path: 'notes/draft.md',
           dormant: false,
         }),
-        expect.objectContaining({
-          severity: 'warning',
-          code: 'unsafe-raw-html',
-          path: 'notes/draft.md',
-          dormant: false,
-        }),
       ]),
     );
+    expect(dormant.issues.some((issue) => issue.code === 'unsafe-raw-html')).toBe(false);
+    expect(active.issues.some((issue) => issue.code === 'unsafe-raw-html')).toBe(false);
   });
 
   it('blocks external and unsupported publication.cover values', async () => {
@@ -2313,7 +2294,7 @@ describe('site content scanner', () => {
     ]);
   });
 
-  it('warns at the opening marker of a multiline raw HTML tag', async () => {
+  it('accepts multiline raw HTML without a publishing-policy warning', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-scan-'));
     vaults.push(vault);
     await mkdir(join(vault, '.publish'), { recursive: true });
@@ -2349,16 +2330,10 @@ describe('site content scanner', () => {
 
     expect(
       scan.issues.filter((issue) => issue.code === 'unsafe-raw-html'),
-    ).toContainEqual(
-      expect.objectContaining({
-        path: 'notes/source.md',
-        line: 7,
-        column: 8,
-      }),
-    );
+    ).toEqual([]);
   });
 
-  it('does not mistake an autolink for the raw HTML location', async () => {
+  it('accepts autolinks and inline raw HTML without publishing-policy warnings', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-scan-'));
     vaults.push(vault);
     await mkdir(join(vault, '.publish'), { recursive: true });
@@ -2379,6 +2354,6 @@ describe('site content scanner', () => {
 
     expect(
       scan.issues.find((issue) => issue.code === 'unsafe-raw-html'),
-    ).toMatchObject({ line: 7, column: line.indexOf('<span>') + 1 });
+    ).toBeUndefined();
   });
 });

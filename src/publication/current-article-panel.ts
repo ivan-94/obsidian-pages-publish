@@ -24,7 +24,6 @@ import {
   countMarkdownAssetReferences,
   type LocalAssetIssue,
 } from '../content/local-assets';
-import { inspectRawHtml, type RawHtmlIssue } from '../content/raw-html';
 
 export type ArticlePublicationState =
   | 'private'
@@ -64,8 +63,7 @@ export interface CurrentArticlePanelArticle {
 
 export type ArticleContentIssue =
   | NoteReferenceIssue
-  | LocalAssetIssue
-  | RawHtmlIssue;
+  | LocalAssetIssue;
 
 export type CurrentArticlePanelState =
   | CurrentArticlePanelArticle
@@ -177,7 +175,6 @@ export async function resolveCurrentArticlePanelFromDirectory(
           assetPlan.claimsObsidianAsset(candidateSourcePath, target),
       }),
       ...assetPlan.issues,
-      ...inspectRawHtml(collected.snapshots),
     ]
       .filter((issue) => issue.sourcePath === sourcePath)
       .sort(

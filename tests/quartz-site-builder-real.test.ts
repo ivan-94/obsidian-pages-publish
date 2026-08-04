@@ -29,6 +29,8 @@ describe('real Quartz SiteBuilder integration', () => {
       const repeated = await builder.build({ vaultRoot, renderMode: 'published' });
 
       expect(preview.files['/writing/hello/index.html']).toContain('Hello Quartz');
+      expect(preview.files['/writing/hello/index.html']).toContain('<br');
+      expect(preview.files['/writing/hello/index.html']).not.toContain('&lt;br');
       expect(preview.files['/writing/hidden/index.html']).toContain('Hidden Quartz');
       expect(preview.files['/writing/hidden/index.html']).toMatch(
         /<meta\b[^>]*name=["']robots["'][^>]*content=["'][^"']*noindex/iu,
@@ -204,6 +206,8 @@ async function fixtureVault(
       '  date: 2024-01-01',
       '---',
       '# Hello Quartz',
+      '',
+      '<br>',
       '',
       'A direct-only link: [[Hidden]]. A private target: [[Private]].',
       '',

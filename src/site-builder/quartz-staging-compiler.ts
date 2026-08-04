@@ -271,7 +271,7 @@ function rewriteSafeBody(
   const nextAncestors = new Set(state.ancestors);
   nextAncestors.add(sourcePath);
   let body = rewriteControlledMermaid(
-    escapeRawHtmlTags(removeUnsupportedSyntax(snapshot.body)),
+    removeUnsupportedSyntax(snapshot.body),
     generatedAssets,
   );
   body = body.replace(

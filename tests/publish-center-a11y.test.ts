@@ -1472,31 +1472,38 @@ describe('publish-center table accessibility', () => {
   });
 
   it('shows one in-flight site preview and prevents duplicate opens', async () => {
+    let globalUiListener: (() => void) | undefined;
     let releasePreview!: () => void;
     const previewBarrier = new Promise<void>((resolve) => {
       releasePreview = resolve;
     });
     const openPreview = vi.fn(async () => {
+      globalUiListener?.();
       await previewBarrier;
       return { url: 'http://127.0.0.1:4173/' };
     });
+    const getPublishCenter = vi.fn(async () => ({
+      siteName: 'Preview Wiki',
+      baseline: 'first-publish' as const,
+      canPublish: true,
+      scanDigest: 'scan',
+      output: { status: 'known' as const, fileCount: 1, assetCount: 0, assetBytes: 0 },
+      summary: {
+        changes: 1, added: 1, updated: 0, urlChanged: 0, visibilityChanged: 0,
+        takedowns: 0, unknown: 0, blockers: 0, warnings: 0,
+      },
+      issues: [],
+      articles: [],
+    }));
     const view = new PagesPublishView({} as never, {
       isPublicationAvailable: () => false,
+      subscribeGlobalUiState: (listener: () => void) => {
+        globalUiListener = listener;
+        return () => undefined;
+      },
       getLaunchTarget: async () => 'publish-center',
       getPublicationStatus: () => ({ state: 'idle' }),
-      getPublishCenter: async () => ({
-        siteName: 'Preview Wiki',
-        baseline: 'first-publish',
-        canPublish: true,
-        scanDigest: 'scan',
-        output: { status: 'known', fileCount: 1, assetCount: 0, assetBytes: 0 },
-        summary: {
-          changes: 1, added: 1, updated: 0, urlChanged: 0, visibilityChanged: 0,
-          takedowns: 0, unknown: 0, blockers: 0, warnings: 0,
-        },
-        issues: [],
-        articles: [],
-      }),
+      getPublishCenter,
       getInitialSetupConnection: async () => ({ state: 'unavailable' }),
       openPreview,
     } as never);
@@ -1513,6 +1520,10 @@ describe('publish-center table accessibility', () => {
     expect(descendants(content, 'button').map((button) => button.text))
       .toContain('正在准备预览…');
     expect(busyButton?.attributes.disabled).toBe('true');
+    await Promise.resolve();
+    expect(getPublishCenter).toHaveBeenCalledOnce();
+    expect(descendants(content, 'h2').map((heading) => heading.text))
+      .not.toContain('正在加载发布中心');
     const duplicateOpen = busyButton?.click?.();
     expect(openPreview).toHaveBeenCalledOnce();
 
@@ -1520,6 +1531,95 @@ describe('publish-center table accessibility', () => {
     await Promise.all([firstOpen, duplicateOpen]);
     expect(descendants(content, 'button').map((button) => button.text))
       .toContain('预览站点');
+  });
+
+  it('keeps the publish center mounted while publication completes and refreshes in background', async () => {
+    let globalUiListener: (() => void) | undefined;
+    let publicationListener: ((status: unknown) => void) | undefined;
+    let releasePublication!: () => void;
+    let releaseRefresh!: () => void;
+    const publicationBarrier = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+    const refreshBarrier = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const center = {
+      siteName: 'Publish Wiki',
+      baseline: 'deployed' as const,
+      canPublish: true,
+      scanDigest: 'scan',
+      siteUrl: 'https://publish-wiki.pages.dev/',
+      lastPublishedAt: '2026-08-04T00:00:00.000Z',
+      output: { status: 'known' as const, fileCount: 1, assetCount: 0, assetBytes: 0 },
+      summary: {
+        changes: 1, added: 0, updated: 1, urlChanged: 0, visibilityChanged: 0,
+        takedowns: 0, unknown: 0, blockers: 0, warnings: 0,
+      },
+      issues: [],
+      articles: [],
+    };
+    let centerCalls = 0;
+    const getPublishCenter = vi.fn(async () => {
+      centerCalls += 1;
+      if (centerCalls > 1) await refreshBarrier;
+      return center;
+    });
+    let status: unknown = { state: 'idle' };
+    const deployment = {
+      deploymentId: 'deployment-1',
+      url: center.siteUrl,
+      scanDigest: center.scanDigest,
+      output: center.output,
+    };
+    const publishSite = vi.fn(async () => {
+      status = { state: 'running', stage: 'prepare' };
+      globalUiListener?.();
+      publicationListener?.(status);
+      await publicationBarrier;
+      status = { state: 'succeeded', stage: 'activate', deployment };
+      globalUiListener?.();
+      publicationListener?.(status);
+      return deployment;
+    });
+    const view = new PagesPublishView({} as never, {
+      isPublicationAvailable: () => true,
+      subscribeGlobalUiState: (listener: () => void) => {
+        globalUiListener = listener;
+        return () => undefined;
+      },
+      subscribePublicationStatus: (listener: (next: unknown) => void) => {
+        publicationListener = listener;
+        return () => undefined;
+      },
+      getLaunchTarget: async () => 'publish-center',
+      getPublicationStatus: () => status,
+      getPublishCenter,
+      getInitialSetupConnection: async () => ({
+        state: 'connected' as const,
+        account: { id: 'account-1', name: 'Test account' },
+      }),
+      publishSite,
+    } as never);
+
+    await view.onOpen();
+    const content = view.contentEl as unknown as ElementModel;
+    const publishing = clickButton(content, '发布站点');
+    await vi.waitFor(() => expect(publishSite).toHaveBeenCalledOnce());
+    expect(getPublishCenter).toHaveBeenCalledOnce();
+    expect(descendants(content, 'h2').map((heading) => heading.text))
+      .toContain('Publish Wiki');
+
+    releasePublication();
+    await vi.waitFor(() => expect(getPublishCenter).toHaveBeenCalledTimes(2));
+    expect(descendants(content, 'h2').map((heading) => heading.text))
+      .toContain('Publish Wiki');
+    expect(descendants(content, 'h2').map((heading) => heading.text))
+      .not.toContain('正在加载发布中心');
+
+    releaseRefresh();
+    await publishing;
+    expect(getPublishCenter).toHaveBeenCalledTimes(2);
   });
 
   it('does not start a second refresh when scan-state updates arrive during a manual rescan', async () => {
@@ -1635,6 +1735,99 @@ describe('publish-center table accessibility', () => {
     expect(findElement(content, 'table')).toBeDefined();
     expect(descendants(content, 'button').find((button) => button.text === 'Drawer article')
       ?.attributes['data-focused']).toBe('true');
+  });
+
+  it('opens the article review drawer before slow detail analysis finishes', async () => {
+    let releaseDetail!: () => void;
+    const detailBarrier = new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+    const view = createReviewScopeView(reviewScopeArticles(), {
+      getCurrentArticlePanel: async () => {
+        await detailBarrier;
+        return { status: 'non-markdown' };
+      },
+    });
+
+    await view.onOpen();
+    const content = view.contentEl as unknown as ElementModel;
+    const opening = clickButton(content, 'Clean article');
+    await Promise.resolve();
+
+    expect(descendants(content, 'aside')).toHaveLength(1);
+    expect(descendants(content, 'p').map((paragraph) => paragraph.text))
+      .toContain('正在读取依赖摘要…');
+
+    releaseDetail();
+    await opening;
+  });
+
+  it('keeps the current publish-center page mounted while an inclusion edit is saved', async () => {
+    let globalUiListener: (() => void) | undefined;
+    let releaseSave!: () => void;
+    const saveBarrier = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const articles = reviewScopeArticles();
+    const center = {
+      siteName: 'Review scope Wiki',
+      baseline: 'first-publish' as const,
+      canPublish: true,
+      scanDigest: 'scan',
+      output: { status: 'known' as const, fileCount: 2, assetCount: 0, assetBytes: 0 },
+      summary: {
+        changes: 2,
+        added: 2,
+        updated: 0,
+        urlChanged: 0,
+        visibilityChanged: 0,
+        takedowns: 0,
+        unknown: 0,
+        blockers: 1,
+        warnings: 0,
+      },
+      issues: articles[1]!.issues,
+      articles,
+    };
+    const getPublishCenter = vi.fn(async () => center);
+    const setPublishCenterInclusion = vi.fn(async () => {
+      globalUiListener?.();
+      await saveBarrier;
+      return {};
+    });
+    const view = new PagesPublishView({} as never, {
+      isPublicationAvailable: () => false,
+      subscribeGlobalUiState: (listener: () => void) => {
+        globalUiListener = listener;
+        return () => undefined;
+      },
+      getLaunchTarget: async () => 'publish-center',
+      getPublicationStatus: () => ({ state: 'idle' }),
+      getPublishCenter,
+      getInitialSetupConnection: async () => ({ state: 'disconnected' }),
+      canConnectInitialSetupOAuth: () => false,
+      getCurrentArticlePanel: async () => ({ status: 'non-markdown' }),
+      setPublishCenterInclusion,
+    } as never);
+
+    await view.onOpen();
+    await Promise.resolve();
+    const content = view.contentEl as unknown as ElementModel;
+    const originalHeading = descendants(content, 'h2')[0];
+    const checkbox = descendants(content, 'input').find(
+      (input) => input.attributes['aria-label'] === '下一版包含 Clean article',
+    );
+    expect(checkbox).toBeDefined();
+    (checkbox as unknown as { checked: boolean }).checked = false;
+    await checkbox?.trigger('change');
+    await vi.waitFor(() => expect(setPublishCenterInclusion).toHaveBeenCalledOnce());
+    await Promise.resolve();
+
+    expect(getPublishCenter).toHaveBeenCalledOnce();
+    expect(descendants(content, 'h2')[0]).toBe(originalHeading);
+
+    releaseSave();
+    await vi.waitFor(() => expect(getPublishCenter).toHaveBeenCalledTimes(2));
   });
 
   it('closes a review excluded by a tab change and focuses the chosen tab', async () => {
@@ -1974,7 +2167,10 @@ function reviewScopeArticles() {
   ];
 }
 
-function createReviewScopeView(articles: ReturnType<typeof reviewScopeArticles>): PagesPublishView {
+function createReviewScopeView(
+  articles: ReturnType<typeof reviewScopeArticles>,
+  overrides: Record<string, unknown> = {},
+): PagesPublishView {
   return new PagesPublishView({} as never, {
     isPublicationAvailable: () => false,
     getLaunchTarget: async () => 'publish-center',
@@ -2002,6 +2198,7 @@ function createReviewScopeView(articles: ReturnType<typeof reviewScopeArticles>)
     getInitialSetupConnection: async () => ({ state: 'disconnected' }),
     canConnectInitialSetupOAuth: () => false,
     getCurrentArticlePanel: async () => ({ status: 'non-markdown' }),
+    ...overrides,
   } as never);
 }
 

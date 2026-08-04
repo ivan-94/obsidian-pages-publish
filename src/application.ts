@@ -253,7 +253,7 @@ export class PagesPublishApplication {
 
   constructor(
     private readonly vaultRoot: string,
-    private readonly openExternal: (url: string) => void = () => undefined,
+    private readonly openExternal: (url: string) => void | Promise<void> = () => undefined,
     options: {
       scan?: (request: ScanRequest) => Promise<SiteScanResult>;
       scanDebounceMs?: number;
@@ -315,7 +315,7 @@ export class PagesPublishApplication {
   async openPreview(): Promise<PreviewSession> {
     const preview = await this.preparePreview();
     const session = await this.previewServer.start(preview.files, preview.assets);
-    this.openExternal(session.url);
+    await this.openExternal(session.url);
     return session;
   }
 
@@ -325,7 +325,7 @@ export class PagesPublishApplication {
       throw new Error(`Site config version ${loaded.version} is read-only.`);
     }
     const url = siteCanonicalOrigin(loaded.config);
-    this.openExternal(url);
+    await this.openExternal(url);
     return url;
   }
 
@@ -347,7 +347,7 @@ export class PagesPublishApplication {
     if (!articlePath) throw new Error('Article did not produce a Quartz preview route.');
     const session = await this.previewServer.start(preview.files, preview.assets);
     const articleUrl = new URL(articlePath.slice(1), session.url).toString();
-    this.openExternal(articleUrl);
+    await this.openExternal(articleUrl);
     return { ...session, articleUrl };
   }
 
@@ -365,7 +365,7 @@ export class PagesPublishApplication {
     if (url.protocol !== 'https:' && url.protocol !== 'http:') {
       throw new Error('The online article URL is not safe to open.');
     }
-    this.openExternal(url.toString());
+    await this.openExternal(url.toString());
     return url.toString();
   }
 
@@ -743,7 +743,7 @@ export class PagesPublishApplication {
     try {
       callback = await this.oauthCallback?.start();
       const authorization = await connection.beginOAuth(callback);
-      this.openExternal(authorization.url);
+      await this.openExternal(authorization.url);
     } catch (error) {
       await this.oauthCallback?.stop?.().catch(() => undefined);
       throw error;

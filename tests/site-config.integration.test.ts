@@ -50,6 +50,7 @@ describe('site config repository', () => {
         '  graph: false',
         'cloudflare:',
         '  project_name: llm-wiki',
+        '  pages_dev_domain: llm-wiki-7k2.pages.dev',
         '  custom_domain: wiki.example.com',
         '',
       ].join('\n'),
@@ -73,6 +74,7 @@ describe('site config repository', () => {
         features: { search: true, graph: false },
         cloudflare: {
           projectName: 'llm-wiki',
+          pagesDevDomain: 'llm-wiki-7k2.pages.dev',
           customDomain: 'wiki.example.com',
         },
       },

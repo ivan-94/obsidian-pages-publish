@@ -1,5 +1,6 @@
 import {
   CloudflareOAuthExchangeRejectedError,
+  CloudflareOAuthExchangeUnclassifiedError,
   CloudflareOAuthRefreshRejectedError,
   type CloudflareOAuthExchangeRejectionReason,
   type CloudflareOAuthBoundary,
@@ -10,6 +11,7 @@ export interface CloudflareOAuthRequestBoundary {
   request(input: {
     url: string;
     method: 'POST';
+    contentType: 'application/x-www-form-urlencoded';
     headers: Record<string, string>;
     body: string;
   }): Promise<{ status: number; json: unknown }>;
@@ -62,13 +64,19 @@ export class CloudflareDesktopOAuth implements CloudflareOAuthBoundary {
       code: requiredValue(input.code, 'OAuth authorization code'),
       code_verifier: requiredValue(input.codeVerifier, 'OAuth PKCE verifier'),
     });
-    const response = await this.request({
-      url: 'https://dash.cloudflare.com/oauth2/token',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
-    return tokenResponse(response, 'Cloudflare OAuth token exchange failed.');
+    let response: { status: number; json: unknown };
+    try {
+      response = await this.request({
+        url: 'https://dash.cloudflare.com/oauth2/token',
+        method: 'POST',
+        contentType: 'application/x-www-form-urlencoded',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+    } catch {
+      throw new CloudflareOAuthExchangeUnclassifiedError({ transportFailure: true });
+    }
+    return tokenResponse(response);
   }
 
   async refresh(input: { refreshToken: string }): Promise<CloudflareOAuthTokens> {
@@ -80,10 +88,11 @@ export class CloudflareDesktopOAuth implements CloudflareOAuthBoundary {
     const response = await this.request({
       url: 'https://dash.cloudflare.com/oauth2/token',
       method: 'POST',
+      contentType: 'application/x-www-form-urlencoded',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
     });
-    return tokenResponse(response, 'Cloudflare OAuth token refresh failed.', true);
+    return tokenResponse(response, true);
   }
 
   private redirectUriFor(value: string | undefined): string {
@@ -122,7 +131,6 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 
 function tokenResponse(
   response: { status: number; json: unknown },
-  failureMessage: string,
   isRefresh = false,
 ): CloudflareOAuthTokens {
   const payload = objectValue(response.json);
@@ -133,7 +141,11 @@ function tokenResponse(
     }
     const oauthReason = oauthExchangeRejectionReason(payload?.error);
     if (oauthReason) throw new CloudflareOAuthExchangeRejectedError(oauthReason);
-    throw new Error(failureMessage);
+    const errorCode = safeOAuthErrorCode(payload?.error);
+    throw new CloudflareOAuthExchangeUnclassifiedError({
+      status: response.status,
+      ...(errorCode === undefined ? {} : { errorCode }),
+    });
   }
   const refreshToken = payload?.refresh_token;
   const expiresIn = payload?.expires_in;
@@ -144,6 +156,12 @@ function tokenResponse(
       ? { expiresInSeconds: expiresIn }
       : {}),
   };
+}
+
+function safeOAuthErrorCode(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[a-z_]{1,64}$/u.test(value)
+    ? value
+    : undefined;
 }
 
 function oauthExchangeRejectionReason(

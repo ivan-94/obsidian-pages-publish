@@ -111,6 +111,21 @@ export class CloudflareOAuthExchangeRejectedError extends Error {
   }
 }
 
+export interface CloudflareOAuthExchangeDiagnostic {
+  status?: number;
+  errorCode?: string;
+  transportFailure?: true;
+}
+
+/** Non-secret protocol metadata retained when a token response is not classifiable. */
+export class CloudflareOAuthExchangeUnclassifiedError extends Error {
+  readonly name = 'CloudflareOAuthExchangeUnclassifiedError';
+
+  constructor(readonly diagnostic: CloudflareOAuthExchangeDiagnostic) {
+    super('Cloudflare returned an unclassified OAuth token response.');
+  }
+}
+
 type CloudflareConnectionErrorCode =
   | 'api-account-verification-failed'
   | 'api-accounts-list-failed'
@@ -136,6 +151,7 @@ export class CloudflareConnectionError extends Error {
     readonly code: CloudflareConnectionErrorCode,
     message: string,
     readonly oauthReason?: CloudflareOAuthExchangeRejectionReason,
+    readonly oauthDiagnostic?: CloudflareOAuthExchangeDiagnostic,
   ) {
     super(message);
   }
@@ -794,7 +810,11 @@ export class CloudflareConnectionService {
       error instanceof CloudflareOAuthExchangeRejectedError
       ? error.oauthReason
       : undefined;
-    return new CloudflareConnectionError(code, message, oauthReason);
+    const oauthDiagnostic = code === 'oauth-exchange-failed' &&
+      error instanceof CloudflareOAuthExchangeUnclassifiedError
+      ? error.diagnostic
+      : undefined;
+    return new CloudflareConnectionError(code, message, oauthReason, oauthDiagnostic);
   }
 
   private newOAuthTransaction(redirectUri?: string): OAuthTransaction {

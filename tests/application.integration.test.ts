@@ -699,6 +699,40 @@ describe('Pages Publish application', () => {
     );
   });
 
+  it('waits for the system browser boundary before reporting OAuth setup as started', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
+    vaults.push(vault);
+    let finishOpening: (() => void) | undefined;
+    const openExternal = vi.fn(() => new Promise<void>((resolve) => {
+      finishOpening = resolve;
+    }));
+    const application = new PagesPublishApplication(vault, openExternal, {
+      setupConnection: {
+        refreshStatus: async () => ({ state: 'disconnected' }),
+        listAvailableAccounts: async () => [],
+        isOAuthAvailable: () => true,
+        beginOAuth: async () => ({
+          url: 'https://dash.cloudflare.com/oauth2/auth?state=wait-for-browser',
+        }),
+        completeOAuth: async () => ({ state: 'connected' }),
+      },
+      oauthCallback: {
+        start: async () => ({ redirectUri: 'http://127.0.0.1:8977/oauth/callback' }),
+      },
+    });
+    let settled = false;
+
+    const opening = application.beginInitialSetupOAuth().finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(openExternal).toHaveBeenCalledOnce());
+
+    expect(settled).toBe(false);
+    finishOpening?.();
+    await opening;
+    expect(settled).toBe(true);
+  });
+
   it('opens a real local preview through the external browser boundary', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-app-'));
     vaults.push(vault);
@@ -1300,7 +1334,9 @@ describe('Pages Publish application', () => {
     const scanCalls: string[] = [];
     const application = new PagesPublishApplication(
       vault,
-      (url) => openedUrls.push(url),
+      (url) => {
+        openedUrls.push(url);
+      },
       {
         scan: async ({ trigger }) => {
           scanCalls.push(trigger);
@@ -1965,7 +2001,9 @@ describe('Pages Publish application', () => {
     });
     const application = new PagesPublishApplication(
       vault,
-      (url) => openedUrls.push(url),
+      (url) => {
+        openedUrls.push(url);
+      },
       { scan },
     );
 

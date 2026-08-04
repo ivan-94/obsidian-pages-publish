@@ -116,6 +116,7 @@ export default class PagesPublishPlugin extends Plugin {
           const response = await requestUrl({
             url: input.url,
             method: input.method,
+            contentType: input.contentType,
             headers: input.headers,
             body: input.body,
             throw: false,
@@ -286,11 +287,7 @@ export default class PagesPublishPlugin extends Plugin {
       });
     application = new PagesPublishApplication(
       vaultRoot,
-      (url) => {
-        void openInSystemBrowser(url).catch(() => {
-          new Notice('无法打开系统浏览器。请检查 macOS 默认浏览器设置后重试。');
-        });
-      },
+      (url) => openInSystemBrowser(url),
       {
         scanTimers: {
           set: (callback, delayMs) => window.setTimeout(callback, delayMs),

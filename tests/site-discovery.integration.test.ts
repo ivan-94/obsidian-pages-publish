@@ -38,6 +38,32 @@ describe('public site discovery output', () => {
     expect(sitemap).toContain('https://discovery-demo.pages.dev/notes/public/');
   });
 
+  it('uses Cloudflare assigned pages.dev domain instead of deriving one from the project name', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-discovery-assigned-domain-'));
+    vaults.push(vault);
+    await mkdir(join(vault, '.publish'), { recursive: true });
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    await writeFile(
+      join(vault, '.publish', 'site.yml'),
+      'version: 1\nsite:\n  name: Assigned domain\n  home_layout: latest\ncontent_roots:\n  - path: notes\n    public_root: /notes\nassets:\n  exclude: []\nfeatures:\n  search: true\n  graph: true\ncloudflare:\n  project_name: bobi\n  pages_dev_domain: bobi-x8g.pages.dev\n',
+      'utf8',
+    );
+    await writeFile(
+      join(vault, 'notes', 'public.md'),
+      '---\npublication:\n  visibility: public\n---\n# Correct domain\n',
+      'utf8',
+    );
+
+    const preview = await prepareLocalPreviewFromDirectory(vault);
+    expect(preview.files['/sitemap.xml']).toContain(
+      'https://bobi-x8g.pages.dev/notes/public/',
+    );
+    expect(preview.files['/notes/public/index.html']).toContain(
+      '<link rel="canonical" href="https://bobi-x8g.pages.dev/notes/public/">',
+    );
+    expect(preview.files['/notes/public/index.html']).not.toContain('https://bobi.pages.dev');
+  });
+
   it('keeps unlisted and private facts out of every public discovery artifact', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-discovery-privacy-'));
     vaults.push(vault);

@@ -58,6 +58,7 @@ describe('Cloudflare desktop OAuth host', () => {
     expect(call).toMatchObject({
       url: 'https://dash.cloudflare.com/oauth2/token',
       method: 'POST',
+      contentType: 'application/x-www-form-urlencoded',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
     expect(Object.fromEntries(new URLSearchParams(call?.body))).toEqual({

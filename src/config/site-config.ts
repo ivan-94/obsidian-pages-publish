@@ -46,6 +46,8 @@ export interface SiteConfigV1 {
   };
   cloudflare: {
     projectName: string;
+    /** Cloudflare-assigned production hostname; it is not necessarily derived from projectName. */
+    pagesDevDomain?: string;
     customDomain?: string;
   };
 }
@@ -131,6 +133,7 @@ interface RawSiteConfig {
   };
   cloudflare?: {
     project_name?: unknown;
+    pages_dev_domain?: unknown;
     custom_domain?: unknown;
   };
 }
@@ -645,6 +648,7 @@ function parseSupportedConfig(raw: RawSiteConfig): SiteConfigV1 {
   const timezone = optionalString(raw.site?.timezone);
   const theme = parseSiteTheme(raw.site?.theme);
   const projectName = stringValue(raw.cloudflare?.project_name);
+  const pagesDevDomain = optionalString(raw.cloudflare?.pages_dev_domain);
   const customDomain = optionalString(raw.cloudflare?.custom_domain);
   const excludes = raw.assets?.exclude ?? [];
 
@@ -663,6 +667,15 @@ function parseSupportedConfig(raw: RawSiteConfig): SiteConfigV1 {
         code: 'invalid-custom-domain',
         path: 'cloudflare.custom_domain',
         message: 'Custom domain must be a hostname without a scheme, port, or path.',
+      },
+    ]);
+  }
+  if (pagesDevDomain !== undefined && !isPagesDevDomain(pagesDevDomain)) {
+    throw new SiteConfigValidationError([
+      {
+        code: 'invalid-pages-dev-domain',
+        path: 'cloudflare.pages_dev_domain',
+        message: 'Cloudflare Pages domain must be a direct *.pages.dev hostname without a scheme, port, or path.',
       },
     ]);
   }
@@ -778,6 +791,7 @@ function parseSupportedConfig(raw: RawSiteConfig): SiteConfigV1 {
     },
     cloudflare: {
       projectName: projectName as string,
+      ...(pagesDevDomain === undefined ? {} : { pagesDevDomain }),
       ...(customDomain === undefined ? {} : { customDomain }),
     },
   };
@@ -891,11 +905,22 @@ function toRawConfig(config: SiteConfigV1): RawSiteConfig {
     features: { ...config.features },
     cloudflare: {
       project_name: config.cloudflare.projectName,
+      ...(config.cloudflare.pagesDevDomain === undefined
+        ? {}
+        : { pages_dev_domain: config.cloudflare.pagesDevDomain }),
       ...(config.cloudflare.customDomain === undefined
         ? {}
         : { custom_domain: config.cloudflare.customDomain }),
     },
   };
+}
+
+function isPagesDevDomain(value: string): boolean {
+  const labels = value.split('.');
+  return labels.length === 3
+    && labels[1] === 'pages'
+    && labels[2] === 'dev'
+    && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(labels[0] ?? '');
 }
 
 function parseSiteTheme(value: unknown): SiteThemeReference | undefined {

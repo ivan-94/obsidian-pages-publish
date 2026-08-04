@@ -317,6 +317,37 @@ describe('site setup service', () => {
     });
   });
 
+  it('accepts the canonical pages.dev subdomain assigned by Cloudflare when it differs from the project name', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
+    vaults.push(vault);
+    await mkdir(join(vault, 'notes'), { recursive: true });
+    const service = new SiteSetupService(vault, {
+      projects: {
+        ...recordingProjects(),
+        createProject: async () => ({
+          id: 'project-1',
+          name: 'my-wiki',
+          accountId: 'account-1',
+          pagesDevUrl: 'https://my-wiki-7k2.pages.dev',
+          compatible: true,
+        }),
+      },
+      scan: async () => ({ candidateCount: 0, eligibleCount: 0 }),
+    });
+
+    await expect(service.confirm(newSiteDraft())).resolves.toMatchObject({
+      stage: 'ready',
+      project: {
+        name: 'my-wiki',
+        pagesDevUrl: 'https://my-wiki-7k2.pages.dev',
+      },
+      domain: { url: 'https://my-wiki-7k2.pages.dev' },
+    });
+    await expect(readFile(join(vault, '.publish', 'site.yml'), 'utf8')).resolves.toContain(
+      'pages_dev_domain: my-wiki-7k2.pages.dev',
+    );
+  });
+
   it('lists existing compatible Pages projects for a binding plan without creating one', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'pages-publish-setup-'));
     vaults.push(vault);

@@ -45,7 +45,11 @@ export function createSiteDiscoveryProjection(
 }
 
 export function siteCanonicalOrigin(config: SiteConfigV1): string {
-  return `https://${config.cloudflare.customDomain ?? `${config.cloudflare.projectName}.pages.dev`}`;
+  return `https://${
+    config.cloudflare.customDomain
+    ?? config.cloudflare.pagesDevDomain
+    ?? `${config.cloudflare.projectName}.pages.dev`
+  }`;
 }
 
 export function canonicalUrl(origin: string, path: string): string {
