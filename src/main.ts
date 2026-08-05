@@ -41,6 +41,10 @@ import { isSupportedPlatform, supportedPlatformIdentity } from './plugin/platfor
 import { articleMenuAvailability, pagesPublishAction } from './plugin/safe-actions';
 import { openPluginSettingsInHost } from './plugin/settings-navigation';
 import { PagesPublishSettingTab } from './plugin/settings-tab';
+import {
+  PAGES_PUBLISH_THEME_MANAGER_VIEW_TYPE,
+  PagesPublishThemeManagerView,
+} from './plugin/theme-manager-view';
 import { openInSystemBrowser } from './plugin/system-browser';
 import { createLocalMaintenanceService } from './maintenance/local-maintenance';
 import { BoundedDiagnosticLog } from './maintenance/maintenance-service';
@@ -346,7 +350,6 @@ export default class PagesPublishPlugin extends Plugin {
       this,
       adapter.getBasePath(),
       application,
-      themeManagement,
     );
     this.addSettingTab(settingTab);
     const notifyConfigChange = (file: { path: string }): void => {
@@ -380,12 +383,27 @@ export default class PagesPublishPlugin extends Plugin {
       (leaf) => new PagesPublishMaintenanceLogView(
         leaf,
         () => diagnosticLog.entries(),
+        () => application.describeDiagnosticExport(),
         () => application.exportDiagnostics({ confirmed: true }),
       ),
     );
     this.registerView(
       PAGES_PUBLISH_CONFIG_REPAIR_VIEW_TYPE,
       (leaf) => new PagesPublishSiteConfigRepairView(leaf, vaultRoot),
+    );
+    this.registerView(
+      PAGES_PUBLISH_THEME_MANAGER_VIEW_TYPE,
+      (leaf) => new PagesPublishThemeManagerView(
+        leaf,
+        themeManagement,
+        () => settingTab.getExternalThemeDraft(),
+        (reference) => settingTab.setExternalThemeDraft(reference),
+        () => {
+          if (!openPluginSettingsInHost(this.app, this.manifest.id)) {
+            new Notice('请在 Obsidian 设置中打开 Pages Publish 设置。');
+          }
+        },
+      ),
     );
     this.registerView(
       CURRENT_ARTICLE_VIEW_TYPE,

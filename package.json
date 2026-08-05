@@ -1,6 +1,6 @@
 {
   "name": "pages-publish",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "Publish selected Obsidian notes to Cloudflare Pages.",
   "main": "main.js",
   "type": "module",
@@ -30,12 +30,14 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@testing-library/preact": "^3.2.4",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.15.17",
     "esbuild": "0.25.5",
     "eslint": "^9.39.4",
     "eslint-plugin-obsidianmd": "^0.4.0",
     "globals": "^17.6.0",
+    "happy-dom": "^20.11.1",
     "jiti": "^2.6.1",
     "obsidian": "^1.13.1",
     "typescript": "^5.8.3",
@@ -47,6 +49,7 @@
     "beautiful-mermaid": "^1.1.3",
     "markdown-it": "^15.0.0",
     "minimatch": "^10.2.6",
+    "preact": "^10.29.8",
     "yaml": "^2.9.0"
   }
 }
